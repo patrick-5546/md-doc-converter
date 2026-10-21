@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint-and-core:
+    name: Lint and core tests (Python ${{ matrix.python }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.13"]
+    env:
+      UV_PYTHON: ${{ matrix.python }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: prefix-dev/setup-pixi@v0.11.2
+        with:
+          pixi-version: v0.82.1
+          locked: true
+          cache: true
+      - name: Lint
+        run: pixi run lint
+      - name: Core tests
+        run: pixi run test
+
+  render:
+    name: Rendering tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install LibreOffice
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libreoffice-draw
+      - name: Allow the browser sandbox
+        # Ubuntu 23.10 and later restrict the unprivileged user namespaces that Chrome's sandbox uses.
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - uses: prefix-dev/setup-pixi@v0.11.2
+        with:
+          pixi-version: v0.82.1
+          locked: true
+          cache: true
+      - name: Cache the renderer toolchain
+        uses: actions/cache@v6
+        with:
+          path: .toolchain
+          key: toolchain-${{ runner.os }}-${{ hashFiles('src/md_doc_converter/toolchain/package.json', 'src/md_doc_converter/toolchain/package-lock.json', 'src/md_doc_converter/toolchain/environment.py', 'src/md_doc_converter/toolchain/install.py') }}
+      - name: Rendering tests
+        run: pixi run test-render
+
+  package:
+    name: Build and install check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: prefix-dev/setup-pixi@v0.11.2
+        with:
+          pixi-version: v0.82.1
+          locked: true
+          cache: true
+      - name: Build
+        run: pixi run build
+      - name: Check the wheel contents
+        run: |
+          python3 -m zipfile -l dist/*.whl > wheel-contents.txt
+          for file in \
+              md_doc_converter/__main__.py \
+              md_doc_converter/assets/pandoc-defaults.yaml \
+              md_doc_converter/assets/style-overrides.css \
+              md_doc_converter/rendering/pagedjs-print.mjs \
+              md_doc_converter/toolchain/package.json \
+              md_doc_converter/toolchain/package-lock.json; do
+            grep -q "^$file " wheel-contents.txt || { echo "missing from wheel: $file"; exit 1; }
+          done
+          if grep -vE '^(File Name|md_doc_converter/|md_doc_converter-[^/]+\.dist-info/)' wheel-contents.txt; then
+            echo "unexpected files in wheel"
+            exit 1
+          fi
+      - name: Install the wheel and run it outside the checkout
+        env:
+          UV_TOOL_DIR: ${{ runner.temp }}/tools
+          UV_TOOL_BIN_DIR: ${{ runner.temp }}/bin
+        run: |
+          pixi run uv tool install dist/*.whl
+          cd "$RUNNER_TEMP"
+          "$UV_TOOL_BIN_DIR/md-doc-converter" --version
+          "$UV_TOOL_BIN_DIR/md-doc-converter" --help
+          printf 'Name,Value\nalpha,1\n' > sample.csv
+          "$UV_TOOL_BIN_DIR/md-doc-converter" csv-to-md sample.csv
+          grep -q '| alpha | 1 |' sample.md

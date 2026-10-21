@@ -1,0 +1,12 @@
+{
+  "name": "md-doc-converter",
+  "version": "0.1.0",
+  "description": "Pinned renderer packages installed by md-doc-converter setup",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@mermaid-js/mermaid-cli": "^11.15.0",
+    "mermaid-filter": "^1.4.7",
+    "pagedjs-cli": "^0.4.3"
+  }
+}

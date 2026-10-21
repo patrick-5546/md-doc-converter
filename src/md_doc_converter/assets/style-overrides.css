@@ -1,0 +1,127 @@
+/*
+Overrides for the pandoc rendering pipeline:
+- US Letter page size
+- 1in margins all around (matching Microsoft Word "Normal" default)
+- Page numbers in the footer (only in PDF output)
+- Styling for the optional page header and footer text, whose content is
+  generated for each render
+- Font stacks using locally available Linux fonts, replacing
+  browser-specific fonts from github-markdown-css
+- Overflow protection for tables, images, and code blocks
+- Mermaid diagram scaling: inline SVG diagrams are scaled down
+*/
+
+@page {
+  size: letter;
+  margin: 1in;
+  @top-right {
+    font-size: 8pt;
+    color: #999;
+  }
+  @bottom-left {
+    font-size: 8pt;
+    color: #999;
+  }
+  @bottom-center {
+    content: "Page " counter(page) " of " counter(pages);
+    font-size: 9pt;
+    color: #666;
+  }
+}
+
+/* Page-margin boxes inherit the root font, outside .markdown-body. */
+html,
+.markdown-body {
+  font-family: "Noto Sans", "Liberation Sans", "DejaVu Sans", sans-serif;
+}
+
+.markdown-body code,
+.markdown-body pre,
+.markdown-body tt,
+.markdown-body kbd,
+.markdown-body samp {
+  font-family: "Liberation Mono", "DejaVu Sans Mono", monospace;
+}
+
+/* --- Overflow protection --- */
+
+/* Images: scale down to fit page width, never exceed content area */
+.markdown-body img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Mermaid diagrams (tagged via MERMAID_FILTER_IMAGE_CLASS): shrink each inline
+   SVG to 75% of its natural size, then cap at page width. `zoom` scales the
+   intrinsic size first; the max-width percentage clamps anything still wider
+   than the page, so an oversized diagram fills the page rather than 75% of it.
+   Applies to both the HTML and the pagedjs-cli PDF (both Chromium-based). */
+.markdown-body img.mermaid-diagram {
+  zoom: 0.75;
+  max-width: 100%;
+  height: auto;
+}
+
+/* Tables: github-markdown-css sets "display:block; width:max-content" which
+   removes table layout behaviour and lets the table grow past the page
+   (on the web this is fine because overflow:auto adds a scrollbar, but in
+   a PDF there is no scrollbar).  We restore proper table display so the
+   browser sizes columns proportionally to content within the page width. */
+.markdown-body table {
+  display: table !important;
+  table-layout: auto;
+  width: 100% !important;
+}
+
+/* All table cells: wrap at word boundaries; only break inside a word
+   when the word itself is wider than the column (e.g. long URLs). */
+.markdown-body th,
+.markdown-body td {
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+
+/* Code blocks: wrap long lines instead of overflowing */
+.markdown-body pre {
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+/* Prevent any block-level element from exceeding page width */
+.markdown-body * {
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+/* --- Per-table utility classes ---
+   Wrap a markdown table in <div class="..."> to apply.
+   Classes are composable: <div class="table-sm table-fixed"> */
+
+/* Smaller text (good for wide tables with many columns) */
+.table-sm table   { font-size: 0.85em; }
+.table-xs table   { font-size: 0.75em; }
+
+/* Compact cell padding (reduces horizontal space per column) */
+.table-compact table th,
+.table-compact table td { padding: 3px 5px !important; }
+
+/* Fixed layout (equal-width columns, guarantees no overflow) */
+.table-fixed table { table-layout: fixed; }
+
+/* Explicit column widths via CSS custom properties --col1..--col6.
+   Usage:  <div class="table-cols" style="--col1: 15%; --col2: 10%; --col3: 10%; --col4: 65%">
+   Each --colN sets the width of column N via the nth-child selectors below;
+   unset columns fall back to auto. */
+.table-cols table { table-layout: fixed; }
+.table-cols table th:first-child,
+.table-cols table td:first-child  { width: var(--col1, auto); }
+.table-cols table th:nth-child(2),
+.table-cols table td:nth-child(2) { width: var(--col2, auto); }
+.table-cols table th:nth-child(3),
+.table-cols table td:nth-child(3) { width: var(--col3, auto); }
+.table-cols table th:nth-child(4),
+.table-cols table td:nth-child(4) { width: var(--col4, auto); }
+.table-cols table th:nth-child(5),
+.table-cols table td:nth-child(5) { width: var(--col5, auto); }
+.table-cols table th:nth-child(6),
+.table-cols table td:nth-child(6) { width: var(--col6, auto); }

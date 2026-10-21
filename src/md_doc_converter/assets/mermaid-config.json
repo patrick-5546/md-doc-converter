@@ -1,0 +1,17 @@
+{
+  "flowchart": { "useMaxWidth": false },
+  "sequence": { "useMaxWidth": false },
+  "class": { "useMaxWidth": false },
+  "state": { "useMaxWidth": false },
+  "er": { "useMaxWidth": false },
+  "journey": { "useMaxWidth": false },
+  "gantt": { "useMaxWidth": false },
+  "pie": { "useMaxWidth": false },
+  "requirement": { "useMaxWidth": false },
+  "gitGraph": { "useMaxWidth": false },
+  "timeline": { "useMaxWidth": false },
+  "mindmap": { "useMaxWidth": false },
+  "quadrantChart": { "useMaxWidth": false },
+  "xyChart": { "useMaxWidth": false },
+  "sankey": { "useMaxWidth": false }
+}

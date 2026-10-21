@@ -1,0 +1,885 @@
+"""
+Markdown preprocessor that prepares files for pandoc ingestion.
+
+Per-file text cleanup removes Azure DevOps macros, prevents I/O table-header
+wrapping and defuses accidental bit-notation reference definitions. Pandoc then
+resolves inline, full, collapsed and shortcut links/images with the renderer's
+reader. Targets are checked and made source-relative before files are combined;
+reference labels from different source files cannot collide. Only private
+prepared Markdown is normalized; source files are never rewritten.
+
+Warnings cover missing images, empty placeholder data URIs, undefined reference
+labels and same-file links without matching headings. Literal code is not
+interpreted as links or images.
+
+Additionally, for single-file input only, links to other ``.md`` files
+are checked: only directory-collection mode rewrites such links to internal
+anchors, so any left in a single-file build are reported on stderr as
+unresolvable (or broken, if the target file is missing).
+
+When the input is a directory, all ``.md`` files are collected recursively
+and each file is preprocessed individually.  A ``.order`` file in any
+directory controls the ordering of its entries (one stem per line).  If a
+directory has a sibling ``.md`` file with the same name (e.g.
+``topic.md`` next to ``topic/``), that file is used as the title page for
+the directory.  Cross-file ``.md`` links are resolved to internal heading
+anchors (bare links to the target's first heading, ``#fragment`` links to the
+matching heading), and unresolved ones are reported on stderr.  Pass
+``--respect-gitignore`` to skip files and directories that git ignores.
+
+Usage:
+    python -m md_doc_converter.markdown.preprocess -i input.md -o output.md
+    python -m md_doc_converter.markdown.preprocess -i docs_dir/ --respect-gitignore -o output.md
+"""
+
+import argparse
+import os
+import re
+import shutil
+import subprocess
+import sys
+from collections import Counter, defaultdict
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+from urllib.parse import quote, unquote, urlsplit, urlunsplit
+
+from md_doc_converter.markdown.document import READER as _RENDERER_READER
+from md_doc_converter.markdown.document import MarkdownDocument, MarkdownError
+from md_doc_converter.markdown.syntax import (
+    container_line,
+    inline_code_spans,
+    markdown_prose_lines,
+    transform_outside_code,
+)
+
+if TYPE_CHECKING:
+    from md_doc_converter.markdown.headings import Heading
+
+# ---------------------------------------------------------------------------
+
+# Transform functions
+#
+# Text transforms return a str; target transforms edit a parsed MarkdownDocument.
+# *source_path* is the path to the input markdown file (used to resolve
+# relative paths and to report file locations in warnings); it is None only
+# when unknown.  *stats* is a Counter, private to that transform, into which it
+# records how much it changed (e.g. ``stats["paths resolved"] += 1``); check-only
+# transforms leave it empty. Transforms are registered by phase below.
+# ---------------------------------------------------------------------------
+
+
+def resolve_relative_paths(
+    document: MarkdownDocument, source_path: str | None, stats: Counter[str]
+) -> None:
+    """Resolve local link/image URL paths without changing titles, queries or fragments."""
+    if source_path is None:
+        return
+
+    source_dir = os.path.dirname(source_path)
+    if not source_dir:
+        return
+
+    def _resolve(target: str, _image: bool) -> str:
+        url = urlsplit(target)
+        if url.scheme or url.netloc or not url.path or url.path.startswith("/"):
+            return target
+        # Encode filesystem characters without decoding reserved URL delimiters.
+        directory = quote(source_dir, safe="/")
+        resolved = os.path.normpath(os.path.join(directory, url.path))
+        result = urlunsplit(("", "", resolved, url.query, url.fragment))
+        if result != target:
+            stats["paths resolved"] += 1
+        return result
+
+    document.transform_targets(_resolve)
+
+
+# Pandoc's Markdown reader ends a pipe-table cell at one of these HTML tags and drops the
+# rest of the cell (checked with Pandoc 3.10); GFM renderers show the whole cell.
+_CELL_BLOCK_TAG_RE = re.compile(
+    r"</?(address|article|aside|blockquote|body|canvas|caption|center|dd|details|dir|div|dl|"
+    r"dt|fieldset|figcaption|figure|footer|form|h[1-6]|head|header|hgroup|hr|html|li|main|"
+    r"menu|nav|ol|p|pre|script|section|summary|table|tbody|td|textarea|tfoot|th|thead|title|"
+    r"tr|ul)(?=[ \t/>]|$)",
+    re.IGNORECASE,
+)
+
+
+def _table_delimiter_row(line: str) -> bool:
+    stripped = line.strip()
+    return (
+        "|" in stripped
+        and "-" in stripped
+        and all(
+            re.fullmatch(r"[ \t]*:?-+:?[ \t]*", cell) for cell in stripped.strip("|").split("|")
+        )
+    )
+
+
+def warn_block_html_in_table_cells(text: str, source_path: str | None, stats: Counter[str]) -> str:
+    """Warn about a pipe table with a block-level HTML tag, such as <ul> or <p>, in a cell.
+
+    A read-only check. It runs before the other transforms, so its line numbers are the
+    source file's. Tags in code are ignored.
+    """
+    lines = [container_line(line)[1] for line in text.splitlines()]
+    prose = markdown_prose_lines(text)
+    index = 0
+    while index + 1 < len(lines):
+        if not (
+            index in prose
+            and index + 1 in prose
+            and "|" in lines[index]
+            and _table_delimiter_row(lines[index + 1])
+        ):
+            index += 1
+            continue
+        end = index + 2
+        while end < len(lines) and end in prose and lines[end].strip():
+            end += 1
+        tags: list[str] = []
+        first: int | None = None
+        for row in range(index, end):
+            line = lines[row]
+            for start, stop in reversed(inline_code_spans(line)):
+                line = line[:start] + line[stop:]
+            for match in _CELL_BLOCK_TAG_RE.finditer(line):
+                first = row if first is None else first
+                if match.group(1).casefold() not in tags:
+                    tags.append(match.group(1).casefold())
+        if first is not None:
+            print(
+                f"WARNING: HTML {', '.join(f'<{tag}>' for tag in tags)} in a Markdown table "
+                f"cell in {source_path} (line {first + 1}; md-to-html drops the rest of such "
+                "a cell -- write the cell's lines with <br>, or make the table HTML)",
+                file=sys.stderr,
+            )
+        index = end
+    return text
+
+
+def strip_ado_macros(text: str, source_path: str | None, stats: Counter[str]) -> str:
+    """Remove Azure DevOps wiki macro lines such as [[_TOC_]] and [[_TOSP_]]."""
+    text, removed = re.subn(r"^\[\[_(?:TOC|TOSP)_\]\]\s*$", "", text, flags=re.MULTILINE)
+    if removed:
+        stats["macros removed"] += removed
+    # Removing a macro line leaves an empty line between the surrounding blanks;
+    # collapse the run so we don't introduce MD012 (multiple consecutive blanks).
+    return re.sub(r"\n{3,}", "\n\n", text)
+
+
+# Regex for a pipe-table separator row (e.g. |---|---|)
+_TABLE_SEP_RE = re.compile(r"^\|[\s:]*-+[\s:]*(\|[\s:]*-+[\s:]*)*\|?\s*$")
+
+
+def nowrap_io_in_table_headers(text: str, source_path: str | None, stats: Counter[str]) -> str:
+    """Prevent "I/O" from wrapping in table header cells.
+
+    Insert a Unicode word joiner (U+2060) into "I/O" in table header
+    rows so that the slash does not act as a line-break opportunity.
+    Only the header row (the row immediately before the separator
+    ``|---|---|`` row) is modified, and only the literal text "I/O"
+    is affected.
+    """
+    WJ = "\u2060"  # word joiner
+    lines = text.split("\n")
+    out: list[str] = []
+    for i, line in enumerate(lines):
+        # A header row is a pipe-delimited row immediately followed by a
+        # separator row.
+        if (
+            line.lstrip().startswith("|")
+            and i + 1 < len(lines)
+            and _TABLE_SEP_RE.match(lines[i + 1])
+        ):
+            joined = line.count("I/O")
+            if joined:
+                stats["I/O joined"] += joined
+            line = line.replace("I/O", "I/" + WJ + "O")
+        out.append(line)
+    return "\n".join(out)
+
+
+def escape_bit_ranges(text: str, source_path: str | None, stats: Counter[str]) -> str:
+    r"""Defuse accidental link reference definitions formed by bit notation.
+
+    Hardware docs use ``[N]`` / ``[N:M]`` notation heavily (e.g. ``[31:0]``).
+    Pandoc turns *every* ``[N]`` into a reference link if a matching link
+    reference definition exists anywhere in the document, and such a definition
+    is easily formed by accident: a bullet written ``* [1:0]: FIELD[1:0]`` (a
+    literal bit-field description) parses as a definition of label ``1:0`` and
+    then linkifies every ``[1:0]`` in the whole document (rendering each as a
+    blue link to ``FIELD[1:0]``).
+
+    A link reference definition must *begin a block*, so only the ``[N]`` that
+    starts a line, list item, or blockquote and is immediately followed by ``:``
+    can create one. Pandoc also reads the text that starts a block-level HTML
+    element as Markdown, so ``<td>[1:0]: Mode</td>`` in a raw HTML table defines
+    one too, although GFM shows that cell as written. Escaping just those brackets
+    defuses the definition:
+    ``\[1:0\]`` renders identically to ``[1:0]`` but no longer registers a
+    definition, so the many ``[N]`` *uses* -- including any inside code -- render
+    as the literal bit notation the author intended and are left untouched.
+    """
+
+    def _sub(m: re.Match[str]) -> str:
+        stats["bit-range definitions defused"] += 1
+        return f"{m.group(1)}\\[{m.group(2)}\\]"
+
+    def _escape_prose(prose: str) -> str:
+        # ``[N]:`` at a block start: optional indent, then any blockquote/list
+        # markers, then the token immediately before a colon.
+        prose = re.sub(
+            r"(?m)^([ \t]*(?:(?:>|[-*+]|\d+[.)])[ \t]*)*)\[(\d+(?::\d+)?)\](?=:)",
+            _sub,
+            prose,
+        )
+        # ...or right after a block-level HTML start tag whose content Pandoc
+        # parses as Markdown; raw-text elements such as <pre> are left alone.
+        return re.sub(
+            r"(<(?:td|th|li|p|div|dd|dt|caption|blockquote|summary|details|figcaption|figure"
+            r"|section|aside|article|header|footer|center)\b[^<>]*>[ \t]*)"
+            r"\[(\d+(?::\d+)?)\](?=:)",
+            _sub,
+            prose,
+            flags=re.IGNORECASE,
+        )
+
+    return transform_outside_code(text, _escape_prose)
+
+
+def warn_broken_images(
+    document: MarkdownDocument, source_path: str | None, stats: Counter[str]
+) -> None:
+    """Warn about broken image references (a read-only check; text is unchanged).
+
+    Covers both image failure modes surfaced by the Word -> markdown pipeline,
+    reporting each once on stderr so they surface without failing the build:
+
+    * **Missing local files** -- inline/reference images and ``<img src="path">``
+      targets whose decoded file path cannot be found. Remote URLs, ``data:``
+      URIs and fragment-only targets are ignored.
+    * **Empty placeholder data URIs** -- ``![alt](data:image/...)`` whose base64
+      payload is empty or truncated (e.g. ``data:image/x-emf;base64...`` left by
+      markitdown), which render blank.
+
+    Runs before :func:`resolve_relative_paths`, so local paths are still
+    relative to *source_path*'s directory.
+    """
+    source_dir = os.path.dirname(source_path) if source_path else ""
+    warned_files: set[str] = set()
+    warned_placeholders: set[str] = set()
+
+    def _check_missing(raw: str) -> None:
+        if source_path is None:
+            return
+        url = urlsplit(raw)
+        if url.scheme or url.netloc or not url.path:
+            return
+        path = unquote(url.path)
+        resolved = os.path.normpath(os.path.join(source_dir, path))
+        if resolved not in warned_files and not os.path.isfile(resolved):
+            warned_files.add(resolved)
+            print(
+                f"WARNING: missing image '{path}' referenced in {source_path}",
+                file=sys.stderr,
+            )
+
+    def _check_placeholder(uri: str) -> None:
+        _head, sep, data = uri.partition(",")
+        if sep and re.fullmatch(r"[A-Za-z0-9+/=\s]{8,}", data.strip()):
+            return  # has a real base64 payload
+        fmt_match = re.match(r"data:image/([a-z0-9.+-]+)", uri, re.IGNORECASE)
+        fmt = fmt_match.group(1).lower() if fmt_match else "?"
+        if uri in warned_placeholders:
+            return
+        warned_placeholders.add(uri)
+        print(
+            f"WARNING: placeholder image with no data in {source_path}: "
+            f"empty/truncated 'image/{fmt}' data URI",
+            file=sys.stderr,
+        )
+
+    def _check(target: str, image: bool) -> str:
+        if image:
+            if target.startswith("data:image/"):
+                _check_placeholder(target)
+            else:
+                _check_missing(target)
+        return target
+
+    document.transform_targets(_check)
+
+
+def warn_missing_anchors(
+    document: MarkdownDocument, source_path: str | None, stats: Counter[str]
+) -> None:
+    """Warn about same-file ``[text](#anchor)`` links that match no heading.
+
+    Computes the file's own heading anchors through Pandoc's typed AST using
+    the same reader as the renderer, then reports any in-page ``#fragment`` link
+    that does not resolve to one.
+    """
+    anchors = {heading.identifier for heading in document.headings}
+    warned: set[str] = set()
+
+    def _check(target: str, image: bool) -> str:
+        if not image and target.startswith("#"):
+            decoded = unquote(target[1:])
+            if decoded and decoded not in anchors and decoded not in warned:
+                warned.add(decoded)
+                print(
+                    f"WARNING: broken anchor '{target}' in {source_path} (no matching heading)",
+                    file=sys.stderr,
+                )
+        return target
+
+    document.transform_targets(_check)
+
+
+def warn_undefined_references(text: str, source_path: str | None, stats: Counter[str]) -> str:
+    """Warn about reference-style links/images with undefined labels (a read-only check).
+
+    Recovers the useful part of markdownlint's MD052 (disabled for these docs)
+    without its bit-notation false positives. Flags the reference forms whose
+    ``][`` structure is an unambiguous reference intent -- full ``[text][label]``,
+    collapsed ``[label][]``, and reference images ``![text][label]`` -- when
+    *label* has no matching ``[label]: url`` definition, so the token renders as
+    literal text. Each undefined label is reported once on stderr.
+
+    Numeric and bit-range labels (``[1][15:0]``, ``[7:0]``) are skipped: they are
+    hardware bit-slice notation, not references, and are why MD052 was disabled.
+    Shortcut references ``[label]`` (bare single brackets) are intentionally not
+    flagged -- they collide with the many non-link uses of ``[...]`` in these
+    docs. Inline links ``[text](url)`` (``](`` not ``][``) are never matched.
+    """
+
+    def _norm(label: str) -> str:
+        # Reference labels are case-insensitive and whitespace-normalised.
+        return re.sub(r"\s+", " ", label.strip()).casefold()
+
+    # Collect defined link reference labels: ``[label]: url``.
+    defined_labels: set[str] = set()
+
+    def _collect_definitions(prose: str) -> str:
+        defined_labels.update(
+            _norm(match.group(1))
+            for match in re.finditer(r"(?m)^ {0,3}\[((?:\\.|[^\]\\])+)\]:\s+\S", prose)
+        )
+        return prose
+
+    transform_outside_code(text, _collect_definitions)
+
+    warned: set[str] = set()
+
+    def _check_prose(prose: str) -> str:
+        # Full/collapsed reference links and reference images; the ``][`` is what
+        # distinguishes these from inline links ``[text](url)``.
+        # A backslash only starts an escape: when it could also match as plain text, every
+        # escape after a "[" doubled the work of a failed match.
+        pattern = r"(?<!\\)(!?)\[((?:\\[\s\S]|[^\[\]\\]|\[[^\]]*\])*)\]\[((?:\\.|[^\]\\])*)\]"
+        for match in re.finditer(pattern, prose):
+            first, second = match.group(2), match.group(3)
+            # Collapsed form ``[label][]`` uses the first bracket as the label.
+            label = second if second.strip() else first
+            norm = _norm(label)
+            # Skip empty, bit-index/range, and defined labels.
+            if not norm or re.fullmatch(r"\d+(?::\d+)?", norm):
+                continue
+            if norm in defined_labels or norm in warned:
+                continue
+            warned.add(norm)
+            kind = "image" if match.group(1) else "link"
+            print(
+                f"WARNING: undefined reference {kind} '[{label}]' in {source_path} "
+                f"(no matching '[{label}]:' definition; renders as literal text -- "
+                f"use an inline link [text](url))",
+                file=sys.stderr,
+            )
+        return prose
+
+    transform_outside_code(text, _check_prose)
+    return text
+
+
+def warn_crossfile_md_links(
+    document: MarkdownDocument, source_path: str | None, stats: Counter[str]
+) -> None:
+    """Warn about links to other ``.md`` files (a single-file-mode check).
+
+    Only directory-collection mode rewrites cross-file ``.md`` links to internal
+    anchors (see :func:`_file_link_resolver`). In single-file mode nothing
+    rewrites them, so a ``[text](./other.md)`` link survives into the output and
+    renders as a dead link to a ``.md`` file pandoc never produced. This
+    read-only check (text is unchanged) reports each such link once on stderr so
+    they surface without failing the build.
+
+    It is invoked only for single-file input; directory builds already resolve
+    and report these links in :func:`_file_link_resolver`, so running it there
+    would flag every (valid, about-to-be-rewritten) cross-file link as noise. A
+    target whose file is missing on disk (resolved relative to *source_path*'s
+    directory) is reported as broken; an existing target is reported as
+    unresolvable in single-file output. Remote URLs and fragment-only
+    links are ignored, matching the filters in :func:`_file_link_resolver`.
+
+    """
+    if source_path is None:
+        return
+
+    source_dir = os.path.dirname(source_path)
+    warned: set[str] = set()
+
+    def _check(target: str, image: bool) -> str:
+        url = urlsplit(target)
+        if image or url.scheme or url.netloc or not url.path.lower().endswith(".md"):
+            return target
+        if target in warned:
+            return target
+        warned.add(target)
+        resolved = os.path.normpath(os.path.join(source_dir, unquote(url.path)))
+        if os.path.isfile(resolved):
+            print(
+                f"WARNING: cross-file link to '{target}' will not resolve in "
+                "single-file output; build the containing directory instead",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"WARNING: broken cross-file link to '{target}' (target file not found)",
+                file=sys.stderr,
+            )
+        return target
+
+    document.transform_targets(_check)
+
+
+def _pandoc_headings(markdown: str, source_path: str | None) -> list["Heading"]:
+    """Return actual renderer heading identities for *markdown*."""
+    try:
+        from md_doc_converter.markdown.headings import HeadingError, headings
+    except ImportError as exc:
+        raise RuntimeError(
+            "md_doc_converter.markdown.headings is required for Markdown heading anchor handling"
+        ) from exc
+
+    try:
+        return headings(markdown, reader=_RENDERER_READER)
+    except HeadingError as exc:
+        location = f" in {source_path}" if source_path else ""
+        raise HeadingError(f"failed to collect heading identifiers{location}: {exc}") from exc
+
+
+@dataclass(frozen=True)
+class _CollectedMarkdown:
+    path: str
+    content: str
+    headings: list["Heading"]
+    document: MarkdownDocument
+
+
+# Ordered list of transforms applied to the markdown text.
+# Append new transform functions here to extend the pipeline.
+TEXT_TRANSFORMS = [
+    warn_block_html_in_table_cells,
+    strip_ado_macros,
+    nowrap_io_in_table_headers,
+    escape_bit_ranges,
+    warn_undefined_references,
+]
+TARGET_TRANSFORMS = [warn_broken_images, resolve_relative_paths, warn_missing_anchors]
+
+
+def _prepare_document(
+    text: str,
+    source_path: str | None = None,
+    stats: dict[str, Counter[str]] | None = None,
+    *,
+    single_file: bool = False,
+) -> MarkdownDocument:
+    """Run text cleanup and target transforms with one parse per source file.
+
+    *stats*, when provided, is a mapping (created by the caller so it can be
+    shared across many files) from transform name to a Counter of the changes
+    that transform made; :func:`print_stats` summarises it at end of run.
+    """
+    if stats is None:
+        stats = defaultdict(Counter)
+    for transform in TEXT_TRANSFORMS:
+        text = transform(text, source_path, stats[transform.__name__])
+    document = MarkdownDocument(text, source_path=source_path or "")
+    if single_file:
+        warn_crossfile_md_links(document, source_path, stats["warn_crossfile_md_links"])
+    for target_transform in TARGET_TRANSFORMS:
+        target_transform(document, source_path, stats[target_transform.__name__])
+
+    # Definitions are file-scoped, even when their labels are unused locally.
+    # The parser resolves full, collapsed and shortcut references, not this check.
+    references = False
+
+    def _detect_references(prose: str) -> str:
+        nonlocal references
+        references = references or re.search(r"(?<!\\)(?:\\\\)*\]:", prose) is not None
+        return prose
+
+    transform_outside_code(text, _detect_references)
+    if references:
+        document.render(normalize_references=True)
+    return document
+
+
+def preprocess(
+    text: str,
+    source_path: str | None = None,
+    stats: dict[str, Counter[str]] | None = None,
+    *,
+    single_file: bool = False,
+) -> str:
+    """Return private, prepared Markdown without changing its source."""
+    return _prepare_document(text, source_path, stats, single_file=single_file).render()
+
+
+def print_stats(stats: dict[str, Counter[str]]) -> None:
+    """Print an aggregate summary of transform changes to stderr.
+
+    Only transforms that changed something are listed, in pipeline order.
+    """
+    lines: list[str] = []
+    for transform in (*TEXT_TRANSFORMS, *TARGET_TRANSFORMS):
+        counter = stats.get(transform.__name__)
+        if not counter:
+            continue
+        detail = ", ".join(f"{key}: {count}" for key, count in counter.items())
+        lines.append(f"  {transform.__name__}: {detail}")
+    if lines:
+        print("Transform stats:", file=sys.stderr)
+        for line in lines:
+            print(line, file=sys.stderr)
+
+
+def in_git_work_tree(directory: str) -> bool:
+    """Return True if git is available and *directory* is inside a work tree."""
+    if shutil.which("git") is None:
+        return False
+    try:
+        proc = subprocess.run(
+            ["git", "-C", directory, "rev-parse", "--is-inside-work-tree"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return False
+    return proc.returncode == 0 and proc.stdout.strip() == "true"
+
+
+def _git_ignored(names: list[str], directory: str) -> set[str]:
+    """Return the subset of *names* (entries of *directory*) that git ignores.
+
+    Runs ``git check-ignore`` from *directory*.  It honours .gitignore,
+    .git/info/exclude and the global excludes file, and (by consulting the
+    index) never reports tracked files, so a tracked file matching an ignore
+    rule is still kept.  Returns an empty set on any git error.
+    """
+    if not names:
+        return set()
+    try:
+        proc = subprocess.run(
+            ["git", "check-ignore", "--stdin", "-z"],
+            input="\0".join(names),
+            cwd=directory,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return set()
+    # 0 = one or more paths ignored, 1 = none ignored; anything else is an error.
+    if proc.returncode not in (0, 1):
+        return set()
+    return {name for name in proc.stdout.split("\0") if name}
+
+
+def collect_directory(
+    dir_path: str, stats: dict[str, Counter[str]], respect_gitignore: bool = False
+) -> str:
+    """Collect all .md files in a directory tree into one document.
+
+    If a ``.order`` file exists in a directory, its lines determine the
+    order of entries (each line is a stem — either a ``.md`` file or a
+    subdirectory).  Entries not listed in ``.order`` are appended in
+    sorted order.  Directories without a ``.order`` file are sorted
+    alphabetically.
+
+    Each file's image paths are resolved relative to its own location
+    before concatenation.  Cross-file ``.md`` links are resolved to
+    internal heading anchors when the target file is part of the
+    collection.
+    """
+    if respect_gitignore and not in_git_work_tree(dir_path):
+        print(
+            f"WARNING: --respect-gitignore had no effect: '{dir_path}' is not "
+            "inside a git working tree (or git is unavailable)",
+            file=sys.stderr,
+        )
+        respect_gitignore = False
+
+    # Cross-file link resolution state, populated after collection by parsing
+    # both each file and the combined document through Pandoc. This keeps local
+    # and combined anchors aligned to the actual renderer's GFM-compatible IDs,
+    # including Unicode, punctuation, explicit attributes and duplicate suffixes.
+    file_slug_map: dict[str, str] = {}
+    file_anchor_map: dict[str, dict[str, str]] = {}
+
+    def _is_ignored(file_path: str) -> bool:
+        if not respect_gitignore:
+            return False
+        directory, name = os.path.split(file_path)
+        return name in _git_ignored([name], directory or ".")
+
+    def _ordered_entries(directory: str) -> list[str]:
+        """Return directory entries ordered by .order file if present."""
+        order_file = os.path.join(directory, ".order")
+        entries = os.listdir(directory)
+
+        if respect_gitignore:
+            ignored = _git_ignored(entries, directory)
+            entries = [e for e in entries if e not in ignored]
+
+        if os.path.isfile(order_file):
+            with open(order_file) as f:
+                order = [line.strip() for line in f if line.strip()]
+            # Build lookup: stem -> actual entry name. A directory owns its stem
+            # so a same-stem title page (topic.md beside topic/) stays with it.
+            stem_map: dict[str, str] = {}
+            for e in entries:
+                stem = e.removesuffix(".md") if e.lower().endswith(".md") else e
+                if stem not in stem_map or os.path.isdir(os.path.join(directory, e)):
+                    stem_map[stem] = e
+            ordered = []
+            seen = set()
+            for stem in order:
+                if stem in stem_map:
+                    ordered.append(stem_map[stem])
+                    seen.add(stem_map[stem])
+            # Append remaining entries not in .order
+            for e in sorted(entries):
+                if e not in seen:
+                    ordered.append(e)
+            return ordered
+
+        return sorted(entries)
+
+    def _read_md(file_path: str) -> _CollectedMarkdown:
+        """Read a markdown file, run all transforms, and record its heading anchors."""
+        print(f"  {file_path}", file=sys.stderr)
+        with open(file_path) as fh:
+            content = fh.read()
+        document = _prepare_document(content, source_path=file_path, stats=stats)
+        normalized = os.path.normpath(file_path)
+        return _CollectedMarkdown(normalized, document.render(), document.headings, document)
+
+    def _collect(
+        directory: str, title_content: _CollectedMarkdown | None = None
+    ) -> list[_CollectedMarkdown]:
+        """Recursively collect markdown content from *directory*.
+
+        If *title_content* is provided, it is used as the title page.
+        Otherwise, a directory without a ``.order`` file uses its first
+        file as the title page; a ``.order`` file keeps its listed order.
+        """
+        explicit_order = os.path.isfile(os.path.join(directory, ".order"))
+        parts: list[_CollectedMarkdown] = []
+
+        for entry in _ordered_entries(directory):
+            if entry.startswith("."):
+                continue
+            full_path = os.path.join(directory, entry)
+            if os.path.isdir(full_path):
+                sibling_md = full_path + ".md"
+                sub_title: _CollectedMarkdown | None = None
+                if os.path.isfile(sibling_md) and not _is_ignored(sibling_md):
+                    sub_title = _read_md(sibling_md)
+                parts.extend(_collect(full_path, sub_title))
+            elif os.path.isfile(full_path) and entry.lower().endswith(".md"):
+                stem = entry.removesuffix(".md") if entry.lower().endswith(".md") else entry
+                if os.path.isdir(os.path.join(directory, stem)):
+                    continue
+                if title_content is None and not (explicit_order and parts):
+                    title_content = _read_md(full_path)
+                else:
+                    parts.append(_read_md(full_path))
+
+        all_parts: list[_CollectedMarkdown] = []
+        if title_content:
+            all_parts.append(title_content)
+        all_parts.extend(parts)
+        return all_parts
+
+    # Top-level: check for sibling .md to use as title page
+    sibling_md = dir_path.rstrip("/") + ".md"
+    title_content: _CollectedMarkdown | None = None
+    if os.path.isfile(sibling_md) and not _is_ignored(sibling_md):
+        title_content = _read_md(sibling_md)
+
+    collected = _collect(dir_path, title_content)
+    result = "\n\n".join(item.content for item in collected if item.content)
+    combined = _pandoc_headings(result, dir_path)
+    expected = sum(len(item.headings) for item in collected)
+    if len(combined) != expected:
+        raise RuntimeError(
+            "combined markdown heading count changed during collection "
+            f"({len(combined)} parsed, expected {expected})"
+        )
+
+    index = 0
+    for item in collected:
+        item_combined = combined[index : index + len(item.headings)]
+        index += len(item.headings)
+        file_anchor_map[item.path] = {
+            local.identifier: merged.identifier
+            for local, merged in zip(item.headings, item_combined, strict=True)
+        }
+        if item_combined:
+            file_slug_map[item.path] = item_combined[0].identifier
+
+    resolve_file = _file_link_resolver(file_slug_map, file_anchor_map)
+
+    def _remap_links(item: _CollectedMarkdown) -> str:
+        anchors = file_anchor_map[item.path]
+
+        def _remap(target: str, image: bool) -> str:
+            if image:
+                return target
+            if not target.startswith("#"):
+                return resolve_file(target)
+            combined_anchor = anchors.get(unquote(target[1:]))
+            return f"#{quote(combined_anchor, safe='')}" if combined_anchor is not None else target
+
+        item.document.transform_targets(_remap)
+        return item.document.render()
+
+    return "\n\n".join(_remap_links(item) for item in collected if item.content)
+
+
+def _file_link_resolver(
+    file_slug_map: dict[str, str],
+    file_anchor_map: dict[str, dict[str, str]],
+) -> Callable[[str], str]:
+    """Build a target mapper from collected ``.md`` paths to internal heading links.
+
+    When multiple files are combined into a single document, cross-file
+    links (e.g. ``[text](./Other-File.md)`` or ``[text](./Other.md#section)``)
+    should point to the corresponding heading anchor inside the combined
+    document instead of an external file.
+
+    *file_slug_map* maps normalised file paths to the slug of each file's first
+    heading (for bare links).  *file_anchor_map* maps each normalised file path
+    to ``{file-local slug: combined-document slug}`` for every heading, so a
+    ``#fragment`` link is remapped to the anchor the target heading actually
+    receives once duplicate slugs across the merged document are suffixed
+    (``-1``, ``-2``, ...).
+
+    A ``.md`` link whose target file is not among the collected files, whose
+    target has no headings, or whose ``#fragment`` does not match any heading in
+    the collected target file is left unchanged and reported once on stderr, so
+    broken cross-file links surface without silently guessing a destination.
+
+    """
+    warned: set[str] = set()
+
+    def _replace(path: str) -> str:
+        url = urlsplit(path)
+        file_path, fragment = url.path, url.fragment
+
+        # Only handle local .md files (skip external URLs such as https://.../x.md)
+        if url.scheme or url.netloc or not file_path.lower().endswith(".md"):
+            return path
+        if url.query:
+            if path not in warned:
+                warned.add(path)
+                print(
+                    f"WARNING: unresolved cross-file link to '{path}' "
+                    "(query parameters cannot be represented by an internal heading link)",
+                    file=sys.stderr,
+                )
+            return path
+
+        normalized = os.path.normpath(unquote(file_path))
+        if normalized not in file_anchor_map:
+            if normalized not in warned:
+                warned.add(normalized)
+                print(
+                    f"WARNING: unresolved cross-file link to '{file_path}' "
+                    "(target not found among collected files)",
+                    file=sys.stderr,
+                )
+            return path
+
+        if fragment:
+            # Remap the author's file-local anchor to the combined-document slug.
+            combined = file_anchor_map[normalized].get(unquote(fragment))
+            if combined is None:
+                key = f"{normalized}#{fragment}"
+                if key not in warned:
+                    warned.add(key)
+                    print(
+                        f"WARNING: unresolved cross-file link to "
+                        f"'{file_path}#{fragment}' (heading not found in target file)",
+                        file=sys.stderr,
+                    )
+                return path
+            return f"#{quote(combined, safe='')}"
+        else:
+            # Link to the file's first heading
+            slug = file_slug_map.get(normalized)
+            if slug is None:
+                if normalized not in warned:
+                    warned.add(normalized)
+                    print(
+                        f"WARNING: unresolved cross-file link to '{file_path}' "
+                        "(target file has no headings)",
+                        file=sys.stderr,
+                    )
+                return path
+            return f"#{quote(slug, safe='')}"
+
+    return _replace
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Markdown preprocessor for pandoc")
+    parser.add_argument("-i", "--input", required=True, help="Input markdown file or directory")
+    parser.add_argument("-o", "--output", help="Output file (writes to stdout if omitted)")
+    parser.add_argument(
+        "--respect-gitignore",
+        action="store_true",
+        help="When the input is a directory, skip files and dirs that git ignores",
+    )
+    args = parser.parse_args()
+
+    # Per-transform change counts, shared across every file processed.
+    stats: dict[str, Counter[str]] = defaultdict(Counter)
+
+    if os.path.isdir(args.input):
+        # Each file is preprocessed during collection
+        result = collect_directory(args.input, stats, respect_gitignore=args.respect_gitignore)
+    else:
+        with open(args.input) as f:
+            text = f.read()
+        result = preprocess(text, source_path=args.input, stats=stats, single_file=True)
+
+    if args.output:
+        with open(args.output, "w") as f:
+            f.write(result)
+    else:
+        sys.stdout.write(result)
+
+    print_stats(stats)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (MarkdownError, OSError, ValueError) as error:
+        sys.exit(f"preprocess: error: {error}")

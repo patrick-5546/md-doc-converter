@@ -1,0 +1,16 @@
+from: markdown-implicit_figures-yaml_metadata_block+gfm_auto_identifiers
+toc-depth: 6
+filters:
+  - mermaid-filter  # for rendering mermaid diagrams
+  - pandoc-katex  # for rendering algebraic blocks
+  - "${.}/strip-colwidths.lua"  # auto-size table columns instead of equal-width
+  - "${.}/table-code-pipes.lua"  # read `a\|b` in a table cell as GFM does
+css:
+  - https://cdn.jsdelivr.net/npm/github-markdown-css@5.9.0/github-markdown-light.min.css
+  # for pandoc-katex, get version with pandoc-katex --katex-version
+  - https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css
+# The renderer inlines style-overrides.css, the page header/footer and any extra
+# stylesheet with --include-in-header, which follows these links.
+# Wrap body content in .markdown-body so github-markdown-light.min.css selectors apply
+include-before-body: "${.}/markdown-body-open.html"
+include-after-body: "${.}/markdown-body-close.html"
