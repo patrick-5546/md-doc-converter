@@ -8,7 +8,7 @@ permissions:
   contents: read
 
 env:
-  # Fail instead of updating uv.lock, including in the uv runs that poe starts.
+  # Fail instead of updating uv.lock, including in the uv runs that make starts.
   UV_LOCKED: "1"
 
 jobs:
@@ -30,10 +30,10 @@ jobs:
           path: .toolchain/bin/pandoc
           key: pandoc-${{ runner.os }}-${{ hashFiles('src/md_doc_converter/toolchain/install.py') }}
       - name: Lint
-        run: uv run poe lint
+        run: make lint
       - name: Core tests
         # Installs the pinned Pandoc first (setup --no-render), unless it is cached.
-        run: uv run poe test
+        run: make test
 
   render:
     name: Rendering tests
@@ -58,7 +58,7 @@ jobs:
           key: toolchain-${{ runner.os }}-${{ hashFiles('src/md_doc_converter/toolchain/package.json', 'src/md_doc_converter/toolchain/package-lock.json', 'src/md_doc_converter/toolchain/environment.py', 'src/md_doc_converter/toolchain/install.py') }}
       - name: Rendering tests
         # Runs setup first, which installs whatever the cache did not restore.
-        run: uv run poe test-render
+        run: make test-render
 
   package:
     name: Build and install check

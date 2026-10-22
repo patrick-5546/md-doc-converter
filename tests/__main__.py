@@ -23,11 +23,11 @@ SUITES = {
 }
 
 
-SETUP_PANDOC = "run `uv run poe setup-pandoc`"
+SETUP_PANDOC = "run `make setup-pandoc`"
 
 
 def use_project_toolchain() -> None:
-    """Use the checkout's toolchain, as the poe tasks do, with its pinned Pandoc first on PATH."""
+    """Use the checkout's toolchain, as make does, with its pinned Pandoc first on PATH."""
     os.environ.setdefault("MD_DOC_CONVERTER_HOME", str(PROJECT_ROOT / ".toolchain"))
     prefer_installed_tools()
 

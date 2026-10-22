@@ -7,7 +7,7 @@ dist/
 *.egg-info/
 .ruff_cache/
 
-# The project-local toolchain (MD_DOC_CONVERTER_HOME in the poe tasks and the tests)
+# The project-local toolchain (MD_DOC_CONVERTER_HOME in make and the tests)
 .toolchain/
 
 # npm, if the bundled manifests are ever installed in place

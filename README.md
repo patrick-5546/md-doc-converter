@@ -201,5 +201,5 @@ fetches.
 
 ## Development
 
-See [Development](docs/development.md) for the layout, the uv and Poe the Poet
+See [Development](docs/development.md) for the layout, the uv and make
 workflow, the test suites and continuous integration.

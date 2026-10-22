@@ -56,7 +56,7 @@ class TestSuiteSelection(unittest.TestCase):
                 suites.missing_dependencies("core"),
                 [
                     "git",
-                    f"pandoc {PANDOC_VERSION}: not installed (run `uv run poe setup-pandoc`)",
+                    f"pandoc {PANDOC_VERSION}: not installed (run `make setup-pandoc`)",
                 ],
             )
 

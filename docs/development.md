@@ -37,19 +37,18 @@ independently.
 
 ## Environment
 
-Development needs Linux x86_64, [uv](https://docs.astral.sh/uv/) and Git, plus
-Node.js 22.13 or newer for the render suite, and LibreOffice and Poppler
+Development needs Linux x86_64, [uv](https://docs.astral.sh/uv/), make and Git,
+plus Node.js 22.13 or newer for the render suite, and LibreOffice and Poppler
 (`pdftocairo`) for its EMF tests. uv installs Python (version from
-`.python-version`) and the locked dependencies in `uv.lock`, including
-[Poe the Poet](https://poethepoet.natn.io/), which runs the tasks defined in
-`pyproject.toml`. The tasks set `MD_DOC_CONVERTER_HOME` to `.toolchain/` in the
+`.python-version`) and the locked dependencies in `uv.lock`. The `Makefile` runs
+each task through uv and sets `MD_DOC_CONVERTER_HOME` to `.toolchain/` in the
 checkout unless it is already set, so the toolchain that the tests use stays out
 of your home directory.
 
 ```sh
-uv run poe lint    # Ruff format check, Ruff, ty and Pyrefly
-uv run poe test    # core suite; installs the pinned Pandoc first
-uv run poe         # lists the tasks
+make lint    # Ruff format check, Ruff, ty and Pyrefly
+make test    # core suite; installs the pinned Pandoc first
+make         # lists the tasks
 ```
 
 | Task | Purpose |
@@ -65,7 +64,7 @@ uv run poe         # lists the tasks
 | `build` | Build the wheel and sdist into `dist/` |
 | `lock-npm` | Refresh `package-lock.json` after editing the bundled `package.json` |
 
-`uv run` creates or updates `.venv` from `uv.lock` before running a task.
+`uv run`, which each task uses, creates or updates `.venv` from `uv.lock` first.
 
 ## Test suites
 
@@ -77,7 +76,7 @@ command does.
 
 The core suite needs Git and the pinned Pandoc 3.12.1, because some converter
 tests compare exact Pandoc output; the runner stops with a hint to run
-`uv run poe setup-pandoc` when that Pandoc is missing. The core suite does not
+`make setup-pandoc` when that Pandoc is missing. The core suite does not
 need Node.js, the rest of the toolchain, browsers or LibreOffice: command-line
 and pipeline tests use disposable fake `pandoc`, `node` and `npm` executables
 and a fake toolchain, and EMF conversion logic is covered with mocked native
@@ -96,7 +95,7 @@ Pandoc 3.10.1). `.python-version` selects the newest supported Python, 3.14;
 to test the oldest, 3.11:
 
 ```sh
-UV_PYTHON=3.11 UV_PROJECT_ENVIRONMENT=.venv-3.11 uv run poe test
+UV_PYTHON=3.11 UV_PROJECT_ENVIRONMENT=.venv-3.11 make test
 ```
 
 ## Updating dependencies
@@ -105,7 +104,7 @@ UV_PYTHON=3.11 UV_PROJECT_ENVIRONMENT=.venv-3.11 uv run poe test
   to one version, and mammoth, its Word reader, to one release series, because
   Word alignment depends on their exact output.
 - **npm packages:** edit `src/md_doc_converter/toolchain/package.json`, then run
-  `uv run poe lock-npm`. The next `setup` reinstalls the packages because the
+  `make lock-npm`. The next `setup` reinstalls the packages because the
   manifests' digest changes. A test checks that every locked package resolves
   from `registry.npmjs.org`. Rendered HTML links the stylesheet of the installed
   KaTeX version. When a package needs a newer Node.js, raise `NODE_MINIMUM` in
@@ -127,7 +126,7 @@ UV_PYTHON=3.11 UV_PROJECT_ENVIRONMENT=.venv-3.11 uv run poe test
 
 ## Building
 
-`uv run poe build` (or `uv build`) writes the wheel and sdist to `dist/`. The
+`make build` (or `uv build`) writes the wheel and sdist to `dist/`. The
 wheel contains only the `md_doc_converter` package with its assets, PDF printer
 and npm manifests. Check an installed build outside the checkout:
 
