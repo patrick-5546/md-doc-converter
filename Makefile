@@ -1,6 +1,13 @@
 # Development tasks for md-doc-converter; `make help` lists them.
 # Each task runs through uv, which first creates or updates .venv from uv.lock.
 
+# Fail a recipe on its first failing command, including inside a pipeline; flag undefined
+# variables; no implicit rules, which a task runner never needs.
+SHELL := bash
+.SHELLFLAGS := -eu -o pipefail -c
+MAKEFLAGS += --warn-undefined-variables --no-builtin-rules
+.SUFFIXES:
+
 # Keep the toolchain that `setup` installs inside the checkout, unless already set.
 export MD_DOC_CONVERTER_HOME ?= $(CURDIR)/.toolchain
 
@@ -22,14 +29,21 @@ setup-pandoc: ## Install only the pinned Pandoc into .toolchain/
 doctor: ## Check the prerequisites
 	$(UV_RUN) md-doc-converter doctor
 
-format: ## Format Python with Ruff
+format: ## Format Python with Ruff, and fix what rumdl can in Markdown
 	$(UV_RUN) ruff format src tests
+	$(UV_RUN) rumdl fmt .
 
-lint: ## Ruff format check, Ruff, ty and Pyrefly
+# actionlint also runs shellcheck on the workflow's scripts. zizmor audits the workflow's
+# security, including the online audits when GH_TOKEN is set.
+lint: ## Python (Ruff, ty, Pyrefly), Markdown, spelling and the GitHub workflow
 	$(UV_RUN) ruff format --check src tests
 	$(UV_RUN) ruff check src tests
 	$(UV_RUN) ty check src tests
 	$(UV_RUN) pyrefly check
+	$(UV_RUN) rumdl check .
+	$(UV_RUN) typos
+	$(UV_RUN) actionlint
+	$(UV_RUN) zizmor --quiet $(if $(filter undefined,$(origin GH_TOKEN)),--offline) .github
 
 test: setup-pandoc ## Core suite: unit and integration tests, in parallel
 	$(UV_RUN) pytest -n auto

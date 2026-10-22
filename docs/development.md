@@ -47,7 +47,7 @@ checkout unless it is already set, so the toolchain that the tests use stays out
 of your home directory.
 
 ```sh
-make lint    # Ruff format check, Ruff, ty and Pyrefly
+make lint    # Ruff, ty, Pyrefly, rumdl, typos, actionlint and zizmor
 make test    # core suite; installs the pinned Pandoc first
 make         # lists the tasks
 ```
@@ -57,8 +57,8 @@ make         # lists the tasks
 | `setup` | Install the toolchain into `.toolchain/`; needs Node.js |
 | `setup-pandoc` | Install only the pinned Pandoc into `.toolchain/` |
 | `doctor` | Check the prerequisites |
-| `format` | Format Python with Ruff |
-| `lint` | Ruff format check, Ruff, ty and Pyrefly |
+| `format` | Format Python with Ruff, and fix what rumdl can in Markdown |
+| `lint` | Check Python (Ruff's formatter and linter, ty, Pyrefly), Markdown (rumdl), spelling (typos), and the GitHub workflow (actionlint with shellcheck, zizmor) |
 | `test` | Core suite: unit and integration tests, in parallel; runs `setup-pandoc` first |
 | `test-render` | Real rendering suite; runs `setup` first |
 | `test-all` | Both suites |
@@ -66,7 +66,11 @@ make         # lists the tasks
 | `build` | Build the wheel and sdist into `dist/` |
 | `lock-npm` | Refresh `package-lock.json` after editing the bundled `package.json` |
 
-`uv run`, which each task uses, creates or updates `.venv` from `uv.lock` first.
+`uv run`, which each task uses, creates or updates `.venv` from `uv.lock` first, so
+every checker is a locked development dependency. Their settings are in
+`pyproject.toml`; `.editorconfig` gives editors the indentation and line endings.
+The `Makefile` runs recipes with bash's `-eu -o pipefail` and warns about undefined
+variables.
 
 ## Test suites
 

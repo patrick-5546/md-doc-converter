@@ -39,6 +39,9 @@ jobs:
           path: .toolchain/bin/pandoc
           key: pandoc-${{ runner.os }}-${{ hashFiles('src/md_doc_converter/toolchain/install.py') }}
       - name: Lint
+        env:
+          # zizmor's online audits check the pinned actions against GitHub.
+          GH_TOKEN: ${{ github.token }}
         run: make lint
       - name: Core tests
         # Installs the pinned Pandoc first (setup --no-render), unless it is cached.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from itertools import starmap
 from xml.etree import ElementTree as ET
 
 import pytest
@@ -362,7 +363,7 @@ def test_fields_pandoc_cannot_close_are_reduced_to_their_text() -> None:
         ("C ", "{", "@ PAGEREF _a ", "|", "3"),
     ]
     body = ET.Element(W + "body")
-    body.extend(_line(*parts) for parts in lines)
+    body.extend(starmap(_line, lines))
 
     counts = _ooxml.repair_fields(body)
 

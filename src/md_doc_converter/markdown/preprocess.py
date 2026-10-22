@@ -622,9 +622,7 @@ def collect_directory(
                     ordered.append(stem_map[stem])
                     seen.add(stem_map[stem])
             # Append remaining entries not in .order
-            for e in sorted(entries):
-                if e not in seen:
-                    ordered.append(e)
+            ordered.extend(e for e in sorted(entries) if e not in seen)
             return ordered
 
         return sorted(entries)
@@ -788,19 +786,18 @@ def _file_link_resolver(
                     )
                 return path
             return f"#{quote(combined, safe='')}"
-        else:
-            # Link to the file's first heading
-            slug = file_slug_map.get(normalized)
-            if slug is None:
-                if normalized not in warned:
-                    warned.add(normalized)
-                    print(
-                        f"WARNING: unresolved cross-file link to '{file_path}' "
-                        "(target file has no headings)",
-                        file=sys.stderr,
-                    )
-                return path
-            return f"#{quote(slug, safe='')}"
+        # Link to the file's first heading
+        slug = file_slug_map.get(normalized)
+        if slug is None:
+            if normalized not in warned:
+                warned.add(normalized)
+                print(
+                    f"WARNING: unresolved cross-file link to '{file_path}' "
+                    "(target file has no headings)",
+                    file=sys.stderr,
+                )
+            return path
+        return f"#{quote(slug, safe='')}"
 
     return _replace
 

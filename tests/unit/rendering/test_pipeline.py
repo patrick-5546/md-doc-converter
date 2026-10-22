@@ -53,7 +53,7 @@ class FakeRenderer:
         if command[0] == "git":
             stdout = "true\n" if self.git_work_tree else ""
             return subprocess.CompletedProcess(command, 0 if stdout else 128, stdout, "")
-        elif command[0] == "pandoc":
+        if command[0] == "pandoc":
             self.prepared.append(Path(command[-1]))
             if self.pandoc_fails:
                 raise subprocess.CalledProcessError(7, command)

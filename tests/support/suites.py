@@ -64,7 +64,9 @@ def missing_prerequisites(*, render: bool) -> list[str]:
         if not (shutil.which("libreoffice") or shutil.which("soffice")):
             missing.append("libreoffice/soffice (EMF regression coverage)")
         tools = toolchain()
-        for check in (check_packages(tools), check_browser(tools)):
-            if check.status != "ok":
-                missing.append(f"{check.name}: {check.detail} ({check.fix})")
+        missing.extend(
+            f"{check.name}: {check.detail} ({check.fix})"
+            for check in (check_packages(tools), check_browser(tools))
+            if check.status != "ok"
+        )
     return missing

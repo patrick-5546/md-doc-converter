@@ -264,4 +264,3 @@ when cells must span columns; the classes apply to it in the same way:
 Review the generated PDF for wide tables, diagram sizing, links, page breaks,
 the header and footer, and page numbering. The table classes above can tighten
 layout without changing the source data.
-
