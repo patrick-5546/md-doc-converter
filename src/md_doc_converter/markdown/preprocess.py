@@ -1,12 +1,12 @@
 """
 Markdown preprocessor that prepares files for pandoc ingestion.
 
-Per-file text cleanup removes Azure DevOps macros, prevents I/O table-header
-wrapping and defuses accidental bit-notation reference definitions. Pandoc then
-resolves inline, full, collapsed and shortcut links/images with the renderer's
-reader. Targets are checked and made source-relative before files are combined;
-reference labels from different source files cannot collide. Only private
-prepared Markdown is normalized; source files are never rewritten.
+Per-file text cleanup removes Azure DevOps macros and defuses accidental
+bit-notation reference definitions. Pandoc then resolves inline, full, collapsed
+and shortcut links/images with the renderer's reader. Targets are checked and
+made source-relative before files are combined; reference labels from different
+source files cannot collide. Only private prepared Markdown is normalized;
+source files are never rewritten.
 
 Warnings cover missing images, empty placeholder data URIs, undefined reference
 labels and same-file links without matching headings. Literal code is not
@@ -166,38 +166,6 @@ def strip_ado_macros(text: str, source_path: str | None, stats: Counter[str]) ->
     # Removing a macro line leaves an empty line between the surrounding blanks;
     # collapse the run so we don't introduce MD012 (multiple consecutive blanks).
     return re.sub(r"\n{3,}", "\n\n", text)
-
-
-# Regex for a pipe-table separator row (e.g. |---|---|)
-_TABLE_SEP_RE = re.compile(r"^\|[\s:]*-+[\s:]*(\|[\s:]*-+[\s:]*)*\|?\s*$")
-
-
-def nowrap_io_in_table_headers(text: str, source_path: str | None, stats: Counter[str]) -> str:
-    """Prevent "I/O" from wrapping in table header cells.
-
-    Insert a Unicode word joiner (U+2060) into "I/O" in table header
-    rows so that the slash does not act as a line-break opportunity.
-    Only the header row (the row immediately before the separator
-    ``|---|---|`` row) is modified, and only the literal text "I/O"
-    is affected.
-    """
-    WJ = "\u2060"  # word joiner
-    lines = text.split("\n")
-    out: list[str] = []
-    for i, line in enumerate(lines):
-        # A header row is a pipe-delimited row immediately followed by a
-        # separator row.
-        if (
-            line.lstrip().startswith("|")
-            and i + 1 < len(lines)
-            and _TABLE_SEP_RE.match(lines[i + 1])
-        ):
-            joined = line.count("I/O")
-            if joined:
-                stats["I/O joined"] += joined
-            line = line.replace("I/O", "I/" + WJ + "O")
-        out.append(line)
-    return "\n".join(out)
 
 
 def escape_bit_ranges(text: str, source_path: str | None, stats: Counter[str]) -> str:
@@ -476,7 +444,6 @@ class _CollectedMarkdown:
 TEXT_TRANSFORMS = [
     warn_block_html_in_table_cells,
     strip_ado_macros,
-    nowrap_io_in_table_headers,
     escape_bit_ranges,
     warn_undefined_references,
 ]
