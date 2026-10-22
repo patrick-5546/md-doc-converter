@@ -12,9 +12,9 @@ PAGE = (
     "<!doctype html><html><head><title>Timeout</title>{script}</head>"
     "<body><h1>Timeout</h1></body></html>"
 )
-# Paged.js awaits PagedConfig.before() inside one browser call; never resolving it
-# stalls layout deterministically.
-STALL = "<script>window.PagedConfig = {before: () => new Promise(() => {})};</script>"
+# A script that never returns keeps the page from loading, which stalls the first
+# browser step deterministically.
+STALL = "<script>while (true) {}</script>"
 
 
 class PdfTimeoutTest(unittest.TestCase):
@@ -47,7 +47,7 @@ class PdfTimeoutTest(unittest.TestCase):
         assert result.returncode == 0, result.stderr
         assert pdf.read_bytes().startswith(b"%PDF-")
 
-    def test_stalled_layout_names_the_setting_to_raise(self) -> None:
+    def test_stalled_page_names_the_setting_to_raise(self) -> None:
         result, pdf = self.print_pdf("1", STALL)
         assert result.returncode == 1, result.stderr
         assert "exceeded 1 seconds; raise --pdf-timeout" in result.stderr
@@ -60,7 +60,7 @@ class PdfTimeoutTest(unittest.TestCase):
             with self.subTest(timeout=timeout, node_modules=node_modules):
                 result, pdf = self.print_pdf(timeout, node_modules=node_modules)
                 assert result.returncode == 2, result.stderr
-                assert "pagedjs-print:" in result.stderr
+                assert "print-pdf:" in result.stderr
                 assert not pdf.exists()
 
 

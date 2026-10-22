@@ -14,7 +14,7 @@ COMMANDS = {
     "docx-to-md": "convert a Word document to Markdown, with its images",
     "md-to-html": "render Markdown to a standalone HTML file",
     "md-to-pdf": "render Markdown to a paged PDF",
-    "setup": "install the toolchain (Pandoc; for rendering Mermaid, KaTeX, Paged.js)",
+    "setup": "install the toolchain (Pandoc; for rendering Mermaid, KaTeX, Puppeteer)",
     "doctor": "check the prerequisites for conversion and rendering",
 }
 

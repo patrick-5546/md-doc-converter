@@ -23,7 +23,7 @@ from md_doc_converter.toolchain.environment import (
     toolchain,
 )
 
-PDF_PRINTER = Path(__file__).with_name("pagedjs-print.mjs")
+PDF_PRINTER = Path(__file__).with_name("print-pdf.mjs")
 KATEX_STYLESHEET = "https://cdn.jsdelivr.net/npm/katex@{version}/dist/katex.min.css"
 PDF_TIMEOUT_DEFAULT = 600
 # Node timers overflow above 2**31 - 1 milliseconds.

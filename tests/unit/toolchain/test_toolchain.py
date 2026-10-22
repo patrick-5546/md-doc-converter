@@ -181,10 +181,10 @@ class ChecksTest(TemporaryTest):
         assert [problem.split(":")[0] for problem in problems] == ["npm packages", "browser"]
         assert all("md-doc-converter setup" in problem for problem in problems)
         tools = install_fake_toolchain(self.root / "complete", self.log)
-        shutil.rmtree(tools.node_modules / "pagedjs-cli")
+        shutil.rmtree(tools.node_modules / "puppeteer")
         with self.path_with(self.bin):
             assert checks.render_problems(tools, pdf=False) == []
-            assert "pagedjs-cli" in checks.render_problems(tools, pdf=True)[0]
+            assert "missing puppeteer" in checks.render_problems(tools, pdf=True)[0]
         shutil.rmtree(tools.node_modules / "katex")
         with self.path_with(self.bin):
             assert "missing katex" in checks.render_problems(tools, pdf=False)[0]

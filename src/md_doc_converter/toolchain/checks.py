@@ -33,7 +33,7 @@ REINSTALL_FIX = "Run `md-doc-converter setup --force`"
 FILTER_EXECUTABLES = ("mmdc",)
 # Packages that the Pandoc filters and the PDF printer load.
 FILTER_PACKAGES = ("katex",)
-PDF_PACKAGE = "pagedjs-cli"
+PDF_PACKAGE = "puppeteer"
 
 
 @dataclass(frozen=True)

@@ -47,8 +47,8 @@ md-doc-converter doctor
 ```
 
 `setup` installs Pandoc and, for rendering, the pinned Mermaid, KaTeX and
-Paged.js npm packages with the headless browser they share: about 290 MB of
-downloads and 0.9 GB on disk. For Word conversion only, `setup --no-render`
+Puppeteer npm packages with the headless browser they share: about 270 MB of
+downloads and 0.8 GB on disk. For Word conversion only, `setup --no-render`
 installs just Pandoc, a 35 MB download, and needs no Node.js. See
 [Toolchain](#toolchain).
 
@@ -153,7 +153,7 @@ Command-line options override these environment variables.
   download, 158 MB on disk);
 - `node/`: the npm packages from the lockfile bundled with md-doc-converter,
   installed with `npm ci --ignore-scripts`, since none needs its install
-  scripts (about 120 MB of downloads, 470 MB on disk);
+  scripts (about 110 MB of downloads, 400 MB on disk);
 - `puppeteer/`: chrome-headless-shell, the build of headless Chrome that the
   locked Puppeteer pins, which Mermaid and the PDF printer share (a 126 MB
   download, 273 MB on disk).

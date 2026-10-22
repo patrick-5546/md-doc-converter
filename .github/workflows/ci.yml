@@ -77,7 +77,7 @@ jobs:
               md_doc_converter/assets/mermaid.lua \
               md_doc_converter/assets/katex.js \
               md_doc_converter/assets/style-overrides.css \
-              md_doc_converter/rendering/pagedjs-print.mjs \
+              md_doc_converter/rendering/print-pdf.mjs \
               md_doc_converter/toolchain/package.json \
               md_doc_converter/toolchain/package-lock.json; do
             grep -q "^$file " wheel-contents.txt || { echo "missing from wheel: $file"; exit 1; }

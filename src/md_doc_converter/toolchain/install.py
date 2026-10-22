@@ -196,7 +196,7 @@ def main(argv: list[str] | None = None) -> int:
         description=(
             "Install the pinned toolchain into MD_DOC_CONVERTER_HOME, by default "
             "~/.local/share/md-doc-converter: Pandoc, and for rendering, Mermaid, KaTeX and "
-            "Paged.js from npm with the headless browser they share. Rendering needs Node.js "
+            "Puppeteer from npm with the headless browser they share. Rendering needs Node.js "
             "22.13+ with npm."
         ),
     )

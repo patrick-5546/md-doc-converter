@@ -7,12 +7,6 @@
   "dependencies": {
     "@mermaid-js/mermaid-cli": "^12.0.0",
     "katex": "^0.19.0",
-    "pagedjs-cli": "^0.4.3",
     "puppeteer": "^25.16.0"
-  },
-  "overrides": {
-    "pagedjs-cli": {
-      "puppeteer": "$puppeteer"
-    }
   }
 }

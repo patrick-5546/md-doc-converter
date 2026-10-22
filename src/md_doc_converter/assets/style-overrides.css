@@ -3,6 +3,7 @@ Overrides for the pandoc rendering pipeline:
 - US Letter page size
 - 1in margins all around (matching Microsoft Word "Normal" default)
 - Page numbers in the footer (only in PDF output)
+- Headings kept on the page of the text they introduce (PDF output)
 - Styling for the optional page header and footer text, whose content is
   generated for each render
 - Font stacks using locally available Linux fonts, replacing
@@ -27,6 +28,23 @@ Overrides for the pandoc rendering pipeline:
     font-size: 9pt;
     color: #666;
   }
+}
+
+/* The page margins replace the browser's default body margin in print. */
+@media print {
+  body {
+    margin: 0;
+  }
+}
+
+/* Keep each heading with the text it introduces. */
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
+  break-after: avoid;
 }
 
 /* Page-margin boxes inherit the root font, outside .markdown-body. */
@@ -55,7 +73,7 @@ html,
    SVG to 75% of its natural size, then cap at page width. `zoom` scales the
    intrinsic size first; the max-width percentage clamps anything still wider
    than the page, so an oversized diagram fills the page rather than 75% of it.
-   Applies to both the HTML and the pagedjs-cli PDF (both Chromium-based). */
+   Applies to both the HTML and the PDF, which Chrome prints. */
 .markdown-body img.mermaid-diagram {
   zoom: 0.75;
   max-width: 100%;
@@ -81,8 +99,10 @@ html,
   overflow-wrap: break-word;
 }
 
-/* Code blocks: wrap long lines instead of overflowing */
-.markdown-body pre {
+/* Code blocks: wrap long lines instead of overflowing. github-markdown-css
+   sets white-space on the code element too. */
+.markdown-body pre,
+.markdown-body pre > code {
   white-space: pre-wrap;
   overflow-wrap: break-word;
 }

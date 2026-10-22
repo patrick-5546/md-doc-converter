@@ -52,9 +52,9 @@ it, or render a PDF to share.
 1. Preprocess the source Markdown into a private temporary file.
 2. Convert it to HTML with Pandoc, Mermaid diagrams and KaTeX math, and inline
    the shared styles, the page header and footer and any extra stylesheet.
-3. For `md-to-pdf`, print the HTML to a paged PDF with heading bookmarks and
-   clickable links, using Paged.js in a headless browser, limited by
-   [`--pdf-timeout`](#pdf-time-limit).
+3. For `md-to-pdf`, print the HTML with headless Chrome, which lays out the
+   pages from the stylesheet's page rules, to a tagged PDF with heading
+   bookmarks and clickable links, limited by [`--pdf-timeout`](#pdf-time-limit).
 4. Publish the requested file and remove the private files.
 
 ## Folder input
@@ -152,20 +152,22 @@ stack; code keeps its monospace stack.
 
 Page-margin rules affect only PDF output. The header uses the `@top-right`
 margin box, the footer `@bottom-left`, and the page number `@bottom-center`.
-See [Paged.js margin boxes](https://pagedjs.org/en/documentation/7-generated-content-in-margin-boxes/)
-for the other boxes and the `counter(page)` and `counter(pages)` values, which
+See [margin at-rules](https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/At-rules/@page#margin_at-rules)
+for the other boxes, and the `counter(page)` and `counter(pages)` values, which
 an extra stylesheet can use.
 
 ## Extra stylesheet
 
 `--extra-css FILE` applies a stylesheet after the shared styles and the header
 and footer, for additional branding or layout. It is inlined into the HTML, so
-it must not contain `</style`.
+it must not contain `</style`. Keep content within the page width: when
+anything is wider, Chrome shrinks every page of the PDF to fit it.
 
 The shared styles provide:
 
 - US Letter pages with one-inch margins;
 - page numbering and the optional header and footer text;
+- headings kept on the page of the text they introduce;
 - Linux-compatible text and monospace font stacks;
 - image, table, code-block, and page-width overflow protection;
 - Mermaid diagram scaling;
@@ -173,7 +175,7 @@ The shared styles provide:
 
 ## PDF time limit
 
-Each browser step of a PDF render (Paged.js page layout, then printing) may take
+Each browser step of a PDF render (loading the page, then printing it) may take
 up to 600 seconds by default. Large folder renders on busy hosts can need more.
 Set `--pdf-timeout` to a larger whole number of seconds, or to `0` to remove the
 limit; `MD_DOC_CONVERTER_PDF_TIMEOUT` sets a default:
@@ -255,3 +257,4 @@ when cells must span columns; the classes apply to it in the same way:
 Review the generated PDF for wide tables, diagram sizing, links, page breaks,
 the header and footer, and page numbering. The table classes above can tighten
 layout without changing the source data.
+

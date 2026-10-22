@@ -106,7 +106,7 @@ elif tool == "npm":
     executable.chmod(0o755)
     # The fake Puppeteer CLI is this script under another name.
     shutil.copy(sys.argv[0], modules / ".bin" / "puppeteer")
-    for package, manifest in (("pagedjs-cli", {{}}), ("katex", {{"version": {katex!r}}})):
+    for package, manifest in (("puppeteer", {{}}), ("katex", {{"version": {katex!r}}})):
         (modules / package).mkdir(exist_ok=True)
         (modules / package / "package.json").write_text(json.dumps(manifest))
 elif tool == "puppeteer":
@@ -151,7 +151,7 @@ def install_fake_toolchain(root: Path, log: Path) -> Toolchain:
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n")
     executable.chmod(0o755)
-    manifests: dict[str, dict[str, str]] = {"pagedjs-cli": {}, "katex": {"version": KATEX_VERSION}}
+    manifests: dict[str, dict[str, str]] = {"puppeteer": {}, "katex": {"version": KATEX_VERSION}}
     for package, manifest in manifests.items():
         (tools.node_modules / package).mkdir()
         (tools.node_modules / package / "package.json").write_text(json.dumps(manifest))

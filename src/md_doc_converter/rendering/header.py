@@ -1,4 +1,4 @@
-"""Page header and footer text as CSS for the Paged.js page-margin boxes."""
+"""Page header and footer text as CSS for the page-margin boxes."""
 
 
 def css_string(text: str) -> str:
