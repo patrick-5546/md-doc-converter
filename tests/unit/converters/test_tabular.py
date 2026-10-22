@@ -7,6 +7,7 @@ import subprocess
 import sys
 from html.parser import HTMLParser
 from pathlib import Path
+from unittest import mock
 
 import openpyxl
 import pytest
@@ -15,6 +16,7 @@ from typing_extensions import override
 from md_doc_converter.__main__ import main
 from md_doc_converter.converters import csv as csv_to_md
 from md_doc_converter.converters import excel as excel_to_csv
+from md_doc_converter.converters import packages
 from md_doc_converter.markdown.tables import literal_cell, table_row
 
 # The tables must read the same with a GFM reader and with the renderer's.
@@ -253,3 +255,18 @@ def test_the_delimiter_option_overrides_detection(
     assert capsys.readouterr().out == f"Written: {source.with_suffix('.md')}\n"
     table = source.with_suffix(".md").read_text(encoding="utf-8").splitlines()[4:]
     assert table == ["| Name,alias | Value |", "| --- | --- |", "| x,y | 1 |"]
+
+
+def test_excel_to_csv_rejects_a_workbook_that_expands_too_far(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "workbook.xlsx"
+    workbook = openpyxl.Workbook()
+    workbook.save(source)
+    workbook.close()
+    monkeypatch.setattr(packages, "MAX_EXPANDED_SIZE", 0)
+    load = mock.Mock(side_effect=AssertionError("the workbook was opened"))
+    monkeypatch.setattr(openpyxl, "load_workbook", load)
+    with pytest.raises(SystemExit, match=r"^excel-to-csv: error: .*workbook\.xlsx expands to"):
+        main(["excel-to-csv", str(source)])
+    load.assert_not_called()

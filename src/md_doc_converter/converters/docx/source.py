@@ -48,6 +48,7 @@ from md_doc_converter.converters.docx.ooxml import (
     WORD,
     XML_SPACE,
 )
+from md_doc_converter.converters.packages import too_large
 
 DOCUMENT_PART = "word/document.xml"
 
@@ -99,6 +100,9 @@ def read_package(paths: ConversionPaths) -> WordPackage:
     try:
         with zipfile.ZipFile(paths.source) as archive:
             entries = archive.infolist()
+            problem = too_large(entries)
+            if problem is not None:
+                raise PackageError(f"DOCX package {problem}")
             names = [entry.filename for entry in entries]
             if len(names) != len(set(names)):
                 raise PackageError("DOCX contains ambiguous duplicate package member names")

@@ -19,6 +19,7 @@ from xml.etree import ElementTree as ET
 
 import pytest
 
+from md_doc_converter.converters import packages
 from md_doc_converter.converters.docx import diagnostics as _diagnostics
 from md_doc_converter.converters.docx import media as _media
 from md_doc_converter.converters.docx import models as _models
@@ -3117,6 +3118,20 @@ def test_encrypted_container_is_rejected_without_bypass(
     with pytest.raises(_models.ConversionError, match=r"not bypassed"):
         _pipeline.convert_docx(source)
     run.assert_not_called()
+
+
+def test_a_package_that_expands_too_far_is_rejected_before_it_is_read(
+    source: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_docx(source, [paragraph("Text")])
+    expanded = sum(entry.file_size for entry in zipfile.ZipFile(source).infolist())
+    monkeypatch.setattr(packages, "MAX_EXPANDED_SIZE", expanded - 1)
+    read = mock.Mock(side_effect=AssertionError("a package member was read"))
+    monkeypatch.setattr(zipfile.ZipFile, "read", read)
+    with pytest.raises(_models.PackageError, match=r"^DOCX package expands to .* MiB, more than"):
+        _pipeline.convert_docx(source)
+    read.assert_not_called()
+    assert not source.with_suffix(".md").exists()
 
 
 def test_word_editing_protection_and_classification_metadata_remain_in_bundle(

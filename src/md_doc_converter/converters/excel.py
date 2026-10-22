@@ -16,6 +16,8 @@ import sys
 import zipfile
 from pathlib import Path
 
+from md_doc_converter.converters.packages import too_large
+
 
 def excel_to_csv(excel_path: str, output_dir: str | None = None) -> None:
     import openpyxl
@@ -24,6 +26,13 @@ def excel_to_csv(excel_path: str, output_dir: str | None = None) -> None:
     path = Path(excel_path)
     if not path.exists():
         raise FileNotFoundError(f"file not found: {excel_path}")
+    try:
+        with zipfile.ZipFile(path) as archive:
+            problem = too_large(archive.infolist())
+    except zipfile.BadZipFile:
+        problem = None  # openpyxl names what the file is instead.
+    if problem is not None:
+        raise ValueError(f"{excel_path} {problem}")
 
     try:
         wb = openpyxl.load_workbook(path, data_only=True)

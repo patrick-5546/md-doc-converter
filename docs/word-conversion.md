@@ -228,9 +228,10 @@ the document; the warnings name the individual items. When images are
 published where MarkItDown placed them, the first line also counts them.
 
 Conversion exits 0 whenever MarkItDown can convert the document. It exits 1
-for an unreadable, encrypted, or unsafe package, a document MarkItDown cannot
-convert, invalid paths or options, existing outputs that need
-`--replace-generated`, or a publication failure (see below).
+for an unreadable, encrypted, or unsafe package, a package whose contents expand
+to more than 1,024 MiB, a document MarkItDown cannot convert, invalid paths or
+options, existing outputs that need `--replace-generated`, or a publication
+failure (see below).
 
 ### Explaining what was not applied
 
@@ -669,7 +670,9 @@ targeting the same output set.
 ## Before and after converting
 
 Conversion requires unencrypted input. Use an authorized working copy of
-protected Office documents.
+protected Office documents. A Word file is a ZIP package; one whose contents
+expand to more than 1,024 MiB is refused before any of it is read, since a
+crafted package can expand to far more than its own size.
 
 After Word conversion, review the transform summary and warnings, then inspect
 tables, code blocks, escaped identifiers, links, images, and the selected Wiki
