@@ -243,7 +243,7 @@ def publish_outputs(
     A document without images publishes no image directory: a previous one is removed, with
     its .images parent when that leaves the parent empty.
     """
-    if bool(staged_pages is not None) != bool(paths.split_depth):
+    if (staged_pages is not None) != bool(paths.split_depth):
         raise ConversionError("Staged pages must match the selected split depth")
     _validate_destinations(paths, diagnostics_empty=False)
     if staged_images.is_symlink() or not staged_images.is_dir():

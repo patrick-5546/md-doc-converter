@@ -76,7 +76,7 @@ def convert(
 ) -> None:
     src = Path(input_path)
     if not src.exists():
-        sys.exit(f"Not found: {input_path}")
+        raise FileNotFoundError(f"not found: {input_path}")
 
     if src.is_dir():
         # Use git ls-files to respect .gitignore
@@ -143,7 +143,3 @@ def main(argv: list[str] | None = None) -> None:
         convert(args.input, args.output_dir, args.dry_run)
     except (OSError, UnicodeError, csv.Error, ValueError) as error:
         sys.exit(f"csv-to-md: error: {error}")
-
-
-if __name__ == "__main__":
-    main()

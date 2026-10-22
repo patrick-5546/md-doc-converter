@@ -12,6 +12,7 @@ import openpyxl
 import pytest
 from typing_extensions import override
 
+from md_doc_converter.__main__ import main
 from md_doc_converter.converters import csv as csv_to_md
 from md_doc_converter.converters import excel as excel_to_csv
 from md_doc_converter.markdown.tables import literal_cell, table_row
@@ -137,3 +138,82 @@ def test_short_rows_are_padded_and_dry_run_creates_no_output_directory(tmp_path:
     csv_to_md.convert(str(source), str(output), dry_run=True)
     assert not output.exists()
     assert "| signal | |" in csv_to_md.csv_to_md(source)
+
+
+def test_excel_to_csv_writes_one_csv_per_worksheet(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    workbook = openpyxl.Workbook()
+    first = workbook.active
+    assert first is not None
+    first.title = "Pins"
+    first.append(["Signal", "Width"])
+    first.append(["ready", 1])
+    second = workbook.create_sheet("Clocks & Resets")
+    second.append(["Name", None, "=1+1"])
+    source = tmp_path / "workbook.xlsx"
+    workbook.save(source)
+    workbook.close()
+    out = tmp_path / "csv"
+
+    assert main(["excel-to-csv", str(source), "-o", str(out)]) == 0
+
+    assert sorted(path.name for path in out.iterdir()) == ["Clocks & Resets.csv", "Pins.csv"]
+    assert (out / "Pins.csv").read_bytes() == b"Signal,Width\r\nready,1\r\n"
+    # openpyxl wrote no cached value for the formula, so the cell is empty, like the blank one.
+    assert (out / "Clocks & Resets.csv").read_bytes() == b"Name,,\r\n"
+    assert (
+        capsys.readouterr().out
+        == f"Written: {out / 'Pins.csv'}\nWritten: {out / 'Clocks & Resets.csv'}\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "content", "message"),
+    [
+        pytest.param("missing.xlsx", None, "file not found: ", id="missing"),
+        pytest.param("notes.txt", b"text", "not an Excel workbook: ", id="other-format"),
+        pytest.param("damaged.xlsx", b"PK not a zip", "not an Excel workbook: ", id="damaged"),
+    ],
+)
+def test_excel_to_csv_reports_an_unreadable_workbook(
+    tmp_path: Path, name: str, content: bytes | None, message: str
+) -> None:
+    source = tmp_path / name
+    if content is not None:
+        source.write_bytes(content)
+    with pytest.raises(SystemExit, match=f"^excel-to-csv: error: {message}"):
+        main(["excel-to-csv", str(source), "-o", str(tmp_path / "csv")])
+    assert not (tmp_path / "csv").exists()
+
+
+def test_csv_to_md_converts_the_csv_files_that_git_does_not_ignore(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    subprocess.run(["git", "init", "--quiet", str(tmp_path)], check=True)
+    (tmp_path / ".gitignore").write_text("ignored.csv\n", encoding="utf-8")
+    for name in ("kept.csv", "ignored.csv", "nested/also kept.csv"):
+        (tmp_path / name).parent.mkdir(exist_ok=True)
+        (tmp_path / name).write_text("Name\nvalue\n", encoding="utf-8")
+    (tmp_path / "empty.csv").write_text("", encoding="utf-8")
+
+    assert main(["csv-to-md", str(tmp_path)]) == 0
+
+    assert sorted(path.relative_to(tmp_path).as_posix() for path in tmp_path.rglob("*.md")) == [
+        "kept.md",
+        "nested/also kept.md",
+    ]
+    assert f"Skipped (empty): {tmp_path / 'empty.csv'}" in capsys.readouterr().out
+
+
+def test_csv_to_md_reports_a_folder_without_csv_files(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["csv-to-md", str(tmp_path)]) == 0
+    assert capsys.readouterr().out == "No CSV files found.\n"
+
+
+def test_csv_to_md_reports_a_missing_input(tmp_path: Path) -> None:
+    missing = tmp_path / "missing.csv"
+    with pytest.raises(SystemExit, match=f"^csv-to-md: error: not found: {missing}$"):
+        main(["csv-to-md", str(missing)])

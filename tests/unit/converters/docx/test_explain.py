@@ -287,3 +287,26 @@ def test_explainer_records_items_by_marker() -> None:
         "format": "decimal",
         "after a list item": "no",
     }
+
+
+@pytest.mark.parametrize(
+    ("name", "found"),
+    [
+        pytest.param("_Ref7", "only in deleted or moved text", id="deleted-text"),
+        pytest.param("NoteMark", "in notes, comments, headers or footers", id="footnote"),
+        pytest.param("notemark", "with different case", id="different-case"),
+        pytest.param("Note", "a longer name starts with it", id="truncated"),
+        pytest.param("Elsewhere", "nowhere", id="nowhere"),
+    ],
+)
+def test_a_missing_bookmark_is_described_by_where_it_exists_instead(name: str, found: str) -> None:
+    word = package()
+    # The package keeps what conversion removes from the document, such as deleted text.
+    ET.SubElement(word.root, W + "bookmarkStart", {W + "name": "_Ref7"})
+    notes = ET.Element(W + "footnotes")
+    ET.SubElement(notes, W + "bookmarkStart", {W + "name": "NoteMark"})
+    word.parts["word/footnotes.xml"] = ET.tostring(notes)
+    word.parts["word/header1.xml"] = b"<not-xml"
+    explainer = _explain.Explainer(word, TransformReport(explaining=True))
+    shape = explainer.missing_bookmark(name, "link")
+    assert shape == {"from": "link", "name": _explain.name_class(name), "bookmark": found}

@@ -561,6 +561,56 @@ def test_explain_describes_what_was_not_applied_without_document_text(
     assert (plain.explanation(), plain.items, plain.events) == ([], {}, [])
 
 
+def test_explain_describes_images_tables_links_and_fields_without_document_text(
+    convert: Converter,
+) -> None:
+    words = "zephyr quill"
+    fields = paragraph(f"{words} fields")
+    fields.append(ET.Element(W + "fldSimple", {W + "instr": " AUTHOR "}))
+    fields.extend(page_reference("_Ref1"))
+    # A field that the document never closes.
+    ET.SubElement(ET.SubElement(fields, W + "r"), W + "fldChar", {W + "fldCharType": "begin"})
+    ET.SubElement(ET.SubElement(fields, W + "r"), W + "instrText").text = " DATE "
+    _result, report, _warnings = convert.reported(
+        [
+            bookmark("_Ref1", f"{words} heading", "Heading1"),
+            image(alt=f"{words} chart"),
+            legacy_image("pict"),
+            legacy_image("object"),
+            grouped_image(),
+            table(row(cell(f"{words} a", colspan=2)), row(cell(f"{words} b"), cell(f"{words} c"))),
+            hyperlink(f"{words} web", relation="web"),
+            hyperlink(f"{words} mail", relation="mail"),
+            fields,
+        ],
+        relations=(
+            ("image", "image", "media/image.png", "Internal"),
+            ("web", "hyperlink", "https://example.test/zephyr#quill", "External"),
+            ("mail", "hyperlink", "mailto:zephyr@example.test", "External"),
+        ),
+        media={"image.png": PNG},
+        explain=True,
+    )
+    lines = report.explanation()
+    assert "  fields: AUTHOR (simple) 1; PAGEREF 1; DATE (not closed) 1" in lines
+    features = list(report.items.values())
+    images = [shape for kind, shape in features if kind == "image"]
+    assert [(shape["kind"], shape["placement"]) for shape in images] == [
+        ("picture", "inline"),
+        ("VML picture", "VML"),
+        ("embedded object preview", "VML"),
+        ("group of shapes", "floating"),
+    ]
+    assert {shape["format"] for shape in images} == {"png"}
+    [merged] = [shape for kind, shape in features if kind == "table"]
+    assert merged["merged cells"] == "yes"
+    links = [shape["target"] for kind, shape in features if kind == "link"]
+    assert links == ["web page and bookmark", "email"]
+    shared = "\n".join([*lines, json.dumps(features)]).casefold()
+    for word in ("zephyr", "quill", "example", "chart"):
+        assert word not in shared
+
+
 @pytest.mark.parametrize(
     "explain", [pytest.param(True, id="explain"), pytest.param(False, id="no-explain")]
 )

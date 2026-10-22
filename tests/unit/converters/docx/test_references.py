@@ -231,3 +231,52 @@ def test_run_command_names_a_missing_tool(tmp_path: Path) -> None:
         match=f"^Probe requires unavailable command {re.escape(repr(str(missing)))}$",
     ):
         _reference.run_command([str(missing)], "Probe")
+
+
+# Raw HTML that a Word document's Markdown keeps, with every kind of markup the parser meets.
+RAW_HTML = (
+    "<!DOCTYPE html><?xml-stylesheet href='style.css'?>"
+    '<!-- <a href="commented.md"> -->'
+    '<p>Caf&eacute; &#233;&#xE9; <a id="top" href="guide.md#intro">Go</a>'
+    '<img src=pic.png alt="Figure" /><br/><span/>'
+    '<code><a href="literal.md">kept</a></code>'
+    '<video poster="poster.png" src="clip.mp4"></video><object data="drawing.svg"></object></p>'
+)
+
+
+def test_rewriting_raw_html_changes_only_its_url_attributes() -> None:
+    def parent(target: str) -> str:
+        return f"../{target}"
+
+    assert _reference.rewrite_html_targets(RAW_HTML, parent) == (
+        "<!DOCTYPE html><?xml-stylesheet href='style.css'?>"
+        '<!-- <a href="commented.md"> -->'
+        '<p>Caf&eacute; &#233;&#xE9; <a id="top" href="../guide.md#intro">Go</a>'
+        '<img src="../pic.png" alt="Figure" /><br/><span/>'
+        '<code><a href="literal.md">kept</a></code>'
+        '<video poster="../poster.png" src="../clip.mp4"></video>'
+        '<object data="../drawing.svg"></object></p>'
+    )
+
+
+def test_parsed_raw_html_keeps_comments_and_closes_empty_elements() -> None:
+    root = _reference.parse_html('<p>A<!-- note --><span/><br/>B</p><img src="pic.png">')
+    paragraph, image = root
+    assert [child.tag for child in paragraph] == [ET.Comment, "span", "br"]
+    assert paragraph[0].text == " note "
+    assert (paragraph.text, paragraph[-1].tail) == ("A", "B")
+    assert image.get("src") == "pic.png"
+
+
+@pytest.mark.parametrize(
+    ("markup", "message"),
+    [
+        pytest.param(
+            "<p>text</b></p>", "Unbalanced reference HTML closing tag </b>", id="unbalanced"
+        ),
+        pytest.param("<p><b>text</b>", "Unclosed reference HTML element <p>", id="unclosed"),
+    ],
+)
+def test_malformed_raw_html_is_an_error(markup: str, message: str) -> None:
+    with pytest.raises(_models.ConversionError, match=re.escape(message)):
+        _reference.parse_html(markup)

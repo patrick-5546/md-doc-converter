@@ -13,20 +13,26 @@ Usage:
 import argparse
 import csv
 import sys
+import zipfile
 from pathlib import Path
 
 
 def excel_to_csv(excel_path: str, output_dir: str | None = None) -> None:
     import openpyxl
+    from openpyxl.utils.exceptions import InvalidFileException
 
     path = Path(excel_path)
     if not path.exists():
-        sys.exit(f"File not found: {excel_path}")
+        raise FileNotFoundError(f"file not found: {excel_path}")
+
+    try:
+        wb = openpyxl.load_workbook(path, data_only=True)
+    # openpyxl rejects other file types by name, and a damaged file as a zip archive.
+    except (InvalidFileException, zipfile.BadZipFile, KeyError) as error:
+        raise ValueError(f"not an Excel workbook: {excel_path} ({error})") from error
 
     out = Path(output_dir) if output_dir else path.parent
     out.mkdir(parents=True, exist_ok=True)
-
-    wb = openpyxl.load_workbook(path, data_only=True)
 
     for sheet_name in wb.sheetnames:
         ws = wb[sheet_name]
@@ -55,8 +61,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
 
-    excel_to_csv(args.excel_file, args.output_dir)
-
-
-if __name__ == "__main__":
-    main()
+    try:
+        excel_to_csv(args.excel_file, args.output_dir)
+    except (OSError, ValueError) as error:
+        sys.exit(f"excel-to-csv: error: {error}")

@@ -248,7 +248,3 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print("Done: Pandoc is installed for conversion. Rendering needs a full `setup`.")
     return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())

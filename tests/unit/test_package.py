@@ -7,10 +7,12 @@ import json
 import os
 import subprocess
 import sys
+from importlib import metadata
 from pathlib import Path
 
 import pytest
 
+from md_doc_converter import resources
 from md_doc_converter.__main__ import COMMANDS
 from md_doc_converter.rendering.pipeline import PDF_PRINTER
 from md_doc_converter.resources import PACKAGE_DIR
@@ -185,3 +187,13 @@ def test_runtime_import_graph_is_acyclic(imports: dict[str, set[str]]) -> None:
 
     for name in imports:
         visit(name, ())
+
+
+def test_a_source_tree_reports_that_the_package_is_not_installed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def not_installed(distribution: str) -> str:
+        raise metadata.PackageNotFoundError(distribution)
+
+    monkeypatch.setattr(resources.metadata, "version", not_installed)
+    assert resources.package_version() == "(not installed)"
