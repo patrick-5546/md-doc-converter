@@ -9,7 +9,6 @@ chrome-headless-shell build that their Puppeteer pins under one directory, by de
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass
@@ -111,16 +110,6 @@ def packages_current(tools: Toolchain) -> bool:
     except OSError:
         return False
     return recorded == manifest_digest() and tools.node_modules.is_dir()
-
-
-def katex_version(tools: Toolchain) -> str | None:
-    """The installed KaTeX version, which its stylesheet must match."""
-    try:
-        manifest = json.loads((tools.node_modules / "katex" / "package.json").read_text())
-    except (OSError, ValueError):
-        return None
-    version = manifest.get("version") if isinstance(manifest, dict) else None
-    return version if isinstance(version, str) else None
 
 
 def write_stamp(tools: Toolchain) -> None:

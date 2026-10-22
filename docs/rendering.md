@@ -43,15 +43,19 @@ are kept even when rendering fails:
 md-doc-converter md-to-pdf docs/spec.md --keep-intermediates /tmp/spec-render
 ```
 
-The HTML references the GitHub Markdown and KaTeX stylesheets from a CDN and
-local images by their absolute paths, so open it on the machine that rendered
-it, or render a PDF to share.
+The HTML is self-contained: it embeds its images, the GitHub Markdown
+stylesheet and, for a document with math, KaTeX's stylesheet and fonts. It
+opens anywhere without a network, and printing it to PDF needs none either.
+Images that the Markdown references by URL are downloaded and embedded too; one
+that cannot be downloaded stays a link, with a warning. Links to other local
+files point to their absolute paths on the machine that rendered them.
 
 ## Pipeline
 
 1. Preprocess the source Markdown into a private temporary file.
-2. Convert it to HTML with Pandoc, Mermaid diagrams and KaTeX math, and inline
-   the shared styles, the page header and footer and any extra stylesheet.
+2. Convert it to self-contained HTML with Pandoc, Mermaid diagrams and KaTeX
+   math, embedding the images and the GitHub Markdown stylesheet, then the shared
+   styles, the page header and footer and any extra stylesheet.
 3. For `md-to-pdf`, print the HTML with headless Chrome, which lays out the
    pages from the stylesheet's page rules, to a tagged PDF with heading
    bookmarks and clickable links, limited by [`--pdf-timeout`](#pdf-time-limit).
@@ -130,7 +134,8 @@ the diagram's position, such as `Mermaid diagram 2 of 3 (flowchart LR)`.
 TeX math between `$` signs, or between `$$` for display math, is rendered with
 [KaTeX](https://katex.org/). Math that KaTeX cannot parse is shown as its TeX
 source in red, with KaTeX's message as its tooltip, rather than stopping the
-render.
+render. Only a document with math embeds KaTeX's stylesheet and its WOFF2
+fonts, about 340 KB.
 
 ## Page header and footer
 
@@ -160,8 +165,10 @@ an extra stylesheet can use.
 
 `--extra-css FILE` applies a stylesheet after the shared styles and the header
 and footer, for additional branding or layout. It is inlined into the HTML, so
-it must not contain `</style`. Keep content within the page width: when
-anything is wider, Chrome shrinks every page of the PDF to fit it.
+it must not contain `</style`. Files it references with `url()`, such as fonts
+or a logo, are embedded; give them as absolute paths or URLs. Keep content
+within the page width: when anything is wider, Chrome shrinks every page of the
+PDF to fit it.
 
 The shared styles provide:
 

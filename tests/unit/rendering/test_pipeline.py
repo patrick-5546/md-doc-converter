@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
+from urllib.parse import unquote, urlsplit
 
 import pytest
 from typing_extensions import override
@@ -19,6 +20,7 @@ from md_doc_converter.markdown.headings import HeadingError
 from md_doc_converter.rendering import pipeline as render
 from md_doc_converter.resources import asset_path
 from md_doc_converter.toolchain.environment import Toolchain
+from tests.support.fake_tools import write_packages
 
 FORMAT = render.OutputFormat
 Options = render.RenderOptions
@@ -32,14 +34,13 @@ class RenderTest(unittest.TestCase):
         self.root = Path(directory.name)
         self.source = self.root / "cache.v2 spec.md"
         self.source.write_text("# Canonical Markdown\n")
-        # Outside root, which the tests list; only the installed KaTeX version is read.
+        # Outside root, which the tests list; only the npm packages' stylesheets are read.
         toolchain = tempfile.TemporaryDirectory()
         self.addCleanup(toolchain.cleanup)
         self.tools = Toolchain(Path(toolchain.name))
-        katex = self.tools.node_modules / "katex" / "package.json"
-        katex.parent.mkdir(parents=True)
-        katex.write_text('{"version": "0.19.0"}')
+        write_packages(self.tools)
         self.prepared: list[Path] = []
+        self.katex_stylesheets: list[str] = []
         self.prepare_calls: list[tuple[Path, bool]] = []
         self.pandoc_calls: list[tuple[list[str], dict[str, object]]] = []
         self.styles: list[str] = []
@@ -65,6 +66,10 @@ class RenderTest(unittest.TestCase):
             assert self.prepared[-1].read_text(encoding="utf-8") == "# Prepared Markdown\n"
             styles = Path(command[command.index("--include-in-header") + 1])
             self.styles.append(styles.read_text(encoding="utf-8"))
+            environment = kwargs["env"]
+            assert isinstance(environment, dict)
+            katex = Path(unquote(urlsplit(environment[render.KATEX_STYLESHEET_VARIABLE]).path))
+            self.katex_stylesheets.append(katex.read_text(encoding="utf-8"))
             self.pandoc_calls.append((command, kwargs))
             Path(command[command.index("-o") + 1]).write_text(
                 "<html>rendered</html>", encoding="utf-8"
@@ -151,19 +156,36 @@ class RenderTest(unittest.TestCase):
             assert isinstance(environment, dict)
             assert environment["PATH"].startswith(str(self.tools.node_bin) + os.pathsep)
             assert environment["PUPPETEER_CACHE_DIR"] == str(self.tools.puppeteer_cache)
-            # Only the stylesheet of the installed KaTeX is linked; the others are inlined.
-            linked = [command[index + 1] for index, part in enumerate(command) if part == "--css"]
-            assert linked == ["https://cdn.jsdelivr.net/npm/katex@0.19.0/dist/katex.min.css"]
+            # No stylesheet is linked: Pandoc embeds KaTeX's, and the others are inlined.
+            assert "--css" not in command
+            katex = Path(unquote(urlsplit(environment[render.KATEX_STYLESHEET_VARIABLE]).path))
+            assert katex.parent == scratch
+        # The GitHub Markdown stylesheet comes first, so the shared styles override it.
+        assert self.styles[0].startswith("<style>\n.markdown-body { color: #1f2328; }\n</style>")
+        assert self.styles[0].index("#1f2328") < self.styles[0].index(".table-cols table")
+        fonts = self.tools.node_modules / "katex/dist/fonts"
+        assert self.katex_stylesheets[0] == (
+            "@font-face{font-family:KaTeX_Main;"
+            f'src:url({(fonts / "KaTeX_Main-Regular.woff2").as_uri()}) format("woff2")}}'
+            ".katex{font:normal 1.21em KaTeX_Main}"
+        )
 
-    def test_an_unreadable_katex_version_fails_before_rendering(self) -> None:
-        (self.tools.node_modules / "katex" / "package.json").write_text("{}")
-        with (
-            mock.patch("subprocess.run", side_effect=self.fake_run) as run,
-            pytest.raises(render.RenderError, match="installed KaTeX version"),
+    def test_missing_stylesheets_and_fonts_fail_before_rendering(self) -> None:
+        for name in (
+            "github-markdown-css/github-markdown-light.css",
+            "katex/dist/katex.min.css",
+            "katex/dist/fonts/KaTeX_Main-Regular.woff2",
         ):
-            self.render_document(FORMAT.HTML)
-        run.assert_not_called()
-        assert not self.prepare_calls
+            write_packages(self.tools)
+            (self.tools.node_modules / name).unlink()
+            with (
+                self.subTest(name=name),
+                mock.patch("subprocess.run", side_effect=self.fake_run) as run,
+                pytest.raises(render.RenderError, match=r"setup --force"),
+            ):
+                self.render_document(FORMAT.HTML)
+            run.assert_not_called()
+            assert not self.prepare_calls
 
     def test_pdf_timeout_accepts_whole_seconds_and_defaults_when_blank(self) -> None:
         for value, expected in (
@@ -316,6 +338,7 @@ class RenderTest(unittest.TestCase):
         assert sorted(
             str(path.relative_to(kept)) for path in kept.rglob("*") if path.is_file()
         ) == [
+            "katex.css",
             "markdown/cache.v2 spec.md",
             "page-styles.html",
             "render/cache.v2 spec.html",
@@ -429,17 +452,31 @@ def test_render_command_reports_preprocessing_errors(
     def no_problems(tools: Toolchain, *, pdf: bool) -> list[str]:
         return []
 
-    def installed_katex(tools: Toolchain) -> str:
-        return "0.19.0"
+    def no_stylesheet(tools: Toolchain) -> str:
+        return ""
 
     monkeypatch.setattr(render, "render_problems", no_problems)
-    monkeypatch.setattr(render, "katex_version", installed_katex)
+    monkeypatch.setattr(render, "github_stylesheet", no_stylesheet)
+    monkeypatch.setattr(render, "katex_stylesheet", no_stylesheet)
     source = tmp_path / "latin-1.md"
     source.write_bytes(b"# Caf\xe9\n")
     assert render.main([str(source)], action="html") == 1
     error = capsys.readouterr().err
     assert f"md-doc-converter: cannot prepare {source}: 'utf-8' codec can't decode" in error
     assert not (tmp_path / "latin-1.html").exists()
+
+
+def test_katex_stylesheet_without_woff2_fonts_is_rejected(tmp_path: Path) -> None:
+    tools = Toolchain(tmp_path)
+    write_packages(tools)
+    stylesheet = tools.node_modules / render.KATEX_DIST / "katex.min.css"
+    stylesheet.write_text(
+        "@font-face{font-family:KaTeX_Main;"
+        'src:url(fonts/KaTeX_Main-Regular.ttf) format("truetype")}',
+        encoding="utf-8",
+    )
+    with pytest.raises(render.RenderError, match=r"no fonts in its stylesheet.*setup --force"):
+        render.katex_stylesheet(tools)
 
 
 class TableCodePipeFilterTest(unittest.TestCase):

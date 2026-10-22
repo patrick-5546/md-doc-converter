@@ -1,4 +1,4 @@
-"""The printed PDF: page size and margins, header and footer, bookmarks and tagging."""
+"""The printed PDF: page size and margins, header and footer, bookmarks, tagging and fonts."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ LONG_URL = "https://example.com/" + "averyveryverylongpathsegment" * 6 + ".html"
 LONG_CODE = "x = 1  # " + "a comment that has to wrap inside the code block " * 4
 DOCUMENT = f"""# Cache controller
 
-Introduction.
+Introduction, with math: $E = mc^2$.
 
 ## Registers
 
@@ -120,3 +120,8 @@ def test_long_code_lines_wrap_inside_the_page(pdf: Path) -> None:
     # The PDF leaves out what a code block cuts off at the page edge.
     text = " ".join(run("pdftotext", pdf, "-").split())
     assert " ".join(LONG_CODE.split()) in text
+
+
+def test_math_prints_with_the_embedded_katex_fonts(pdf: Path) -> None:
+    # The HTML links nothing, so these fonts come from its embedded stylesheet.
+    assert "KaTeX_Main" in run("pdffonts", pdf)

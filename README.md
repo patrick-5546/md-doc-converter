@@ -11,7 +11,7 @@ and PDF.
   table page per CSV, with cell contents kept literal.
 - **Markdown to HTML and PDF:** one file or a whole folder, with Mermaid
   diagrams, KaTeX math, GitHub-style tables and code, heading bookmarks, page
-  numbers and optional header and footer text.
+  numbers and optional header and footer text. The HTML is self-contained.
 
 ## Requirements
 
@@ -185,9 +185,9 @@ md-doc-converter setup --downloads ~/downloads
 Only `setup` downloads software: Pandoc from GitHub, npm packages from your npm
 registry, and chrome-headless-shell through Puppeteer from Google's Chrome for
 Testing downloads. Conversion and rendering run locally and do not upload
-documents. Rendered HTML links the GitHub Markdown and KaTeX stylesheets on
-`cdn.jsdelivr.net`, which the PDF printer, and any browser that opens the HTML,
-fetches.
+documents. Rendering downloads only the images that a document references by
+URL, to embed them. Rendered HTML embeds its images, stylesheets and fonts, so
+opening it, or printing it to PDF, needs no network.
 
 ## Troubleshooting
 

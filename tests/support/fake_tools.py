@@ -19,7 +19,19 @@ VERSIONS = {
     "node": "v24.0.0",
     "npm": "11.0.0",
 }
-KATEX_VERSION = "0.19.0"
+# The files that rendering reads from the installed npm packages, by path in node_modules.
+PACKAGE_FILES = {
+    "puppeteer/package.json": "{}",
+    "katex/package.json": "{}",
+    "katex/dist/katex.min.css": (
+        "@font-face{font-family:KaTeX_Main;src:url(fonts/KaTeX_Main-Regular.woff2) "
+        'format("woff2"),url(fonts/KaTeX_Main-Regular.woff) format("woff")}'
+        ".katex{font:normal 1.21em KaTeX_Main}"
+    ),
+    "katex/dist/fonts/KaTeX_Main-Regular.woff2": "wOF2",
+    "github-markdown-css/package.json": "{}",
+    "github-markdown-css/github-markdown-light.css": ".markdown-body { color: #1f2328; }\n",
+}
 BROWSER_BUILD = "linux-131.0.6778.204"
 # Where Puppeteer's cache keeps a chrome-headless-shell build.
 BROWSER_PATH = f"{BROWSER}/{BROWSER_BUILD}/{BROWSER}-linux64/{BROWSER}"
@@ -29,6 +41,7 @@ RECORDED_VARIABLES = (
     "MD_DOC_CONVERTER_MMDC",
     "MD_DOC_CONVERTER_MERMAID_CONFIG",
     "MD_DOC_CONVERTER_NODE_MODULES",
+    "MD_DOC_CONVERTER_KATEX_CSS",
 )
 
 FAKE_TOOL = """#!{python}
@@ -106,9 +119,9 @@ elif tool == "npm":
     executable.chmod(0o755)
     # The fake Puppeteer CLI is this script under another name.
     shutil.copy(sys.argv[0], modules / ".bin" / "puppeteer")
-    for package, manifest in (("puppeteer", {{}}), ("katex", {{"version": {katex!r}}})):
-        (modules / package).mkdir(exist_ok=True)
-        (modules / package / "package.json").write_text(json.dumps(manifest))
+    for name, text in {packages!r}.items():
+        (modules / name).parent.mkdir(parents=True, exist_ok=True)
+        (modules / name).write_text(text)
 elif tool == "puppeteer":
     browser = Path(os.environ["PUPPETEER_CACHE_DIR"]) / {browser_path!r}
     browser.parent.mkdir(parents=True, exist_ok=True)
@@ -135,7 +148,7 @@ def write_fake_tools(
         versions=selected,
         variables=RECORDED_VARIABLES,
         browser_path=BROWSER_PATH,
-        katex=KATEX_VERSION,
+        packages=PACKAGE_FILES,
     )
     for name in names:
         executable = directory / name
@@ -151,10 +164,7 @@ def install_fake_toolchain(root: Path, log: Path) -> Toolchain:
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n")
     executable.chmod(0o755)
-    manifests: dict[str, dict[str, str]] = {"puppeteer": {}, "katex": {"version": KATEX_VERSION}}
-    for package, manifest in manifests.items():
-        (tools.node_modules / package).mkdir()
-        (tools.node_modules / package / "package.json").write_text(json.dumps(manifest))
+    write_packages(tools)
     browser = tools.puppeteer_cache / BROWSER_PATH
     browser.parent.mkdir(parents=True)
     browser.write_text("#!/bin/sh\n")
@@ -162,6 +172,14 @@ def install_fake_toolchain(root: Path, log: Path) -> Toolchain:
     write_fake_tools(tools.bin_dir, log, ("pandoc",))
     write_stamp(tools)
     return tools
+
+
+def write_packages(tools: Toolchain) -> None:
+    """Write the npm package files that rendering reads."""
+    for name, text in PACKAGE_FILES.items():
+        path = tools.node_modules / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
 
 
 def read_log(log: Path) -> list[dict[str, object]]:

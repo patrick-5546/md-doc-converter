@@ -31,8 +31,9 @@ SETUP_FIX = "Run `md-doc-converter setup`"
 REINSTALL_FIX = "Run `md-doc-converter setup --force`"
 # Executables that the Pandoc filters run.
 FILTER_EXECUTABLES = ("mmdc",)
-# Packages that the Pandoc filters and the PDF printer load.
-FILTER_PACKAGES = ("katex",)
+# Packages that every render reads: KaTeX for math, and the GitHub Markdown stylesheet.
+RENDER_PACKAGES = ("katex", "github-markdown-css")
+# The PDF printer's package.
 PDF_PACKAGE = "puppeteer"
 
 
@@ -131,7 +132,7 @@ def check_packages(tools: Toolchain, *, pdf: bool = True) -> Check:
             "npm packages", "error", f"not installed or out of date in {tools.node_dir}", SETUP_FIX
         )
     missing = [name for name in FILTER_EXECUTABLES if not _executable(tools.node_executable(name))]
-    packages = [*FILTER_PACKAGES, *([PDF_PACKAGE] if pdf else [])]
+    packages = [*RENDER_PACKAGES, *([PDF_PACKAGE] if pdf else [])]
     missing += [
         name for name in packages if not (tools.node_modules / name / "package.json").is_file()
     ]

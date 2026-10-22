@@ -5,11 +5,11 @@ filters:
   - "${.}/katex.js"  # render math with KaTeX (Pandoc runs .js filters with node)
   - "${.}/strip-colwidths.lua"  # auto-size table columns instead of equal-width
   - "${.}/table-code-pipes.lua"  # read `a\|b` in a table cell as GFM does
-css:
-  - https://cdn.jsdelivr.net/npm/github-markdown-css@5.9.0/github-markdown-light.min.css
-# The renderer adds the stylesheet of the installed KaTeX version with --css, and inlines
-# style-overrides.css, the page header/footer and any extra stylesheet with
-# --include-in-header, which follows these links.
-# Wrap body content in .markdown-body so github-markdown-light.min.css selectors apply
+# Embed images, stylesheets and fonts, so the HTML works anywhere and printing it needs no
+# network. katex.js adds KaTeX's stylesheet to a document with math. The renderer inlines the
+# GitHub Markdown stylesheet, then style-overrides.css, the page header/footer and any extra
+# stylesheet, with --include-in-header, which follows KaTeX's.
+embed-resources: true
+# Wrap body content in .markdown-body so the GitHub Markdown stylesheet's selectors apply
 include-before-body: "${.}/markdown-body-open.html"
 include-after-body: "${.}/markdown-body-close.html"

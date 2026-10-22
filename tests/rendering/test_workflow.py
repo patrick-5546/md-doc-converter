@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import os
 import re
 import struct
@@ -11,9 +12,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 import zlib
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
-
-from md_doc_converter.toolchain.environment import katex_version, toolchain
+from urllib.parse import unquote
 
 CLI = (sys.executable, "-m", "md_doc_converter")
 SETTINGS = {"MD_DOC_CONVERTER_HEADER", "MD_DOC_CONVERTER_FOOTER", "MD_DOC_CONVERTER_PDF_TIMEOUT"}
@@ -104,9 +103,14 @@ class DocumentWorkflowTest(unittest.TestCase):
             assert 'id="2-status"' in rendered
             assert 'href="#2-status"' in rendered
             assert external_url in [unquote(url) for url in re.findall(r'href="([^"]+)"', rendered)]
-            # The shared styles are inlined, so the HTML does not depend on the installation.
+            # The HTML is self-contained: styles inlined, images embedded, nothing linked.
             assert ".table-cols table" in rendered
             assert "style-overrides.css" not in rendered
+            assert re.search(r'<img\s[^>]*src="data:image/', rendered)
+            assert not re.search(r'\ssrc="(?!data:)', rendered)
+            assert "<link" not in rendered
+            # Without math, KaTeX's stylesheet and fonts stay out.
+            assert "KaTeX_Main" not in rendered
 
             self.command(workspace, *CLI, "md-to-pdf", relative)
             pdf = canonical.with_suffix(".pdf")
@@ -165,15 +169,17 @@ class DocumentWorkflowTest(unittest.TestCase):
             assert 'id="page-1"' in html
             assert html.count('href="#page-1"') == 2
             image_sources = re.findall(r'<img\s[^>]*src="([^"]+)"', html)
-            assert [unquote(urlsplit(source).path) for source in image_sources].count(
-                str(image)
-            ) == 1
+            embedded = "data:image/png;base64," + base64.b64encode(pixel_png()).decode("ascii")
+            assert image_sources.count(embedded) == 1
+            assert all(source.startswith("data:") for source in image_sources)
             assert "mermaid-diagram" in html
             assert 'class="katex"' in html
             assert 'class="katex-display"' in html
             assert 'class="katex-error"' in html
-            version = katex_version(toolchain())
-            assert f"npm/katex@{version}/dist/katex.min.css" in html
+            # KaTeX's stylesheet is embedded with its WOFF2 fonts only, and nothing is linked.
+            assert re.search(r"font-family:KaTeX_Main;[^}]*src:url\(data:font/woff2;base64,", html)
+            assert 'format("woff")' not in html
+            assert "<link" not in html
             assert 'content: "Package layout validation"' in html
             assert 'content: "Draft"' in html
 

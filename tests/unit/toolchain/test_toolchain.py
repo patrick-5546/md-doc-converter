@@ -25,7 +25,6 @@ from md_doc_converter.toolchain.environment import (
     PANDOC_VERSION,
     Toolchain,
     default_home,
-    katex_version,
     packages_current,
     prefer_installed_tools,
     render_environment,
@@ -87,15 +86,6 @@ class EnvironmentTest(TemporaryTest):
         assert environment["MD_DOC_CONVERTER_NODE_MODULES"] == "/renderer/node/node_modules"
         assert environment["OTHER"] == "kept"
         assert base["PATH"] == "/usr/bin"
-
-    def test_katex_version_comes_from_the_installed_package(self) -> None:
-        tools = Toolchain(self.root / "home")
-        assert katex_version(tools) is None
-        manifest = tools.node_modules / "katex" / "package.json"
-        manifest.parent.mkdir(parents=True)
-        for text, expected in (("{", None), ("[]", None), ('{"version": "0.19.0"}', "0.19.0")):
-            manifest.write_text(text)
-            assert katex_version(tools) == expected
 
     def test_stamp_tracks_the_bundled_manifests(self) -> None:
         tools = Toolchain(self.root / "home")

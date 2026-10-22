@@ -14,7 +14,6 @@ from md_doc_converter.rendering.header import css_string
 from md_doc_converter.toolchain.environment import PANDOC_VERSION
 from md_doc_converter.toolchain.install import PANDOC
 from tests.support.fake_tools import (
-    KATEX_VERSION,
     install_fake_toolchain,
     read_log,
     write_fake_tools,
@@ -102,10 +101,15 @@ class CommandLineTest(unittest.TestCase):
         assert str(environment["PATH"]).startswith(str(self.tools.node_bin))
         arguments = self.calls("pandoc")[0]["arguments"]
         assert isinstance(arguments, list)
-        assert (
-            arguments[arguments.index("--css") + 1]
-            == f"https://cdn.jsdelivr.net/npm/katex@{KATEX_VERSION}/dist/katex.min.css"
-        )
+        # Pandoc embeds the stylesheets: KaTeX's from the work directory, which katex.js adds
+        # to a document with math, and the inlined GitHub Markdown and shared styles.
+        assert "--css" not in arguments
+        katex = str(environment["MD_DOC_CONVERTER_KATEX_CSS"])
+        assert katex.startswith("file:///")
+        assert katex.endswith("/katex.css")
+        styles = self.calls("pandoc")[0]["styles"]
+        assert isinstance(styles, str)
+        assert styles.index(".markdown-body { color: #1f2328; }") < styles.index(".table-cols")
         assert environment["MD_DOC_CONVERTER_NODE_MODULES"] == str(self.tools.node_modules)
         # The fake PATH also has a pandoc; the toolchain's pinned one comes first.
         assert {call["path"] for call in self.calls("pandoc")} == {str(self.tools.pandoc)}
@@ -153,7 +157,8 @@ class CommandLineTest(unittest.TestCase):
         assert 'content: "Environment footer"' in first
         assert f"content: {css_string(header)}" in second
         assert "Environment" not in second
-        assert second.count("</style>") == 1
+        # The header's "</style>" is escaped, so it ends no style element.
+        assert second.count("</style>") == second.count("<style>")
         assert "Review" in (self.docs / "input.html").read_text()
 
     def test_pdf_timeout_flag_environment_and_default(self) -> None:

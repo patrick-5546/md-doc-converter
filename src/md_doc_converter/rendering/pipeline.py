@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -16,15 +17,18 @@ from typing import Literal
 from md_doc_converter.rendering.header import page_css
 from md_doc_converter.resources import asset_path
 from md_doc_converter.toolchain.checks import render_problems
-from md_doc_converter.toolchain.environment import (
-    Toolchain,
-    katex_version,
-    render_environment,
-    toolchain,
-)
+from md_doc_converter.toolchain.environment import Toolchain, render_environment, toolchain
 
 PDF_PRINTER = Path(__file__).with_name("print-pdf.mjs")
-KATEX_STYLESHEET = "https://cdn.jsdelivr.net/npm/katex@{version}/dist/katex.min.css"
+# Stylesheets in the installed npm packages.
+GITHUB_STYLESHEET = Path("github-markdown-css", "github-markdown-light.css")
+KATEX_DIST = Path("katex", "dist")
+# Where katex.js finds the stylesheet it adds to a document with math.
+KATEX_STYLESHEET_VARIABLE = "MD_DOC_CONVERTER_KATEX_CSS"
+# Each KaTeX font lists its WOFF2 file first, then WOFF and TrueType ones.
+KATEX_FONT_SOURCES = re.compile(
+    r'src:url\(fonts/([^()]+\.woff2)\) format\("woff2"\)(?:,url\([^()]*\) format\("[^"]*"\))*'
+)
 PDF_TIMEOUT_DEFAULT = 600
 # Node timers overflow above 2**31 - 1 milliseconds.
 PDF_TIMEOUT_MAX = 2_147_483
@@ -146,6 +150,43 @@ def page_styles(header: str = "", footer: str = "", extra_css: str = "") -> str:
     return f"<style>\n{body}\n</style>\n"
 
 
+def github_stylesheet(tools: Toolchain) -> str:
+    try:
+        return (tools.node_modules / GITHUB_STYLESHEET).read_text(encoding="utf-8")
+    except OSError as error:
+        raise RenderError(
+            f"cannot read the GitHub Markdown stylesheet ({error}); "
+            "run `md-doc-converter setup --force`"
+        ) from error
+
+
+def katex_stylesheet(tools: Toolchain) -> str:
+    """KaTeX's stylesheet with only its WOFF2 fonts, which every current browser reads."""
+    dist = tools.node_modules / KATEX_DIST
+    missing: list[str] = []
+
+    def woff2_only(match: re.Match[str]) -> str:
+        font = dist / "fonts" / match[1]
+        if not font.is_file():
+            missing.append(match[1])
+        return f'src:url({font.as_uri()}) format("woff2")'
+
+    try:
+        css, fonts = KATEX_FONT_SOURCES.subn(
+            woff2_only, (dist / "katex.min.css").read_text(encoding="utf-8")
+        )
+    except OSError as error:
+        raise RenderError(
+            f"cannot read KaTeX's stylesheet ({error}); run `md-doc-converter setup --force`"
+        ) from error
+    if not fonts or missing:
+        detail = f"missing {', '.join(missing)}" if missing else "no fonts in its stylesheet"
+        raise RenderError(
+            f"cannot use KaTeX's fonts ({detail}); run `md-doc-converter setup --force`"
+        )
+    return css
+
+
 def publish(staged: Path, destination: Path) -> None:
     """Replace the destination atomically; a failure leaves any previous file unchanged."""
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -237,11 +278,8 @@ def render_markdown(
             + "\n".join(f"  - {problem}" for problem in problems)
             + "\nRun `md-doc-converter doctor` for details."
         )
-    katex = katex_version(tools)
-    if katex is None:
-        raise RenderError(
-            "cannot read the installed KaTeX version; run `md-doc-converter setup --force`"
-        )
+    base_css = github_stylesheet(tools)
+    math_css = katex_stylesheet(tools)
     environment = render_environment(tools)
     filter_gitignored = _filter_gitignored(options.respect_gitignore, source)
 
@@ -260,7 +298,11 @@ def render_markdown(
             )
 
             styles_file = work / "page-styles.html"
-            styles_file.write_text(styles, encoding="utf-8")
+            styles_file.write_text(
+                f"<style>\n{base_css.strip()}\n</style>\n{styles}", encoding="utf-8"
+            )
+            katex_file = work / "katex.css"
+            katex_file.write_text(math_css, encoding="utf-8")
             staged_dir = work / "render"
             staged_dir.mkdir()
             html = staged_dir / f"{name}.html"
@@ -269,8 +311,6 @@ def render_markdown(
                     "pandoc",
                     "--defaults",
                     str(asset_path("pandoc-defaults.yaml")),
-                    "--css",
-                    KATEX_STYLESHEET.format(version=katex),
                     "--standalone",
                     "--include-in-header",
                     str(styles_file),
@@ -279,7 +319,7 @@ def render_markdown(
                     str(prepared),
                 ],
                 cwd=work,
-                env=environment,
+                env={**environment, KATEX_STYLESHEET_VARIABLE: katex_file.as_uri()},
                 check=True,
             )
             staged = html

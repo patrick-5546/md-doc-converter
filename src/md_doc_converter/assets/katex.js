@@ -1,27 +1,40 @@
 // Render math with KaTeX: a Pandoc JSON filter, which Pandoc runs with Node.js, that
 // replaces each Math element with the HTML KaTeX renders for it. Invalid TeX is shown in
-// KaTeX's error color instead of failing the render.
+// KaTeX's error color instead of failing the render. A document with math gets the
+// stylesheet MD_DOC_CONVERTER_KATEX_CSS names, which Pandoc then embeds with its fonts.
 //
 // katex is loaded from MD_DOC_CONVERTER_NODE_MODULES, the node_modules directory that
 // `md-doc-converter setup` installs. The filter uses only import(), so Node.js can run it
 // as CommonJS or as an ES module, whatever package.json files enclose it.
 
+// Render the math in node; return whether there was any.
 function render(katex, node) {
+	let found = false;
 	if (Array.isArray(node)) {
 		node.forEach((item, index) => {
 			if (item?.t === "Math") {
 				const [type, tex] = item.c;
 				const options = { displayMode: type.t === "DisplayMath", throwOnError: false };
 				node[index] = { t: "RawInline", c: ["html", katex.renderToString(tex, options)] };
+				found = true;
 			} else {
-				render(katex, item);
+				found = render(katex, item) || found;
 			}
 		});
 	} else if (node && typeof node === "object") {
 		for (const value of Object.values(node)) {
-			render(katex, value);
+			found = render(katex, value) || found;
 		}
 	}
+	return found;
+}
+
+// Add a stylesheet to the document's css metadata, which Pandoc's template links.
+function addStylesheet(document, stylesheet) {
+	const entry = { t: "MetaString", c: stylesheet };
+	const css = document.meta.css;
+	const entries = !css ? [] : css.t === "MetaList" ? css.c : [css];
+	document.meta.css = { t: "MetaList", c: [...entries, entry] };
 }
 
 async function main() {
@@ -37,7 +50,13 @@ async function main() {
 		chunks.push(chunk);
 	}
 	const document = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-	render(katex, document);
+	if (render(katex, document)) {
+		const stylesheet = process.env.MD_DOC_CONVERTER_KATEX_CSS;
+		if (!stylesheet) {
+			throw new Error("MD_DOC_CONVERTER_KATEX_CSS is not set");
+		}
+		addStylesheet(document, stylesheet);
+	}
 	process.stdout.write(JSON.stringify(document));
 }
 
