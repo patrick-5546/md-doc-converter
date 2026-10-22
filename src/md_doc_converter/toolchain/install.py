@@ -1,4 +1,4 @@
-"""Install the pinned toolchain: Pandoc, the npm packages and their browsers, pandoc-katex."""
+"""Install the pinned toolchain: Pandoc, the npm packages and their browser, pandoc-katex."""
 
 from __future__ import annotations
 
@@ -15,8 +15,14 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from md_doc_converter.toolchain.checks import NODE_FIX, check_node, installed_version
+from md_doc_converter.toolchain.checks import (
+    NODE_FIX,
+    check_browser,
+    check_node,
+    installed_version,
+)
 from md_doc_converter.toolchain.environment import (
+    BROWSER,
     MANIFEST_DIR,
     MANIFESTS,
     PANDOC_KATEX_VERSION,
@@ -86,18 +92,37 @@ def install_packages(tools: Toolchain, npm: str, *, force: bool) -> bool:
     tools.stamp.unlink(missing_ok=True)
     for name in MANIFESTS:
         shutil.copyfile(MANIFEST_DIR / name, tools.node_dir / name)
-    print(f"npm packages: installing into {tools.node_modules}")
-    # Puppeteer downloads its browsers during installation and finds them again when
-    # rendering through the same cache directory.
+    print(f"npm packages: installing into {tools.node_modules}", flush=True)
+    # No package needs its install scripts; Puppeteer's would download browsers that
+    # rendering does not use.
     environment = {**os.environ, "PUPPETEER_CACHE_DIR": str(tools.puppeteer_cache)}
+    command = [npm, "ci", "--ignore-scripts", "--no-audit", "--no-fund"]
     try:
-        subprocess.run(
-            [npm, "ci", "--no-audit", "--no-fund"], cwd=tools.node_dir, env=environment, check=True
-        )
+        subprocess.run(command, cwd=tools.node_dir, env=environment, check=True)
     except (OSError, subprocess.CalledProcessError) as error:
         raise SetupError(f"npm ci failed: {error}") from error
+    install_browser(tools, environment)
     write_stamp(tools)
     return True
+
+
+def install_browser(tools: Toolchain, environment: dict[str, str]) -> None:
+    """Install the chrome-headless-shell build that the installed Puppeteer pins.
+
+    Mermaid and the PDF printer share it; builds from earlier installations are removed.
+    """
+    shutil.rmtree(tools.puppeteer_cache, ignore_errors=True)
+    print(f"browser: installing {BROWSER} into {tools.puppeteer_cache}", flush=True)
+    command = [str(tools.node_executable("puppeteer")), "browsers", "install", BROWSER]
+    try:
+        subprocess.run(command, cwd=tools.node_dir, env=environment, check=True)
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise SetupError(f"browser install failed: {error}") from error
+    if check_browser(tools).status != "ok":
+        raise SetupError(
+            f"Puppeteer did not install {BROWSER} into {tools.puppeteer_cache}; check that "
+            "PUPPETEER_SKIP_DOWNLOAD is not set"
+        )
 
 
 def _download(archive: Archive, destination: Path) -> None:
@@ -180,8 +205,9 @@ def main(argv: list[str] | None = None) -> int:
         prog="md-doc-converter setup",
         description=(
             "Install the pinned toolchain into MD_DOC_CONVERTER_HOME, by default "
-            "~/.local/share/md-doc-converter: Pandoc, and for rendering, Mermaid, Paged.js and "
-            "their browsers from npm, and pandoc-katex. Rendering needs Node.js 22.12+ with npm."
+            "~/.local/share/md-doc-converter: Pandoc, and for rendering, Mermaid and Paged.js "
+            "from npm, the headless browser they share, and pandoc-katex. Rendering needs "
+            "Node.js 22.12+ with npm."
         ),
     )
     parser.add_argument(

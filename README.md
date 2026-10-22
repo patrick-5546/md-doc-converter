@@ -47,9 +47,9 @@ md-doc-converter doctor
 ```
 
 `setup` installs Pandoc and, for rendering, the pinned Mermaid and Paged.js npm
-packages, the browsers that their Puppeteer dependencies download (about 2 GB
-in total), and pandoc-katex. For Word conversion only, `setup --no-render`
-installs just Pandoc and needs no Node.js. See [Toolchain](#toolchain).
+packages, the headless browser they share, and pandoc-katex: about 1 GB in
+total. For Word conversion only, `setup --no-render` installs just Pandoc and
+needs no Node.js. See [Toolchain](#toolchain).
 
 ## Quick start
 
@@ -148,8 +148,10 @@ Command-line options override these environment variables.
 
 - `bin/pandoc`: Pandoc 3.12.1, the version md-doc-converter is tested with;
 - `node/`: the npm packages from the lockfile bundled with md-doc-converter,
-  installed with `npm ci`;
-- `puppeteer/`: the browsers that Puppeteer downloads during that installation;
+  installed with `npm ci --ignore-scripts`, since none needs its install
+  scripts;
+- `puppeteer/`: chrome-headless-shell, the build of headless Chrome that the
+  locked Puppeteer pins, which Mermaid and the PDF printer share;
 - `bin/pandoc-katex`: pandoc-katex 0.1.11.
 
 Pandoc and pandoc-katex come from their GitHub releases and are verified
@@ -160,10 +162,10 @@ even when another one is installed. Without it, md-doc-converter uses the
 Pandoc on `PATH`, and `doctor` warns when that is another version, which may
 format some converted Markdown slightly differently.
 
-`setup` skips what is already current, and reinstalls the npm packages when a
-new md-doc-converter version changes them. `setup --force` reinstalls
-everything. To remove the toolchain, delete its directory; to remove the
-command, run `uv tool uninstall md-doc-converter`.
+`setup` skips what is already current, and reinstalls the npm packages and the
+browser when a new md-doc-converter version changes them. `setup --force`
+reinstalls everything. To remove the toolchain, delete its directory; to remove
+the command, run `uv tool uninstall md-doc-converter`.
 
 npm uses your npm configuration, including proxies and registry mirrors. On a
 host that cannot reach GitHub, download these archives another way into one
@@ -181,7 +183,8 @@ md-doc-converter setup --downloads ~/downloads
 ## Network access
 
 Only `setup` downloads software: Pandoc and pandoc-katex from GitHub, npm
-packages from your npm registry, and browsers through Puppeteer. Conversion and rendering run
+packages from your npm registry, and chrome-headless-shell through Puppeteer
+from Google's Chrome for Testing downloads. Conversion and rendering run
 locally and do not upload documents. Rendered HTML links the GitHub Markdown
 and KaTeX stylesheets on `cdn.jsdelivr.net`, which the PDF printer, and any
 browser that opens the HTML, fetches.
@@ -194,8 +197,6 @@ browser that opens the HTML, fetches.
   on your distribution. On hosts that restrict unprivileged user namespaces,
   such as Ubuntu 23.10 and later, Chrome's sandbox needs that restriction
   lifted (`kernel.apparmor_restrict_unprivileged_userns=0`).
-- If `doctor` reports no browser after `setup`, npm may be configured to skip
-  install scripts (`ignore-scripts`); allow them and run `setup --force`.
 - If a large PDF times out, raise `--pdf-timeout`, or set it to `0`.
 
 ## Development

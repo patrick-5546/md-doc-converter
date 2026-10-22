@@ -1,11 +1,12 @@
 // Print one staged HTML file to PDF with Paged.js and a DevTools protocol limit.
 //
-// pagedjs-cli 0.4 launches its bundled Puppeteer without `protocolTimeout`, so
+// pagedjs-cli 0.4 launches full headless Chrome without `protocolTimeout`, so
 // each browser step (Paged.js layout, then printing) fails after Puppeteer's
-// 180-second default. This keeps pagedjs-cli's Printer and bundled browser but
-// launches it with the limit md-doc-converter selects (0 disables the limit).
-// pagedjs-cli is loaded from the node_modules directory that
-// `md-doc-converter setup` installed, which is given on the command line.
+// 180-second default. This keeps pagedjs-cli's Printer but launches the
+// chrome-headless-shell that `md-doc-converter setup` installs, which Mermaid
+// also uses, with the limit md-doc-converter selects (0 disables the limit).
+// pagedjs-cli and Puppeteer are loaded from the node_modules directory that
+// setup installed, which is given on the command line.
 //
 // Usage: node pagedjs-print.mjs --node-modules DIR --timeout-seconds N -o output.pdf input.html
 import { writeFile } from "node:fs/promises";
@@ -55,13 +56,16 @@ const input = resolve(positionals[0]);
 const output = resolve(values.output);
 
 // Resolve packages as if from a module inside the installed node_modules directory.
-let entry;
+const installed = createRequire(join(resolve(values["node-modules"]), "_"));
+let entries;
 try {
-	entry = createRequire(join(resolve(values["node-modules"]), "_")).resolve("pagedjs-cli");
+	entries = ["pagedjs-cli", "puppeteer"].map((name) => pathToFileURL(installed.resolve(name)).href);
 } catch (error) {
-	fail(`cannot find pagedjs-cli (run md-doc-converter setup): ${error.message}`);
+	fail(`cannot find pagedjs-cli and puppeteer (run md-doc-converter setup): ${error.message}`);
 }
-const { default: Printer } = await import(pathToFileURL(entry).href);
+const [{ default: Printer }, { default: puppeteer }] = await Promise.all(
+	entries.map((entry) => import(entry)),
+);
 
 class TimedPrinter extends Printer {
 	constructor(timeoutSeconds) {
@@ -69,17 +73,15 @@ class TimedPrinter extends Printer {
 		this.protocolTimeout = timeoutSeconds * 1000;
 	}
 
-	// Printer.setup() for a local input, plus protocolTimeout.
+	// Printer.setup() for a local input, with chrome-headless-shell and protocolTimeout.
 	async setup() {
-		const puppeteer = createRequire(entry)("puppeteer");
 		this.browser = await puppeteer.launch({
-			headless: this.headless,
+			headless: "shell",
 			args: [
 				"--disable-dev-shm-usage",
 				"--export-tagged-pdf",
 				"--allow-file-access-from-files",
 			],
-			ignoreHTTPSErrors: this.ignoreHTTPSErrors,
 			protocolTimeout: this.protocolTimeout,
 		});
 		return this.browser;

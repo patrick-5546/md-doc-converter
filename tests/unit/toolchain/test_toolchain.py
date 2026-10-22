@@ -28,7 +28,12 @@ from md_doc_converter.toolchain.environment import (
     render_environment,
     write_stamp,
 )
-from tests.support.fake_tools import install_fake_toolchain, read_log, write_fake_tools
+from tests.support.fake_tools import (
+    BROWSER_PATH,
+    install_fake_toolchain,
+    read_log,
+    write_fake_tools,
+)
 
 
 class TemporaryTest(unittest.TestCase):
@@ -182,6 +187,20 @@ class ChecksTest(TemporaryTest):
             self.assertEqual(checks.render_problems(tools, pdf=False), [])
             self.assertIn("pagedjs-cli", checks.render_problems(tools, pdf=True)[0])
 
+    def test_only_an_executable_chrome_headless_shell_counts_as_the_browser(self) -> None:
+        tools = Toolchain(self.root / "home")
+        (tools.puppeteer_cache / "chrome" / "linux-131.0.6778.204").mkdir(parents=True)
+        browser = tools.puppeteer_cache / BROWSER_PATH
+        browser.parent.mkdir(parents=True)
+        browser.write_text("")
+        browser.chmod(0o644)
+        missing = checks.check_browser(tools)
+        self.assertEqual(missing.status, "error")
+        self.assertEqual(missing.detail, f"no chrome-headless-shell in {tools.puppeteer_cache}")
+        self.assertIn("setup --force", missing.fix)
+        browser.chmod(0o755)
+        self.assertEqual(checks.check_browser(tools).status, "ok")
+
     def test_rendering_needs_pandoc(self) -> None:
         write_fake_tools(self.bin, self.log, ("node", "npm"))
         tools = install_fake_toolchain(self.root / "home", self.log)
@@ -208,11 +227,13 @@ class InstallTest(TemporaryTest):
             bundle.add(license_file, arcname="../escaped")
         return replace(archive, sha256=hashlib.sha256(tarball.read_bytes()).hexdigest())
 
-    def test_npm_packages_install_from_the_bundled_lockfile_once(self) -> None:
+    def test_npm_packages_and_one_browser_install_from_the_bundled_lockfile_once(self) -> None:
         write_fake_tools(self.bin, self.log)
         tools = Toolchain(self.root / "home")
+        stale = tools.puppeteer_cache / "chrome" / "linux-120.0.0.0"
+        stale.mkdir(parents=True)
         npm = str(self.bin / "npm")
-        with contextlib.redirect_stdout(io.StringIO()):
+        with self.path_with(self.bin), contextlib.redirect_stdout(io.StringIO()):
             self.assertTrue(install.install_packages(tools, npm, force=False))
             self.assertFalse(install.install_packages(tools, npm, force=False))
             self.assertTrue(install.install_packages(tools, npm, force=True))
@@ -222,25 +243,55 @@ class InstallTest(TemporaryTest):
             )
         self.assertTrue(packages_current(tools))
         calls = read_log(self.log)
-        self.assertEqual(len(calls), 2)
-        self.assertEqual(calls[0]["arguments"], ["ci", "--no-audit", "--no-fund"])
-        self.assertEqual(calls[0]["cwd"], str(tools.node_dir))
-        environment = calls[0]["environment"]
-        assert isinstance(environment, dict)
-        self.assertEqual(environment["PUPPETEER_CACHE_DIR"], str(tools.puppeteer_cache))
-        self.assertEqual(checks.check_browser(tools).status, "ok")
+        self.assertEqual(
+            [(call["tool"], call["arguments"]) for call in calls],
+            2
+            * [
+                ("npm", ["ci", "--ignore-scripts", "--no-audit", "--no-fund"]),
+                ("puppeteer", ["browsers", "install", "chrome-headless-shell"]),
+            ],
+        )
+        for call in calls:
+            self.assertEqual(call["cwd"], str(tools.node_dir))
+            environment = call["environment"]
+            assert isinstance(environment, dict)
+            self.assertEqual(environment["PUPPETEER_CACHE_DIR"], str(tools.puppeteer_cache))
+        self.assertEqual(
+            [path.name for path in tools.puppeteer_cache.iterdir()], ["chrome-headless-shell"]
+        )
+        browser = checks.check_browser(tools)
+        self.assertEqual(browser.status, "ok")
+        self.assertEqual(
+            browser.detail, f"chrome-headless-shell 131.0.6778.204 ({tools.puppeteer_cache})"
+        )
 
-    def test_failed_npm_install_leaves_no_stamp(self) -> None:
+    def test_failed_install_leaves_no_stamp(self) -> None:
+        for tool, message in (("npm", "npm ci failed"), ("puppeteer", "browser install failed")):
+            write_fake_tools(self.bin, self.log)
+            tools = Toolchain(self.root / tool)
+            with (
+                self.subTest(tool=tool),
+                self.path_with(self.bin),
+                mock.patch.dict(os.environ, {"FAKE_TOOL_FAIL": tool}),
+                contextlib.redirect_stdout(io.StringIO()),
+                self.assertRaisesRegex(install.SetupError, message),
+            ):
+                install.install_packages(tools, str(self.bin / "npm"), force=False)
+            self.assertFalse(tools.stamp.exists())
+            self.assertFalse(packages_current(tools))
+
+    def test_a_browser_install_that_installs_nothing_fails(self) -> None:
         write_fake_tools(self.bin, self.log)
         tools = Toolchain(self.root / "home")
+        missing = checks.Check("browser", "error", "missing")
         with (
-            mock.patch.dict(os.environ, {"FAKE_TOOL_FAIL": "npm"}),
+            self.path_with(self.bin),
+            mock.patch.object(install, "check_browser", return_value=missing),
             contextlib.redirect_stdout(io.StringIO()),
-            self.assertRaisesRegex(install.SetupError, "npm ci failed"),
+            self.assertRaisesRegex(install.SetupError, "PUPPETEER_SKIP_DOWNLOAD"),
         ):
             install.install_packages(tools, str(self.bin / "npm"), force=False)
         self.assertFalse(tools.stamp.exists())
-        self.assertFalse(packages_current(tools))
 
     def test_pinned_archives_install_only_their_verified_executable(self) -> None:
         for pinned in (install.PANDOC, install.PANDOC_KATEX):

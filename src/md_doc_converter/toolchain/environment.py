@@ -1,7 +1,8 @@
 """Where the toolchain lives and the environment its subprocesses need.
 
-``md-doc-converter setup`` installs the pinned Pandoc, the pinned npm packages (with the
-browsers that Puppeteer downloads) and pandoc-katex under one directory, by default
+``md-doc-converter setup`` installs the pinned Pandoc, the pinned npm packages, the
+chrome-headless-shell build that their Puppeteer pins, and pandoc-katex under one directory,
+by default
 ``$XDG_DATA_HOME/md-doc-converter`` (``~/.local/share/md-doc-converter``).
 ``MD_DOC_CONVERTER_HOME`` selects another directory.
 """
@@ -24,6 +25,8 @@ NODE_MINIMUM = (22, 12, 0)
 # Converted Markdown depends on the Pandoc version; the tests expect this one.
 PANDOC_VERSION = "3.12.1"
 PANDOC_KATEX_VERSION = "0.1.11"
+# The one browser that setup installs, shared by Mermaid and the PDF printer.
+BROWSER = "chrome-headless-shell"
 
 
 def default_home(environment: Mapping[str, str] | None = None) -> Path:
@@ -74,6 +77,10 @@ class Toolchain:
 
     def node_executable(self, name: str) -> Path:
         return self.node_bin / name
+
+    def browser_builds(self) -> list[Path]:
+        """The installed chrome-headless-shell executables, in Puppeteer's cache layout."""
+        return sorted(self.puppeteer_cache.glob(f"{BROWSER}/linux-*/{BROWSER}-linux64/{BROWSER}"))
 
 
 def toolchain(environment: Mapping[str, str] | None = None) -> Toolchain:

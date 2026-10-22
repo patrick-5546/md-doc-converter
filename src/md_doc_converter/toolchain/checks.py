@@ -13,6 +13,7 @@ from pathlib import Path
 
 from md_doc_converter.resources import package_version
 from md_doc_converter.toolchain.environment import (
+    BROWSER,
     NODE_MINIMUM,
     PANDOC_KATEX_VERSION,
     PANDOC_VERSION,
@@ -135,12 +136,11 @@ def check_packages(tools: Toolchain, *, pdf: bool = True) -> Check:
 
 def check_browser(tools: Toolchain) -> Check:
     cache = tools.puppeteer_cache
-    browsers = (
-        sorted(path.name for path in cache.iterdir() if path.is_dir()) if cache.is_dir() else []
-    )
-    if not browsers:
-        return Check("browser", "error", f"no Puppeteer browser in {cache}", REINSTALL_FIX)
-    return Check("browser", "ok", f"{', '.join(browsers)} ({cache})")
+    builds = [path.parents[1].name for path in tools.browser_builds() if _executable(path)]
+    if not builds:
+        return Check("browser", "error", f"no {BROWSER} in {cache}", REINSTALL_FIX)
+    versions = ", ".join(build.removeprefix("linux-") for build in builds)
+    return Check("browser", "ok", f"{BROWSER} {versions} ({cache})")
 
 
 def check_pandoc_katex(tools: Toolchain, *, verify_version: bool = True) -> Check:
