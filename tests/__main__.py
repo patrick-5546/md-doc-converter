@@ -8,12 +8,7 @@ import shutil
 import sys
 import unittest
 
-from md_doc_converter.toolchain.checks import (
-    check_browser,
-    check_packages,
-    check_pandoc,
-    check_pandoc_katex,
-)
+from md_doc_converter.toolchain.checks import check_browser, check_packages, check_pandoc
 from md_doc_converter.toolchain.environment import (
     PANDOC_VERSION,
     prefer_installed_tools,
@@ -48,7 +43,7 @@ def missing_dependencies(selection: str) -> list[str]:
         if not (shutil.which("libreoffice") or shutil.which("soffice")):
             missing.append("libreoffice/soffice (EMF regression coverage)")
         tools = toolchain()
-        for check in (check_packages(tools), check_browser(tools), check_pandoc_katex(tools)):
+        for check in (check_packages(tools), check_browser(tools)):
             if check.status != "ok":
                 missing.append(f"{check.name}: {check.detail} ({check.fix})")
     return missing

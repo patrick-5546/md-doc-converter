@@ -13,6 +13,8 @@ import zlib
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
+from md_doc_converter.toolchain.environment import katex_version, toolchain
+
 CLI = (sys.executable, "-m", "md_doc_converter")
 SETTINGS = {"MD_DOC_CONVERTER_HEADER", "MD_DOC_CONVERTER_FOOTER", "MD_DOC_CONVERTER_PDF_TIMEOUT"}
 
@@ -152,7 +154,7 @@ class DocumentWorkflowTest(unittest.TestCase):
                     "# Page\n\n[Next][target]\n\n![Figure][pic]\n\n"
                     '[target]: <b page.md#page> "Go"\n'
                     '[pic]: <.images/pixel \u03bc.png> "Figure title"\n'
-                    "\nInline math: $x^2 + y^2$.\n\n"
+                    "\nInline math: $x^2 + y^2$.\n\n$$\\frac{1}{2}$$\n\nBroken: $\\frac{1}$.\n\n"
                     "```mermaid\nflowchart LR\n  Input --> Output\n```\n"
                 ),
                 docs / "b page.md": '# Page\n\n[Self][target]\n\n[target]: #page "Self"\n',
@@ -171,6 +173,10 @@ class DocumentWorkflowTest(unittest.TestCase):
             )
             self.assertIn("mermaid-diagram", html)
             self.assertIn('class="katex"', html)
+            self.assertIn('class="katex-display"', html)
+            self.assertIn('class="katex-error"', html)
+            version = katex_version(toolchain())
+            self.assertIn(f"npm/katex@{version}/dist/katex.min.css", html)
             self.assertIn('content: "Package layout validation"', html)
             self.assertIn('content: "Draft"', html)
 

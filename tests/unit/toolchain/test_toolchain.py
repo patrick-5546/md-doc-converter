@@ -23,6 +23,7 @@ from md_doc_converter.toolchain.environment import (
     PANDOC_VERSION,
     Toolchain,
     default_home,
+    katex_version,
     packages_current,
     prefer_installed_tools,
     render_environment,
@@ -88,8 +89,20 @@ class EnvironmentTest(TemporaryTest):
         self.assertEqual(
             environment["MD_DOC_CONVERTER_MERMAID_CONFIG"], str(asset_path("mermaid-config.json"))
         )
+        self.assertEqual(
+            environment["MD_DOC_CONVERTER_NODE_MODULES"], "/renderer/node/node_modules"
+        )
         self.assertEqual(environment["OTHER"], "kept")
         self.assertEqual(base["PATH"], "/usr/bin")
+
+    def test_katex_version_comes_from_the_installed_package(self) -> None:
+        tools = Toolchain(self.root / "home")
+        self.assertIsNone(katex_version(tools))
+        manifest = tools.node_modules / "katex" / "package.json"
+        manifest.parent.mkdir(parents=True)
+        for text, expected in (("{", None), ("[]", None), ('{"version": "0.19.0"}', "0.19.0")):
+            manifest.write_text(text)
+            self.assertEqual(katex_version(tools), expected)
 
     def test_stamp_tracks_the_bundled_manifests(self) -> None:
         tools = Toolchain(self.root / "home")
@@ -117,7 +130,7 @@ class ChecksTest(TemporaryTest):
         report = output.getvalue()
         self.assertIn(f"Toolchain: {tools.root}", report)
         self.assertIn("Ready:", report)
-        for name in ("pandoc", "node", "npm packages", "browser", "pandoc-katex"):
+        for name in ("pandoc", "node", "npm packages", "browser"):
             self.assertRegex(report, rf"\n  ok +{name} ")
 
     def test_doctor_lists_a_fix_for_each_missing_part(self) -> None:
@@ -176,7 +189,7 @@ class ChecksTest(TemporaryTest):
             problems = checks.render_problems(tools, pdf=True)
         self.assertEqual(
             [problem.split(":")[0] for problem in problems],
-            ["npm packages", "browser", "pandoc-katex"],
+            ["npm packages", "browser"],
         )
         self.assertTrue(all("md-doc-converter setup" in problem for problem in problems))
         tools = install_fake_toolchain(self.root / "complete", self.log)
@@ -184,6 +197,9 @@ class ChecksTest(TemporaryTest):
         with self.path_with(self.bin):
             self.assertEqual(checks.render_problems(tools, pdf=False), [])
             self.assertIn("pagedjs-cli", checks.render_problems(tools, pdf=True)[0])
+        shutil.rmtree(tools.node_modules / "katex")
+        with self.path_with(self.bin):
+            self.assertIn("missing katex", checks.render_problems(tools, pdf=False)[0])
 
     def test_only_an_executable_chrome_headless_shell_counts_as_the_browser(self) -> None:
         tools = Toolchain(self.root / "home")
@@ -291,29 +307,23 @@ class InstallTest(TemporaryTest):
             install.install_packages(tools, str(self.bin / "npm"), force=False)
         self.assertFalse(tools.stamp.exists())
 
-    def test_pinned_archives_install_only_their_verified_executable(self) -> None:
-        for pinned in (install.PANDOC, install.PANDOC_KATEX):
-            with self.subTest(archive=pinned.name):
-                archive = self.archive(pinned)
-                tools = Toolchain(self.root / pinned.executable)
-                downloads = self.root / "downloads"
-                with (
-                    mock.patch.object(install.urllib.request, "urlopen") as download,
-                    contextlib.redirect_stdout(io.StringIO()),
-                ):
-                    self.assertTrue(
-                        install.install_executable(tools, archive, force=False, downloads=downloads)
-                    )
-                    self.assertFalse(install.install_executable(tools, archive, force=False))
-                download.assert_not_called()
-                self.assertEqual(
-                    [path.name for path in tools.bin_dir.iterdir()], [pinned.executable]
-                )
-                self.assertEqual(
-                    checks.installed_version(tools.bin_dir / pinned.executable), pinned.version
-                )
-                self.assertFalse((self.root / "escaped").exists())
-                self.assertFalse((tools.root / "escaped").exists())
+    def test_the_pinned_archive_installs_only_its_verified_executable(self) -> None:
+        archive = self.archive(install.PANDOC)
+        tools = Toolchain(self.root / "home")
+        downloads = self.root / "downloads"
+        with (
+            mock.patch.object(install.urllib.request, "urlopen") as download,
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            self.assertTrue(
+                install.install_executable(tools, archive, force=False, downloads=downloads)
+            )
+            self.assertFalse(install.install_executable(tools, archive, force=False))
+        download.assert_not_called()
+        self.assertEqual([path.name for path in tools.bin_dir.iterdir()], ["pandoc"])
+        self.assertEqual(checks.installed_version(tools.pandoc), PANDOC_VERSION)
+        self.assertFalse((self.root / "escaped").exists())
+        self.assertFalse((tools.root / "escaped").exists())
 
     def test_checksum_mismatch_installs_nothing(self) -> None:
         archive = replace(self.archive(install.PANDOC), sha256="0" * 64)
@@ -386,14 +396,12 @@ class InstallTest(TemporaryTest):
     def test_setup_installs_a_complete_toolchain(self) -> None:
         write_fake_tools(self.bin, self.log)
         pandoc = self.archive(install.PANDOC)
-        katex = self.archive(install.PANDOC_KATEX)
         tools = Toolchain(self.root / "home")
         with (
             self.path_with(self.bin),
             mock.patch.dict(os.environ, {"MD_DOC_CONVERTER_HOME": str(tools.root)}),
             mock.patch.object(install, "supported_platform", return_value=True),
             mock.patch.object(install, "PANDOC", pandoc),
-            mock.patch.object(install, "PANDOC_KATEX", katex),
             contextlib.redirect_stdout(io.StringIO()) as output,
         ):
             self.assertEqual(install.main(["--downloads", str(self.root / "downloads")]), 0)

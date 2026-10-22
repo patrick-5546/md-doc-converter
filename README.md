@@ -46,8 +46,8 @@ md-doc-converter setup
 md-doc-converter doctor
 ```
 
-`setup` installs Pandoc and, for rendering, the pinned Mermaid and Paged.js npm
-packages, the headless browser they share, and pandoc-katex: about 1 GB in
+`setup` installs Pandoc and, for rendering, the pinned Mermaid, KaTeX and
+Paged.js npm packages with the headless browser they share: about 1 GB in
 total. For Word conversion only, `setup --no-render` installs just Pandoc and
 needs no Node.js. See [Toolchain](#toolchain).
 
@@ -128,8 +128,8 @@ Azure DevOps Wiki `.order` file gives. Rendering writes only the requested file
 and replaces an existing one only after it succeeds. Prepared Markdown and
 other intermediates stay private unless `--keep-intermediates DIR` asks to keep
 them. See [Rendering](docs/rendering.md) for output naming, folder input,
-Mermaid diagrams, the page header and footer, extra stylesheets, the PDF time
-limit and table styling.
+Mermaid diagrams, math, the page header and footer, extra stylesheets, the PDF
+time limit and table styling.
 
 ## Settings
 
@@ -147,16 +147,15 @@ Command-line options override these environment variables.
 `setup` installs into `$MD_DOC_CONVERTER_HOME`, by default
 `$XDG_DATA_HOME/md-doc-converter` or `~/.local/share/md-doc-converter`:
 
-- `bin/pandoc`: Pandoc 3.12.1, the version md-doc-converter is tested with;
+- `bin/pandoc`: Pandoc 3.12.1, the version md-doc-converter is tested with,
+  from its GitHub release, verified against a pinned SHA-256 checksum;
 - `node/`: the npm packages from the lockfile bundled with md-doc-converter,
   installed with `npm ci --ignore-scripts`, since none needs its install
   scripts;
 - `puppeteer/`: chrome-headless-shell, the build of headless Chrome that the
-  locked Puppeteer pins, which Mermaid and the PDF printer share;
-- `bin/pandoc-katex`: pandoc-katex 0.1.11.
+  locked Puppeteer pins, which Mermaid and the PDF printer share.
 
-Pandoc and pandoc-katex come from their GitHub releases and are verified
-against pinned SHA-256 checksums. `setup --no-render` installs only Pandoc.
+`setup --no-render` installs only Pandoc.
 
 md-doc-converter looks in the toolchain's `bin/` first, so it uses this Pandoc
 even when another one is installed. Without it, md-doc-converter uses the
@@ -169,13 +168,10 @@ reinstalls everything. To remove the toolchain, delete its directory; to remove
 the command, run `uv tool uninstall md-doc-converter`.
 
 npm uses your npm configuration, including proxies and registry mirrors. On a
-host that cannot reach GitHub, download these archives another way into one
-folder and pass it to `setup`, which still verifies their checksums:
-
-- `pandoc-3.12.1-linux-amd64.tar.gz` from the
-  [Pandoc 3.12.1 release](https://github.com/jgm/pandoc/releases/tag/3.12.1);
-- `pandoc-katex-0.1.11-x86_64-unknown-linux-musl.tar.gz` from the
-  [pandoc-katex 0.1.11 release](https://github.com/xu-cheng/pandoc-katex/releases/tag/0.1.11).
+host that cannot reach GitHub, download `pandoc-3.12.1-linux-amd64.tar.gz` from
+the [Pandoc 3.12.1 release](https://github.com/jgm/pandoc/releases/tag/3.12.1)
+another way into a folder and pass that folder to `setup`, which still verifies
+the archive's checksum:
 
 ```sh
 md-doc-converter setup --downloads ~/downloads
@@ -183,12 +179,12 @@ md-doc-converter setup --downloads ~/downloads
 
 ## Network access
 
-Only `setup` downloads software: Pandoc and pandoc-katex from GitHub, npm
-packages from your npm registry, and chrome-headless-shell through Puppeteer
-from Google's Chrome for Testing downloads. Conversion and rendering run
-locally and do not upload documents. Rendered HTML links the GitHub Markdown
-and KaTeX stylesheets on `cdn.jsdelivr.net`, which the PDF printer, and any
-browser that opens the HTML, fetches.
+Only `setup` downloads software: Pandoc from GitHub, npm packages from your npm
+registry, and chrome-headless-shell through Puppeteer from Google's Chrome for
+Testing downloads. Conversion and rendering run locally and do not upload
+documents. Rendered HTML links the GitHub Markdown and KaTeX stylesheets on
+`cdn.jsdelivr.net`, which the PDF printer, and any browser that opens the HTML,
+fetches.
 
 ## Troubleshooting
 

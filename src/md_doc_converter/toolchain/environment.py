@@ -1,8 +1,7 @@
 """Where the toolchain lives and the environment its subprocesses need.
 
-``md-doc-converter setup`` installs the pinned Pandoc, the pinned npm packages, the
-chrome-headless-shell build that their Puppeteer pins, and pandoc-katex under one directory,
-by default
+``md-doc-converter setup`` installs the pinned Pandoc, the pinned npm packages and the
+chrome-headless-shell build that their Puppeteer pins under one directory, by default
 ``$XDG_DATA_HOME/md-doc-converter`` (``~/.local/share/md-doc-converter``).
 ``MD_DOC_CONVERTER_HOME`` selects another directory.
 """
@@ -10,6 +9,7 @@ by default
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass
@@ -25,7 +25,6 @@ STAMP_NAME = ".md-doc-converter-stamp"
 NODE_MINIMUM = (22, 13, 0)
 # Converted Markdown depends on the Pandoc version; the tests expect this one.
 PANDOC_VERSION = "3.12.1"
-PANDOC_KATEX_VERSION = "0.1.11"
 # The one browser that setup installs, shared by Mermaid and the PDF printer.
 BROWSER = "chrome-headless-shell"
 
@@ -72,10 +71,6 @@ class Toolchain:
     def pandoc(self) -> Path:
         return self.bin_dir / "pandoc"
 
-    @property
-    def pandoc_katex(self) -> Path:
-        return self.bin_dir / "pandoc-katex"
-
     def node_executable(self, name: str) -> Path:
         return self.node_bin / name
 
@@ -117,6 +112,16 @@ def packages_current(tools: Toolchain) -> bool:
     return recorded == manifest_digest() and tools.node_modules.is_dir()
 
 
+def katex_version(tools: Toolchain) -> str | None:
+    """The installed KaTeX version, which its stylesheet must match."""
+    try:
+        manifest = json.loads((tools.node_modules / "katex" / "package.json").read_text())
+    except (OSError, ValueError):
+        return None
+    version = manifest.get("version") if isinstance(manifest, dict) else None
+    return version if isinstance(version, str) else None
+
+
 def write_stamp(tools: Toolchain) -> None:
     tools.stamp.write_text(manifest_digest() + "\n", encoding="utf-8")
 
@@ -129,7 +134,8 @@ def render_environment(tools: Toolchain, base: Mapping[str, str] | None = None) 
         search.append(environment["PATH"])
     environment["PATH"] = os.pathsep.join(search)
     environment["PUPPETEER_CACHE_DIR"] = str(tools.puppeteer_cache)
-    # For assets/mermaid.lua.
+    # For assets/mermaid.lua and assets/katex.js.
     environment["MD_DOC_CONVERTER_MMDC"] = str(tools.node_executable("mmdc"))
+    environment["MD_DOC_CONVERTER_NODE_MODULES"] = str(tools.node_modules)
     environment["MD_DOC_CONVERTER_MERMAID_CONFIG"] = str(asset_path("mermaid-config.json"))
     return environment

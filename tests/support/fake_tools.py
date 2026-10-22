@@ -18,8 +18,8 @@ VERSIONS = {
     "pandoc": "pandoc 3.12.1",
     "node": "v24.0.0",
     "npm": "11.0.0",
-    "pandoc-katex": "pandoc-katex 0.1.11\nkatex 0.16.4",
 }
+KATEX_VERSION = "0.19.0"
 BROWSER_BUILD = "linux-131.0.6778.204"
 # Where Puppeteer's cache keeps a chrome-headless-shell build.
 BROWSER_PATH = f"{BROWSER}/{BROWSER_BUILD}/{BROWSER}-linux64/{BROWSER}"
@@ -28,6 +28,7 @@ RECORDED_VARIABLES = (
     "PUPPETEER_CACHE_DIR",
     "MD_DOC_CONVERTER_MMDC",
     "MD_DOC_CONVERTER_MERMAID_CONFIG",
+    "MD_DOC_CONVERTER_NODE_MODULES",
 )
 
 FAKE_TOOL = """#!{python}
@@ -105,8 +106,9 @@ elif tool == "npm":
     executable.chmod(0o755)
     # The fake Puppeteer CLI is this script under another name.
     shutil.copy(sys.argv[0], modules / ".bin" / "puppeteer")
-    (modules / "pagedjs-cli").mkdir(exist_ok=True)
-    (modules / "pagedjs-cli" / "package.json").write_text("{{}}")
+    for package, manifest in (("pagedjs-cli", {{}}), ("katex", {{"version": {katex!r}}})):
+        (modules / package).mkdir(exist_ok=True)
+        (modules / package / "package.json").write_text(json.dumps(manifest))
 elif tool == "puppeteer":
     browser = Path(os.environ["PUPPETEER_CACHE_DIR"]) / {browser_path!r}
     browser.parent.mkdir(parents=True, exist_ok=True)
@@ -133,6 +135,7 @@ def write_fake_tools(
         versions=selected,
         variables=RECORDED_VARIABLES,
         browser_path=BROWSER_PATH,
+        katex=KATEX_VERSION,
     )
     for name in names:
         executable = directory / name
@@ -148,13 +151,15 @@ def install_fake_toolchain(root: Path, log: Path) -> Toolchain:
     executable.parent.mkdir(parents=True)
     executable.write_text("#!/bin/sh\n")
     executable.chmod(0o755)
-    (tools.node_modules / "pagedjs-cli").mkdir()
-    (tools.node_modules / "pagedjs-cli" / "package.json").write_text("{}")
+    manifests: dict[str, dict[str, str]] = {"pagedjs-cli": {}, "katex": {"version": KATEX_VERSION}}
+    for package, manifest in manifests.items():
+        (tools.node_modules / package).mkdir()
+        (tools.node_modules / package / "package.json").write_text(json.dumps(manifest))
     browser = tools.puppeteer_cache / BROWSER_PATH
     browser.parent.mkdir(parents=True)
     browser.write_text("#!/bin/sh\n")
     browser.chmod(0o755)
-    write_fake_tools(tools.bin_dir, log, ("pandoc", "pandoc-katex"))
+    write_fake_tools(tools.bin_dir, log, ("pandoc",))
     write_stamp(tools)
     return tools
 

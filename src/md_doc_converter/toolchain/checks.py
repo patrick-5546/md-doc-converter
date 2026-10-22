@@ -15,7 +15,6 @@ from md_doc_converter.resources import package_version
 from md_doc_converter.toolchain.environment import (
     BROWSER,
     NODE_MINIMUM,
-    PANDOC_KATEX_VERSION,
     PANDOC_VERSION,
     Toolchain,
     packages_current,
@@ -32,6 +31,8 @@ SETUP_FIX = "Run `md-doc-converter setup`"
 REINSTALL_FIX = "Run `md-doc-converter setup --force`"
 # Executables that the Pandoc filters run.
 FILTER_EXECUTABLES = ("mmdc",)
+# Packages that the Pandoc filters and the PDF printer load.
+FILTER_PACKAGES = ("katex",)
 PDF_PACKAGE = "pagedjs-cli"
 
 
@@ -130,8 +131,10 @@ def check_packages(tools: Toolchain, *, pdf: bool = True) -> Check:
             "npm packages", "error", f"not installed or out of date in {tools.node_dir}", SETUP_FIX
         )
     missing = [name for name in FILTER_EXECUTABLES if not _executable(tools.node_executable(name))]
-    if pdf and not (tools.node_modules / PDF_PACKAGE / "package.json").is_file():
-        missing.append(PDF_PACKAGE)
+    packages = [*FILTER_PACKAGES, *([PDF_PACKAGE] if pdf else [])]
+    missing += [
+        name for name in packages if not (tools.node_modules / name / "package.json").is_file()
+    ]
     if missing:
         return Check("npm packages", "error", "missing " + ", ".join(missing), REINSTALL_FIX)
     return Check("npm packages", "ok", str(tools.node_modules))
@@ -144,20 +147,6 @@ def check_browser(tools: Toolchain) -> Check:
         return Check("browser", "error", f"no {BROWSER} in {cache}", REINSTALL_FIX)
     versions = ", ".join(build.removeprefix("linux-") for build in builds)
     return Check("browser", "ok", f"{BROWSER} {versions} ({cache})")
-
-
-def check_pandoc_katex(tools: Toolchain, *, verify_version: bool = True) -> Check:
-    binary = tools.pandoc_katex
-    if not _executable(binary):
-        return Check("pandoc-katex", "error", f"not installed at {binary}", SETUP_FIX)
-    if verify_version and installed_version(binary) != PANDOC_KATEX_VERSION:
-        return Check(
-            "pandoc-katex",
-            "error",
-            f"{binary} is not version {PANDOC_KATEX_VERSION}",
-            REINSTALL_FIX,
-        )
-    return Check("pandoc-katex", "ok", f"{PANDOC_KATEX_VERSION} ({binary})")
 
 
 def _optional(name: str, candidates: tuple[str, ...], purpose: str, fix: str) -> Check:
@@ -199,7 +188,6 @@ def render_checks(tools: Toolchain, *, pdf: bool) -> list[Check]:
         check_node(),
         check_packages(tools, pdf=pdf),
         check_browser(tools),
-        check_pandoc_katex(tools, verify_version=False),
     ]
 
 
@@ -219,7 +207,6 @@ def doctor_checks(tools: Toolchain) -> list[Check]:
         check_npm(tools),
         check_packages(tools),
         check_browser(tools),
-        check_pandoc_katex(tools),
         check_git(),
         check_libreoffice(),
         check_pdftocairo(),

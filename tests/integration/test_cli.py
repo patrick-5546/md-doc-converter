@@ -12,7 +12,12 @@ from typing_extensions import override
 from md_doc_converter.rendering.header import css_string
 from md_doc_converter.toolchain.environment import PANDOC_VERSION
 from md_doc_converter.toolchain.install import PANDOC
-from tests.support.fake_tools import install_fake_toolchain, read_log, write_fake_tools
+from tests.support.fake_tools import (
+    KATEX_VERSION,
+    install_fake_toolchain,
+    read_log,
+    write_fake_tools,
+)
 
 
 class CommandLineTest(unittest.TestCase):
@@ -93,6 +98,13 @@ class CommandLineTest(unittest.TestCase):
         assert isinstance(environment, dict)
         self.assertEqual(environment["PUPPETEER_CACHE_DIR"], str(self.tools.puppeteer_cache))
         self.assertTrue(str(environment["PATH"]).startswith(str(self.tools.node_bin)))
+        arguments = self.calls("pandoc")[0]["arguments"]
+        assert isinstance(arguments, list)
+        self.assertEqual(
+            arguments[arguments.index("--css") + 1],
+            f"https://cdn.jsdelivr.net/npm/katex@{KATEX_VERSION}/dist/katex.min.css",
+        )
+        self.assertEqual(environment["MD_DOC_CONVERTER_NODE_MODULES"], str(self.tools.node_modules))
         # The fake PATH also has a pandoc; the toolchain's pinned one comes first.
         self.assertEqual({call["path"] for call in self.calls("pandoc")}, {str(self.tools.pandoc)})
 

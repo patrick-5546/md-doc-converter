@@ -125,6 +125,13 @@ Diagrams are shown at 75% of their natural size, and no wider than the page. A
 diagram that Mermaid cannot draw stops the render with Mermaid's message and
 the diagram's position, such as `Mermaid diagram 2 of 3 (flowchart LR)`.
 
+## Math
+
+TeX math between `$` signs, or between `$$` for display math, is rendered with
+[KaTeX](https://katex.org/). Math that KaTeX cannot parse is shown as its TeX
+source in red, with KaTeX's message as its tooltip, rather than stopping the
+render.
+
 ## Page header and footer
 
 PDF pages show page numbers, centered at the bottom as `Page N of M`. Header and

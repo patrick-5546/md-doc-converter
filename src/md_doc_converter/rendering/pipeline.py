@@ -16,9 +16,15 @@ from typing import Literal
 from md_doc_converter.rendering.header import page_css
 from md_doc_converter.resources import asset_path
 from md_doc_converter.toolchain.checks import render_problems
-from md_doc_converter.toolchain.environment import Toolchain, render_environment, toolchain
+from md_doc_converter.toolchain.environment import (
+    Toolchain,
+    katex_version,
+    render_environment,
+    toolchain,
+)
 
 PDF_PRINTER = Path(__file__).with_name("pagedjs-print.mjs")
+KATEX_STYLESHEET = "https://cdn.jsdelivr.net/npm/katex@{version}/dist/katex.min.css"
 PDF_TIMEOUT_DEFAULT = 600
 # Node timers overflow above 2**31 - 1 milliseconds.
 PDF_TIMEOUT_MAX = 2_147_483
@@ -218,6 +224,11 @@ def render_markdown(
             + "\n".join(f"  - {problem}" for problem in problems)
             + "\nRun `md-doc-converter doctor` for details."
         )
+    katex = katex_version(tools)
+    if katex is None:
+        raise RenderError(
+            "cannot read the installed KaTeX version; run `md-doc-converter setup --force`"
+        )
     environment = render_environment(tools)
     filter_gitignored = _filter_gitignored(options.respect_gitignore, source)
 
@@ -254,6 +265,8 @@ def render_markdown(
                     "pandoc",
                     "--defaults",
                     str(asset_path("pandoc-defaults.yaml")),
+                    "--css",
+                    KATEX_STYLESHEET.format(version=katex),
                     "--standalone",
                     "--include-in-header",
                     str(styles_file),

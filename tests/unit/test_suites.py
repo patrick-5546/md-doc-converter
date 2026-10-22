@@ -11,7 +11,7 @@ from md_doc_converter.toolchain.environment import PANDOC_VERSION
 from tests import __main__ as suites
 from tests.support.project import PROJECT_ROOT
 
-TOOLCHAIN_CHECKS = ("check_packages", "check_browser", "check_pandoc_katex")
+TOOLCHAIN_CHECKS = ("check_packages", "check_browser")
 
 
 def toolchain_checks(status: str = "ok") -> contextlib.ExitStack:
@@ -120,7 +120,6 @@ class TestSuiteSelection(unittest.TestCase):
             [
                 "packages: detail (Run setup)",
                 "browser: detail (Run setup)",
-                "pandoc_katex: detail (Run setup)",
             ],
         )
 

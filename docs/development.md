@@ -106,12 +106,8 @@ UV_PYTHON=3.11 UV_PROJECT_ENVIRONMENT=.venv-3.11 uv run poe test
 - **npm packages:** edit `src/md_doc_converter/toolchain/package.json`, then run
   `uv run poe lock-npm`. The next `setup` reinstalls the packages because the
   manifests' digest changes. A test checks that every locked package resolves
-  from `registry.npmjs.org`.
-- **pandoc-katex:** update `PANDOC_KATEX_VERSION` in
-  `toolchain/environment.py`, the `PANDOC_KATEX` checksum in
-  `toolchain/install.py` (the `sha256sum` of the release's
-  `x86_64-unknown-linux-musl` archive), and the KaTeX stylesheet version in
-  `assets/pandoc-defaults.yaml` (`pandoc-katex --katex-version`).
+  from `registry.npmjs.org`. Rendered HTML links the stylesheet of the installed
+  KaTeX version.
 - **Pandoc:** update `PANDOC_VERSION` in `toolchain/environment.py` and the
   `PANDOC` checksum in `toolchain/install.py` (the `sha256sum` of the release's
   `linux-amd64` archive), then update tests that compare exact Pandoc output.

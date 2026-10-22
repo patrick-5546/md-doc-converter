@@ -1,4 +1,4 @@
-"""Install the pinned toolchain: Pandoc, the npm packages and their browser, pandoc-katex."""
+"""Install the pinned toolchain: Pandoc, and the npm packages with their browser."""
 
 from __future__ import annotations
 
@@ -25,7 +25,6 @@ from md_doc_converter.toolchain.environment import (
     BROWSER,
     MANIFEST_DIR,
     MANIFESTS,
-    PANDOC_KATEX_VERSION,
     PANDOC_VERSION,
     Toolchain,
     packages_current,
@@ -60,15 +59,6 @@ PANDOC = Archive(
     f"pandoc-{PANDOC_VERSION}-linux-amd64.tar.gz",
     "d0c90410e90204c9ca83b8539fac5c7aed01fd537207e4585849f8abc5df20b8",
     PurePosixPath(f"pandoc-{PANDOC_VERSION}/bin/pandoc"),
-)
-PANDOC_KATEX = Archive(
-    "pandoc-katex",
-    PANDOC_KATEX_VERSION,
-    f"pandoc-katex-{PANDOC_KATEX_VERSION}-x86_64-unknown-linux-musl.tar.gz",
-    "https://github.com/xu-cheng/pandoc-katex/releases/download/"
-    f"{PANDOC_KATEX_VERSION}/pandoc-katex-{PANDOC_KATEX_VERSION}-x86_64-unknown-linux-musl.tar.gz",
-    "5c7b5b45df27d3fe2af2fd48ef9408b43844a59c8229cfdf5f8379a388e7052a",
-    PurePosixPath("bin/pandoc-katex"),
 )
 NO_RENDER_HINT = (
     "or run `md-doc-converter setup --no-render` to install only Pandoc, for conversion"
@@ -205,9 +195,9 @@ def main(argv: list[str] | None = None) -> int:
         prog="md-doc-converter setup",
         description=(
             "Install the pinned toolchain into MD_DOC_CONVERTER_HOME, by default "
-            "~/.local/share/md-doc-converter: Pandoc, and for rendering, Mermaid and Paged.js "
-            "from npm, the headless browser they share, and pandoc-katex. Rendering needs "
-            "Node.js 22.13+ with npm."
+            "~/.local/share/md-doc-converter: Pandoc, and for rendering, Mermaid, KaTeX and "
+            "Paged.js from npm with the headless browser they share. Rendering needs Node.js "
+            "22.13+ with npm."
         ),
     )
     parser.add_argument(
@@ -223,8 +213,8 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         metavar="DIR",
         help=(
-            f"Use the pinned archives ({PANDOC.file}, {PANDOC_KATEX.file}) from DIR when "
-            "present instead of downloading them; their checksums are still verified"
+            f"Use the pinned Pandoc archive, {PANDOC.file}, from DIR when present instead "
+            "of downloading it; its checksum is still verified"
         ),
     )
     arguments = parser.parse_args(argv)
@@ -250,7 +240,6 @@ def main(argv: list[str] | None = None) -> int:
         install_executable(tools, PANDOC, force=arguments.force, downloads=downloads)
         if npm is not None:
             install_packages(tools, npm, force=arguments.force)
-            install_executable(tools, PANDOC_KATEX, force=arguments.force, downloads=downloads)
     except SetupError as error:
         print(f"md-doc-converter setup: {error}", file=sys.stderr)
         return 1

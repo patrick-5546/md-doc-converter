@@ -74,6 +74,7 @@ class PackageLayoutTest(unittest.TestCase):
             "pandoc-defaults.yaml",
             "mermaid-config.json",
             "mermaid.lua",
+            "katex.js",
             "style-overrides.css",
             "markdown-body-open.html",
             "markdown-body-close.html",

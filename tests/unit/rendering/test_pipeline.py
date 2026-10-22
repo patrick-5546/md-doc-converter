@@ -30,7 +30,13 @@ class RenderTest(unittest.TestCase):
         self.root = Path(directory.name)
         self.source = self.root / "cache.v2 spec.md"
         self.source.write_text("# Canonical Markdown\n")
-        self.tools = Toolchain(self.root / "toolchain")
+        # Outside root, which the tests list; only the installed KaTeX version is read.
+        toolchain = tempfile.TemporaryDirectory()
+        self.addCleanup(toolchain.cleanup)
+        self.tools = Toolchain(Path(toolchain.name))
+        katex = self.tools.node_modules / "katex" / "package.json"
+        katex.parent.mkdir(parents=True)
+        katex.write_text('{"version": "0.19.0"}')
         self.prepared: list[Path] = []
         self.preprocess_commands: list[list[str]] = []
         self.pandoc_calls: list[tuple[list[str], dict[str, object]]] = []
@@ -140,7 +146,20 @@ class RenderTest(unittest.TestCase):
             assert isinstance(environment, dict)
             self.assertTrue(environment["PATH"].startswith(str(self.tools.node_bin) + os.pathsep))
             self.assertEqual(environment["PUPPETEER_CACHE_DIR"], str(self.tools.puppeteer_cache))
-            self.assertNotIn("--css", command)
+            # Only the stylesheet of the installed KaTeX is linked; the others are inlined.
+            linked = [command[index + 1] for index, part in enumerate(command) if part == "--css"]
+            self.assertEqual(
+                linked, ["https://cdn.jsdelivr.net/npm/katex@0.19.0/dist/katex.min.css"]
+            )
+
+    def test_an_unreadable_katex_version_fails_before_rendering(self) -> None:
+        (self.tools.node_modules / "katex" / "package.json").write_text("{}")
+        with (
+            mock.patch("subprocess.run", side_effect=self.fake_run) as run,
+            self.assertRaisesRegex(render.RenderError, "installed KaTeX version"),
+        ):
+            self.render_document(FORMAT.HTML)
+        run.assert_not_called()
 
     def test_pdf_timeout_accepts_whole_seconds_and_defaults_when_blank(self) -> None:
         for value, expected in (
