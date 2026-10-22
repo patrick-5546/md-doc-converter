@@ -160,7 +160,7 @@ this order:
 | Transform | Effect |
 | --- | --- |
 | `alignment` | Aligns the MarkItDown and Pandoc conversions through private markers. The transforms from `literal-text` to `floating-previews`, except `image-conversion`, need it. |
-| `fields` | Keeps the cached text of Word simple fields, such as caption numbers, which MarkItDown and Pandoc would otherwise drop. Fields that Pandoc cannot close, which would move the text of later list items out of their lists, keep only their cached text: fields spanning paragraphs, such as a table of contents, and fields without an instruction or an end. Fields inside another field's instruction, which Word does not show, and stray field marks, which stop MarkItDown, are removed. Page numbers in table-of-contents links are dropped. |
+| `fields` | Keeps the cached text of Word simple fields, such as caption numbers, which MarkItDown and Pandoc would otherwise drop. Fields that Pandoc cannot close, which would move the text of later list items out of their lists, keep only their cached text: fields spanning paragraphs, such as a table of contents, and fields without an instruction or an end. Fields inside another field's instruction, which Word does not show, and stray field marks, which Word ignores, are removed. Page numbers in table-of-contents links are dropped. |
 | `symbols` | Writes characters set in the Symbol, Wingdings, and Webdings fonts, such as a Wingdings check mark typed as `ü`, as the Unicode symbols they show. |
 | `hidden-text` | Drops text formatted as Hidden, directly or through its character style, paragraph style, or the document defaults. |
 | `spaces` | Writes no-break, en, and other Unicode spaces as plain spaces, which Markdown editors do not show and text search does not match, and drops zero-width spaces, in text and in Word alt text. Spaces that indent a line outside a heading, two or more with at least one a Unicode space, become no-break spaces, the only spaces Markdown keeps at the start of a paragraph. |
@@ -282,8 +282,7 @@ A caption number held in a simple field
   After:  Figure 3: Block diagram
 ```
 
-A stray field mark, which Word ignores, stops MarkItDown with an `IndexError`;
-`docx-to-md` removes the mark and converts the document.
+A stray field mark, which Word ignores, is removed.
 
 ### `symbols`
 

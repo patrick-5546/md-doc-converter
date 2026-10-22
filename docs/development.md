@@ -91,16 +91,18 @@ installed toolchain, Node.js, `pdftocairo` and LibreOffice (`libreoffice` or
 
 The converter writes code fences itself, because Pandoc's GFM writer drops
 labels, such as `text`, that are not among its highlighting languages (since
-Pandoc 3.10.1). Python 3.10 is the oldest supported version:
+Pandoc 3.10.1). `.python-version` selects the newest supported Python, 3.14;
+to test the oldest, 3.11:
 
 ```sh
-UV_PYTHON=3.10 UV_PROJECT_ENVIRONMENT=.venv-3.10 uv run poe test
+UV_PYTHON=3.11 UV_PROJECT_ENVIRONMENT=.venv-3.11 uv run poe test
 ```
 
 ## Updating dependencies
 
 - **Python:** edit `pyproject.toml`, then run `uv lock`. MarkItDown stays pinned
-  to one version because Word alignment depends on its exact output.
+  to one version, and mammoth, its Word reader, to one release series, because
+  Word alignment depends on their exact output.
 - **npm packages:** edit `src/md_doc_converter/toolchain/package.json`, then run
   `uv run poe lock-npm`. The next `setup` reinstalls the packages because the
   manifests' digest changes. A test checks that every locked package resolves
@@ -118,7 +120,7 @@ UV_PYTHON=3.10 UV_PROJECT_ENVIRONMENT=.venv-3.10 uv run poe test
 
 `.github/workflows/ci.yml` runs on pushes and pull requests:
 
-- `lint-and-core`: lint, then the core suite on Python 3.10 and 3.13, with the
+- `lint-and-core`: lint, then the core suite on Python 3.11 and 3.14, with the
   pinned Pandoc cached by `toolchain/install.py`;
 - `render`: installs Node.js 24, LibreOffice and Poppler, runs `setup` (cached
   by the npm manifests and the toolchain code) and the render suite;

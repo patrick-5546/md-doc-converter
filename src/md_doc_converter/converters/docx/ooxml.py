@@ -965,10 +965,8 @@ def repair_fields(root: ET.Element) -> Counter[str]:
             ):
                 unwrap(current, node)
         elif kind in {"separate", "end"}:
-            # Pandoc ignores these, but they stop mammoth 1.11, which MarkItDown pins, with an
-            # IndexError (https://github.com/mwilliamson/python-mammoth/issues/168, fixed in
-            # mammoth 1.12.2; https://github.com/microsoft/markitdown/issues/2646, proposed
-            # fix: https://github.com/microsoft/markitdown/pull/2647).
+            # Word and Pandoc ignore these; mammoth, which MarkItDown uses, failed on them with
+            # an IndexError before 1.12.2 (https://github.com/mwilliamson/python-mammoth/issues/168).
             marks.append(node)
             counts["stray field mark(s) removed"] += 1
     for current in stack:

@@ -3,7 +3,7 @@ name = "md-doc-converter"
 version = "0.1.0"
 description = "Convert Word, Excel and CSV documents to Markdown, and render Markdown to HTML and PDF"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11,<3.15"
 keywords = ["markdown", "docx", "excel", "csv", "pdf", "html", "pandoc", "mermaid", "katex"]
 classifiers = [
     "Environment :: Console",
@@ -12,8 +12,10 @@ classifiers = [
     "Topic :: Text Processing :: Markup :: Markdown",
 ]
 dependencies = [
-    # DOCX alignment depends on this exact MarkItDown output (MarkItDown also pins mammoth).
-    "markitdown[docx]==0.1.6",
+    # DOCX alignment depends on this exact MarkItDown output, and so on mammoth, its Word
+    # reader, which MarkItDown no longer limits to one release series.
+    "markitdown[docx]==0.1.9",
+    "mammoth~=1.13.0",
     "openpyxl>=3.1.5",
     "typing-extensions>=4.4",
 ]
@@ -32,6 +34,10 @@ dev = [
 [build-system]
 requires = ["uv_build>=0.13.4,<0.14.0"]
 build-backend = "uv_build"
+
+[tool.uv]
+# setup supports Linux x86_64 only, so the lock resolves for it alone.
+environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
 
 # Development tasks: `uv run poe <task>`; `uv run poe` lists them.
 [tool.poe.env]

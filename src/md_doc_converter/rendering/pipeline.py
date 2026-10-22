@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Literal
 
@@ -31,7 +31,7 @@ class RenderError(Exception):
     """A rendering request could not be completed safely."""
 
 
-class OutputFormat(str, Enum):
+class OutputFormat(StrEnum):
     HTML = "html"
     PDF = "pdf"
 
