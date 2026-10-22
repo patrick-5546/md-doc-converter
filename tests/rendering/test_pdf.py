@@ -111,5 +111,12 @@ def test_text_fills_the_width_between_one_inch_margins(pdf: Path) -> None:
         if INCH < float(top) < 792 - INCH
     ]
     assert min(left for left, _right in words) == pytest.approx(INCH, abs=1)
-    # A shrunken page would end its lines well short of the right margin.
-    assert 612 - INCH - 10 < max(right for _left, right in words) <= 612 - INCH + 1
+    # Lines end at the right margin, give or take the fonts; Chrome shrinks every page
+    # when something is wider than the page, and lines then end well short of it.
+    assert max(right for _left, right in words) == pytest.approx(612 - INCH, abs=5)
+
+
+def test_long_code_lines_wrap_inside_the_page(pdf: Path) -> None:
+    # The PDF leaves out what a code block cuts off at the page edge.
+    text = " ".join(run("pdftotext", pdf, "-").split())
+    assert " ".join(LONG_CODE.split()) in text
