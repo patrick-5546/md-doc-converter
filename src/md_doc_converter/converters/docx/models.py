@@ -122,8 +122,7 @@ class SourceDocument:
     # marks inline code, if any; recovery replaces each block's region.
     code_blocks: dict[str, str] = field(default_factory=dict)
     code_style: ET.Element | None = None
-    # Word line breaks in the MarkItDown copy, and how many each step restored or kept as spaces.
-    line_breaks: int = 0
+    # How many Word line breaks recovery restored, and how many in headings became spaces.
     restored_breaks: int = 0
     heading_breaks: int = 0
 

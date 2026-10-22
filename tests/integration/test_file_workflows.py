@@ -6,34 +6,20 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from md_doc_converter.markdown.preprocess import prepare_markdown
+
 
 class ReviewFixTest(unittest.TestCase):
     def test_bit_range_definitions_in_fenced_code_are_unchanged(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = root / "input.md"
-            output = root / "output.md"
             source.write_text(
                 "* [1:0]: prose definition\n\n```text\n[3:0]: fenced code\n```\n",
                 encoding="utf-8",
             )
 
-            subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "md_doc_converter.markdown.preprocess",
-                    "-i",
-                    str(source),
-                    "-o",
-                    str(output),
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-
-            result = output.read_text(encoding="utf-8")
+            result = prepare_markdown(source)
             assert r"* \[1:0\]: prose definition" in result
             assert "[3:0]: fenced code" in result
 
@@ -50,7 +36,6 @@ class ReviewFixTest(unittest.TestCase):
             (repository / "docs.md").write_text("# Ignored root title\n", encoding="utf-8")
             (docs / "topic.md").write_text("# Ignored topic title\n", encoding="utf-8")
             (topic / "page.md").write_text("# Included page\n", encoding="utf-8")
-            output = repository / "output.md"
             subprocess.run(
                 ["git", "init", "--quiet"],
                 cwd=repository,
@@ -59,24 +44,7 @@ class ReviewFixTest(unittest.TestCase):
                 text=True,
             )
 
-            subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "md_doc_converter.markdown.preprocess",
-                    "--respect-gitignore",
-                    "-i",
-                    str(docs),
-                    "-o",
-                    str(output),
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-
-            result = output.read_text(encoding="utf-8")
-            assert result == "# Included page\n"
+            assert prepare_markdown(docs, respect_gitignore=True) == "# Included page\n"
 
     def test_recursive_csv_output_preserves_relative_directories(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

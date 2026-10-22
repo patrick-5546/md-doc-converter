@@ -22,7 +22,6 @@ from md_doc_converter.converters.docx.models import (
     ConversionError,
     ConversionPaths,
     ImageDescription,
-    SourceImage,
     WordPackage,
 )
 from md_doc_converter.converters.docx.ooxml import DRAWING_WORD, OFFICE, VML, WORD
@@ -252,10 +251,6 @@ def image_url(name: PurePosixPath, paths: ConversionPaths) -> str:
     return urllib.parse.quote(
         (PurePosixPath(".images") / paths.output.stem / name).as_posix(), safe="/"
     )
-
-
-def published_image_url(image: SourceImage, paths: ConversionPaths) -> str:
-    return image_url(image.published_name, paths)
 
 
 def escape_image_alt_text(value: str) -> str:
@@ -512,7 +507,10 @@ def _convert_vectors(drawings: dict[str, tuple[bytes, str]], work: Path) -> dict
     def export(
         kind: str, names: list[str], description: str
     ) -> tuple[Path, ConversionError | None]:
-        """Export the drawings *names* in one run; return the folder and how the run failed."""
+        """Export the drawings *names* in one run; return the folder and how the run failed.
+
+        LibreOffice's warnings on success (such as a missing Java runtime) are not shown.
+        """
         folder = work / kind
         folder.mkdir()
         command = [office, f"-env:UserInstallation={profile}", "--headless", "--convert-to", kind]
@@ -520,6 +518,7 @@ def _convert_vectors(drawings: dict[str, tuple[bytes, str]], work: Path) -> dict
             _reference.run_command(
                 [*command, "--outdir", str(folder), *(str(paths[name]) for name in names)],
                 description,
+                quiet=True,
             )
         except ConversionError as error:
             return folder, error
@@ -567,8 +566,11 @@ def _convert_vectors(drawings: dict[str, tuple[bytes, str]], work: Path) -> dict
                     raise failure or ConversionError(
                         f"{direct_error}; EMF fallback did not produce {pdf}"
                     )
+                # Its warnings concern our intermediate PDF, which users cannot act on.
                 _reference.run_command(
-                    [cairo, "-svg", str(pdf), str(svg)], "PDF-to-SVG fallback conversion"
+                    [cairo, "-svg", str(pdf), str(svg)],
+                    "PDF-to-SVG fallback conversion",
+                    quiet=True,
                 )
                 if not produced(svg):
                     raise ConversionError(f"{direct_error}; PDF-to-SVG fallback produced no SVG")

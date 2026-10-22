@@ -66,9 +66,10 @@ class EmfWorkflowTest(unittest.TestCase):
             description: str,
             *,
             input_text: str | None = None,
+            quiet: bool = False,
         ) -> str:
             descriptions.append(description)
-            return original(command, description, input_text=input_text)
+            return original(command, description, input_text=input_text, quiet=quiet)
 
         with patch.object(_reference, "run_command", record):
             stats = _pipeline.convert_docx(self.source)
@@ -86,10 +87,11 @@ class EmfWorkflowTest(unittest.TestCase):
             description: str,
             *,
             input_text: str | None = None,
+            quiet: bool = False,
         ) -> str:
             if description == "EMF-to-SVG conversion":
                 raise _models.ConversionError("Exercising real PDF fallback")
-            return original(command, description, input_text=input_text)
+            return original(command, description, input_text=input_text, quiet=quiet)
 
         with (
             patch.object(_reference, "run_command", force_pdf),

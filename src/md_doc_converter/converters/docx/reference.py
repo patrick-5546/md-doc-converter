@@ -5,7 +5,6 @@ from __future__ import annotations
 import html
 import json
 import re
-import shutil
 import string
 import subprocess
 import sys
@@ -145,17 +144,13 @@ def omit_empty_list_items(root: ET.Element) -> int:
     return count
 
 
-def replace_text(root: ET.Element, replacements: dict[str, str]) -> None:
-    for node in root.iter():
-        if node.text:
-            for old, new in replacements.items():
-                node.text = node.text.replace(old, new)
-        if node.tail:
-            for old, new in replacements.items():
-                node.tail = node.tail.replace(old, new)
+def run_command(
+    command: list[str], description: str, *, input_text: str | None = None, quiet: bool = False
+) -> str:
+    """Run *command* and return its standard output.
 
-
-def run_command(command: list[str], description: str, *, input_text: str | None = None) -> str:
+    Its standard error explains a failure; after success it is shown unless *quiet*.
+    """
     try:
         result = subprocess.run(
             command, input=input_text, check=True, capture_output=True, text=True
@@ -167,18 +162,9 @@ def run_command(command: list[str], description: str, *, input_text: str | None 
     except subprocess.CalledProcessError as error:
         detail = (error.stderr or error.stdout or "").strip()
         raise ConversionError(f"{description} failed: {detail or error}") from error
-    if result.stderr.strip():
+    if result.stderr.strip() and not quiet:
         print(f"{description}: {result.stderr.strip()}", file=sys.stderr)
     return result.stdout
-
-
-def require_pandoc() -> str:
-    pandoc = shutil.which("pandoc")
-    if pandoc is None:
-        raise ConversionError(
-            "Pandoc is required; install it and check with md-doc-converter doctor"
-        )
-    return pandoc
 
 
 def markdown_ast(markdown: str, pandoc: str, description: str) -> ParsedMarkdown:

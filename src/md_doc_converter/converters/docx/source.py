@@ -542,7 +542,6 @@ def _write_markitdown_copy(
                 replacement.text = breaking
                 run[position] = replacement
                 source.literal_tokens[breaking] = " "
-                source.line_breaks += 1
     if not source.alt_targets and not source.literal_tokens and not source.pict_units:
         return work / "reference.docx"
     document = _ooxml.word_xml_bytes(protected, package.parts[DOCUMENT_PART])
@@ -1116,10 +1115,9 @@ def _instrument_source(
         if _ooxml.pandoc_heading(paragraph, styles):
             return False
         try:
-            reference = _ooxml.numbering_reference(paragraph, styles)
+            return _ooxml.is_list_item(paragraph, styles, numbered)
         except ConversionError:
             return False
-        return reference is not None and int(reference) != 0 and reference in numbered
 
     # Before the tables are copied for the final checks, which compare their text.
     for paragraph in _ooxml.scoped_iter(root, WORD + "p"):

@@ -7,6 +7,7 @@ import unittest
 
 from md_doc_converter.converters.docx import reference as _reference
 from md_doc_converter.pandoc import JSONValue
+from tests.support.suites import pinned_pandoc
 
 
 def code(
@@ -107,7 +108,7 @@ class FenceCodeBlocksTest(unittest.TestCase):
         }
 
     def test_pandoc_writes_the_fence_and_reads_the_label_back(self) -> None:
-        pandoc = _reference.require_pandoc()
+        pandoc = pinned_pandoc()
         document: JSONValue = {
             "pandoc-api-version": [1, 23, 1],
             "meta": {},
@@ -150,7 +151,7 @@ class LinkTitleTest(unittest.TestCase):
         ]
 
     def test_pandoc_writes_titles_that_read_back_unchanged(self) -> None:
-        pandoc = _reference.require_pandoc()
+        pandoc = pinned_pandoc()
         # An escaped entity, "\\&amp;", stays literal in CommonMark parsers, but Pandoc's reader
         # decodes it anyway, so it is covered by the escaping test above instead.
         titles = ['say "hi"', "ends\\", "back\\slash", "paren (x)", "it's", "<tag> & more"]

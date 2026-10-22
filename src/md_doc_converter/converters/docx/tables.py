@@ -718,11 +718,3 @@ def render_source_table(table: ET.Element) -> TableRendering:
     if markdown is not None:
         return TableRendering(markdown, True, omitted=omitted)
     return TableRendering(_reference.html_element(cleaned) + "\n", False, reason, omitted)
-
-
-def html_table_to_pipe(table: ET.Element | str) -> str | None:
-    root = _reference.parse_html(table).find("table") if isinstance(table, str) else table
-    if root is None:
-        raise ConversionError("Reference contains no HTML table")
-    rendered = render_source_table(root)
-    return rendered.text if rendered.markdown else None

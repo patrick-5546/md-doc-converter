@@ -89,7 +89,8 @@ class FakeTools:
         self.failing = failing
         self.calls: list[list[str]] = []
 
-    def __call__(self, args: list[str], description: str) -> str:
+    def __call__(self, args: list[str], description: str, *, quiet: bool = False) -> str:
+        assert quiet, "drawing conversions must not show the tools' warnings on success"
         self.calls.append(args)
         if args[1] == "-svg":
             written = self.outputs[Path(args[2]).stem].get("cairo")

@@ -14,6 +14,7 @@ from md_doc_converter.pandoc import JSONValue
 from tests.support.docx import (
     W,
 )
+from tests.support.suites import pinned_pandoc
 
 
 class LiteralTextTests(unittest.TestCase):
@@ -25,7 +26,7 @@ class LiteralTextTests(unittest.TestCase):
         )
         encoded = "SOURCELTspeedsSOURCEGT SOURCEAMPcopy;"
         markdown = f"{encoded}\n\n`{encoded}`\n\n```text\n{encoded}\n```\n\n<div>{encoded}</div>\n"
-        pandoc = _reference.require_pandoc()
+        pandoc = pinned_pandoc()
 
         result = _recovery.restore_literal_text(markdown, source, pandoc)
         parsed = _reference.pandoc_html(result, pandoc)
@@ -50,7 +51,7 @@ class LiteralTextTests(unittest.TestCase):
             "SOURCEHASH of entries\n\n"
             "Path C:SOURCEBStools\\\\a and SOURCEBS\\*b, SOURCEBSSOURCEBSserver\n"
         )
-        pandoc = _reference.require_pandoc()
+        pandoc = pinned_pandoc()
 
         result = _recovery.restore_literal_text(markdown, source, pandoc)
         parsed = _reference.pandoc_html(result, pandoc)
@@ -76,7 +77,7 @@ class LiteralTextTests(unittest.TestCase):
             "SOURCELITERALBREAKedgeSOURCELITERALBREAK\n\n"
             "| aSOURCELITERALBREAKb | c |\n| --- | --- |\n"
         )
-        pandoc = _reference.require_pandoc()
+        pandoc = pinned_pandoc()
 
         result = _recovery.restore_literal_text(markdown, source, pandoc)
 
@@ -90,7 +91,7 @@ class LiteralTextTests(unittest.TestCase):
 
 class BackslashTests(unittest.TestCase):
     def test_backslashes_before_punctuation_survive_the_commonmark_writer(self) -> None:
-        pandoc = _reference.require_pandoc()
+        pandoc = pinned_pandoc()
         texts = ["a\\*b", "c\\_d and e_ f", "\\\\server\\share", "end\\", "x\\`y` z", "C:\\tools"]
         for text in texts:
             with self.subTest(text=text):

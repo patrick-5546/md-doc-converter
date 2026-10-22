@@ -61,6 +61,7 @@ from tests.support.docx import (
     word_style,
     write_docx,
 )
+from tests.support.suites import pinned_pandoc
 
 COMMAND = [sys.executable, "-m", "md_doc_converter", "docx-to-md"]
 
@@ -72,7 +73,7 @@ class ConversionTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         self.source = self.root / "Synthetic Guide.docx"
-        self.pandoc = _reference.require_pandoc()
+        self.pandoc = pinned_pandoc()
 
     def convert(
         self,

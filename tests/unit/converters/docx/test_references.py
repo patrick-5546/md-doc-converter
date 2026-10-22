@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import re
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
+import pytest
 from typing_extensions import override
 
 from md_doc_converter.converters.docx import models as _models
@@ -19,6 +22,7 @@ from md_doc_converter.pandoc import JSONValue
 from tests.support.docx import (
     W,
 )
+from tests.support.suites import pinned_pandoc
 
 
 class LinkValidationTests(unittest.TestCase):
@@ -32,7 +36,7 @@ class LinkValidationTests(unittest.TestCase):
         self.paths = _publication.validate_paths(source, self.root / "guide.md")
         self.staged_images = self.root / "staged-images"
         self.staged_images.mkdir()
-        self.pandoc = _reference.require_pandoc()
+        self.pandoc = pinned_pandoc()
 
     def validate_external_link(self, expected: str, rendered: str) -> list[_validation.Issue]:
         source = _models.SourceDocument(ET.Element(W + "document"), "test", link_targets=[expected])
@@ -94,7 +98,7 @@ class LinkValidationTests(unittest.TestCase):
 class ParagraphSplitTests(unittest.TestCase):
     @override
     def setUp(self) -> None:
-        self.pandoc = _reference.require_pandoc()
+        self.pandoc = pinned_pandoc()
 
     def split(self, markdown: str, filler: str | None = None) -> str:
         tree = _reference.markdown_ast(markdown, self.pandoc, "Paragraph split test").ast
@@ -144,7 +148,7 @@ class ParagraphSplitTests(unittest.TestCase):
 
 class TableCodePipeTests(unittest.TestCase):
     def test_pipes_in_table_code_spans_stay_escaped_through_the_gfm_writer(self) -> None:
-        pandoc = _reference.require_pandoc()
+        pandoc = pinned_pandoc()
         markdown = "| A | B |\n| --- | --- |\n| `a\\|b` | ``x`\\|`y`` |\n\nOutside `c|d`.\n"
         tree = _reference.markdown_ast(markdown, pandoc, "Table code test").ast
         written = _reference.run_command(
@@ -156,3 +160,36 @@ class TableCodePipeTests(unittest.TestCase):
         assert "``x`\\|`y``" in written
         assert "Outside `c|d`." in written
         assert _reference.markdown_ast(written, pandoc, "Table code test").ast == tree
+
+
+def test_run_command_shows_warnings_after_success_unless_quiet(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    command = [sys.executable, "-c", "import sys; print('out'); print('warning', file=sys.stderr)"]
+    assert _reference.run_command(command, "Probe") == "out\n"
+    assert capsys.readouterr().err == "Probe: warning\n"
+    assert _reference.run_command(command, "Probe", quiet=True) == "out\n"
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize(
+    ("script", "reason"),
+    [
+        ("import sys; print('ignored'); sys.exit('broken input')", "broken input"),
+        ("import sys; print('stdout reason'); sys.exit(3)", "stdout reason"),
+        ("import sys; sys.exit(3)", "returned non-zero exit status 3"),
+    ],
+    ids=["stderr", "stdout", "status"],
+)
+def test_run_command_failures_name_the_step_and_the_reason(script: str, reason: str) -> None:
+    with pytest.raises(_models.ConversionError, match=rf"^Probe failed: .*{re.escape(reason)}"):
+        _reference.run_command([sys.executable, "-c", script], "Probe", quiet=True)
+
+
+def test_run_command_names_a_missing_tool(tmp_path: Path) -> None:
+    missing = tmp_path / "missing-tool"
+    with pytest.raises(
+        _models.ConversionError,
+        match=f"^Probe requires unavailable command {re.escape(repr(str(missing)))}$",
+    ):
+        _reference.run_command([str(missing)], "Probe")

@@ -6,7 +6,6 @@ import json
 import re
 import shutil
 import subprocess
-import sys
 import tempfile
 import unittest
 from collections import Counter, defaultdict
@@ -17,7 +16,6 @@ import pytest
 
 from md_doc_converter.markdown import preprocess
 from md_doc_converter.markdown.headings import Heading, HeadingError, headings
-from tests.support.project import PROJECT_ROOT
 
 RENDERER_READER = "markdown-implicit_figures-yaml_metadata_block+gfm_auto_identifiers"
 PANDOC = shutil.which("pandoc")
@@ -76,17 +74,6 @@ class HeadingIdsTest(unittest.TestCase):
                     pytest.raises(HeadingError),
                 ):
                     headings("# Heading\n")
-
-    def test_preprocessor_help_does_not_require_pandoc(self) -> None:
-        result = subprocess.run(
-            [sys.executable, "-m", "md_doc_converter.markdown.preprocess", "--help"],
-            env={"PATH": ""},
-            cwd=PROJECT_ROOT,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        assert "Markdown preprocessor" in result.stdout
 
     @unittest.skipUnless(PANDOC, "pandoc not installed")
     def test_gfm_heading_ids_match_pandoc(self) -> None:

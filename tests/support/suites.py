@@ -43,6 +43,13 @@ def selects_rendering(arguments: Sequence[str], base: Path) -> bool:
     return False
 
 
+def pinned_pandoc() -> str:
+    """The pinned Pandoc, which every suite requires before it runs."""
+    pandoc = shutil.which("pandoc")
+    assert pandoc is not None, "the suites' prerequisites guarantee Pandoc"
+    return pandoc
+
+
 def missing_prerequisites(*, render: bool) -> list[str]:
     missing = [] if shutil.which("git") else ["git"]
     # Converter tests compare exact Pandoc output, so they need the pinned version.

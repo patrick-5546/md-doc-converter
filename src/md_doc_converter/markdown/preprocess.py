@@ -24,15 +24,11 @@ directory has a sibling ``.md`` file with the same name (e.g.
 ``topic.md`` next to ``topic/``), that file is used as the title page for
 the directory.  Cross-file ``.md`` links are resolved to internal heading
 anchors (bare links to the target's first heading, ``#fragment`` links to the
-matching heading), and unresolved ones are reported on stderr.  Pass
-``--respect-gitignore`` to skip files and directories that git ignores.
-
-Usage:
-    python -m md_doc_converter.markdown.preprocess -i input.md -o output.md
-    python -m md_doc_converter.markdown.preprocess -i docs_dir/ --respect-gitignore -o output.md
+matching heading), and unresolved ones are reported on stderr.
+``prepare_markdown(folder, respect_gitignore=True)`` skips files and directories
+that git ignores.
 """
 
-import argparse
 import os
 import re
 import shutil
@@ -41,11 +37,12 @@ import sys
 from collections import Counter, defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 from md_doc_converter.markdown.document import READER as _RENDERER_READER
-from md_doc_converter.markdown.document import MarkdownDocument, MarkdownError
+from md_doc_converter.markdown.document import MarkdownDocument
 from md_doc_converter.markdown.syntax import (
     container_line,
     inline_code_spans,
@@ -456,12 +453,7 @@ def warn_crossfile_md_links(
 
 def _pandoc_headings(markdown: str, source_path: str | None) -> list["Heading"]:
     """Return actual renderer heading identities for *markdown*."""
-    try:
-        from md_doc_converter.markdown.headings import HeadingError, headings
-    except ImportError as exc:
-        raise RuntimeError(
-            "md_doc_converter.markdown.headings is required for Markdown heading anchor handling"
-        ) from exc
+    from md_doc_converter.markdown.headings import HeadingError, headings
 
     try:
         return headings(markdown, reader=_RENDERER_READER)
@@ -647,7 +639,7 @@ def collect_directory(
             entries = [e for e in entries if e not in ignored]
 
         if os.path.isfile(order_file):
-            with open(order_file) as f:
+            with open(order_file, encoding="utf-8") as f:
                 order = [line.strip() for line in f if line.strip()]
             # Build lookup: stem -> actual entry name. A directory owns its stem
             # so a same-stem title page (topic.md beside topic/) stays with it.
@@ -673,7 +665,7 @@ def collect_directory(
     def _read_md(file_path: str) -> _CollectedMarkdown:
         """Read a markdown file, run all transforms, and record its heading anchors."""
         print(f"  {file_path}", file=sys.stderr)
-        with open(file_path) as fh:
+        with open(file_path, encoding="utf-8") as fh:
             content = fh.read()
         document = _prepare_document(content, source_path=file_path, stats=stats)
         normalized = os.path.normpath(file_path)
@@ -847,39 +839,18 @@ def _file_link_resolver(
     return _replace
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Markdown preprocessor for pandoc")
-    parser.add_argument("-i", "--input", required=True, help="Input markdown file or directory")
-    parser.add_argument("-o", "--output", help="Output file (writes to stdout if omitted)")
-    parser.add_argument(
-        "--respect-gitignore",
-        action="store_true",
-        help="When the input is a directory, skip files and dirs that git ignores",
-    )
-    args = parser.parse_args()
+def prepare_markdown(source: Path, *, respect_gitignore: bool = False) -> str:
+    """Prepare a Markdown file, or every Markdown file in a folder, for Pandoc.
 
+    Report what changed on stderr. *respect_gitignore* skips what Git ignores in a folder.
+    """
     # Per-transform change counts, shared across every file processed.
     stats: dict[str, Counter[str]] = defaultdict(Counter)
-
-    if os.path.isdir(args.input):
-        # Each file is preprocessed during collection
-        result = collect_directory(args.input, stats, respect_gitignore=args.respect_gitignore)
+    if source.is_dir():
+        # Each file is preprocessed during collection.
+        result = collect_directory(str(source), stats, respect_gitignore=respect_gitignore)
     else:
-        with open(args.input) as f:
-            text = f.read()
-        result = preprocess(text, source_path=args.input, stats=stats, single_file=True)
-
-    if args.output:
-        with open(args.output, "w") as f:
-            f.write(result)
-    else:
-        sys.stdout.write(result)
-
+        text = source.read_text(encoding="utf-8")
+        result = preprocess(text, source_path=str(source), stats=stats, single_file=True)
     print_stats(stats)
-
-
-if __name__ == "__main__":
-    try:
-        main()
-    except (MarkdownError, OSError, ValueError) as error:
-        sys.exit(f"preprocess: error: {error}")
+    return result

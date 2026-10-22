@@ -20,6 +20,15 @@ from tests.support.docx import (
     row,
     table,
 )
+from tests.support.suites import pinned_pandoc
+
+
+def pipe_table(table: ET.Element | str) -> str | None:
+    """The Markdown pipe table for a reference table, or None when it must stay HTML."""
+    root = _reference.parse_html(table).find("table") if isinstance(table, str) else table
+    assert root is not None
+    rendered = _tables.render_source_table(root)
+    return rendered.text if rendered.markdown else None
 
 
 class SourceTableTests(unittest.TestCase):
@@ -37,7 +46,7 @@ class SourceTableTests(unittest.TestCase):
             "<tbody><tr><td>data</td><td></td></tr><tr><td></td><td></td></tr></tbody></table>"
         ).find("table")
         result = _tables.repair_source_table(source, reference)
-        assert _tables.html_table_to_pipe(result) is None
+        assert pipe_table(result) is None
         assert len(_tables.html_rows(result)) == 3
 
     def test_first_row_is_a_markdown_header_without_repeat_header_metadata(self) -> None:
@@ -48,13 +57,13 @@ class SourceTableTests(unittest.TestCase):
         ).find("table")
         result = _tables.repair_source_table(source, reference)
         assert result.find("thead") is None
-        assert _tables.html_table_to_pipe(result) == "| data | value |\n| --- | --- |\n| | |\n"
+        assert pipe_table(result) == "| data | value |\n| --- | --- |\n| | |\n"
         assert len(result.findall("./tbody/tr")) == 2
 
     def test_zero_row_table_is_recovered(self) -> None:
         result = _tables.repair_source_table(table(), None)
         assert _reference.html_element(result) == "<table></table>"
-        assert _tables.html_table_to_pipe(result) is None
+        assert pipe_table(result) is None
 
     def test_zero_cell_word_rows_are_restored_without_guessing(self) -> None:
         source = table(row(), row(cell("A"), cell("B")), row())
@@ -91,7 +100,7 @@ class SourceTableTests(unittest.TestCase):
             ' and <a href="#_Ref">target</a></p></td></tr></tbody></table>'
         )
         assert (
-            _tables.html_table_to_pipe(source) == "| Name | Details |\n| --- | --- |\n"
+            pipe_table(source) == "| Name | Details |\n| --- | --- |\n"
             r"| A \| B | First line<br><br>**Second** and [target](#_Ref) |" + "\n"
         )
 
@@ -101,7 +110,7 @@ class SourceTableTests(unittest.TestCase):
             '<table><thead><tr><th colspan="2">A</th></tr></thead>'
             "<tbody><tr><td>x</td><td>y</td></tr></tbody></table>"
         ).find("table")
-        assert _tables.html_table_to_pipe(_tables.repair_source_table(source, reference)) is None
+        assert pipe_table(_tables.repair_source_table(source, reference)) is None
 
     def test_vertical_merge_keeps_fully_covered_blank_row(self) -> None:
         source = table(row(cell("A", merge="restart")), row(cell("", merge="continue")), columns=1)
@@ -123,14 +132,14 @@ class SourceTableTests(unittest.TestCase):
             "<table><tbody><tr><td>nested</td></tr></tbody></table>"
             "</td></tr></tbody></table>"
         )
-        assert _tables.html_table_to_pipe(source) is None
+        assert pipe_table(source) is None
 
     def test_word_anchor_is_removed_without_losing_cell_text(self) -> None:
         source = (
             "<table><thead><tr><th>A</th></tr></thead><tbody><tr>"
             '<td>before <a id="_Cell"></a>body</td></tr></tbody></table>'
         )
-        assert _tables.html_table_to_pipe(source) == "| A |\n| --- |\n| before body |\n"
+        assert pipe_table(source) == "| A |\n| --- |\n| before body |\n"
 
     def test_widths_fonts_and_mixed_cell_alignment_do_not_force_html(self) -> None:
         source = (
@@ -142,7 +151,7 @@ class SourceTableTests(unittest.TestCase):
             '<tr><td style="text-align: left; color: red;">1</td>'
             '<td style="background: gray">2</td></tr></tbody></table>'
         )
-        assert _tables.html_table_to_pipe(source) == "| A | B |\n| --- | --- |\n| 1 | 2 |\n"
+        assert pipe_table(source) == "| A | B |\n| --- | --- |\n| 1 | 2 |\n"
 
     def test_all_word_column_alignments_use_plain_markdown_separators(self) -> None:
         for alignment in ("left", "center", "right"):
@@ -155,27 +164,24 @@ class SourceTableTests(unittest.TestCase):
                         f"<table><tr><th {attribute}>Header</th></tr>"
                         f"<tr><td {attribute}>Value</td></tr></table>"
                     )
-                    assert _tables.html_table_to_pipe(source) == "| Header |\n| --- |\n| Value |\n"
+                    assert pipe_table(source) == "| Header |\n| --- |\n| Value |\n"
 
     def test_caption_alone_does_not_force_html(self) -> None:
         source = (
             "<table><caption>Table <strong>caption</strong></caption>"
             "<tbody><tr><td>Name</td></tr><tr><td>Value</td></tr></tbody></table>"
         )
-        assert (
-            _tables.html_table_to_pipe(source)
-            == "Table **caption**\n\n| Name |\n| --- |\n| Value |\n"
-        )
+        assert pipe_table(source) == "Table **caption**\n\n| Name |\n| --- |\n| Value |\n"
 
     def test_caption_cannot_create_a_heading_list_or_rule(self) -> None:
         for caption in ("# Heading", "1. Steps", "2) Steps", "- Note", "+ Note", "---"):
             with self.subTest(caption=caption):
-                rendered = _tables.html_table_to_pipe(
+                rendered = pipe_table(
                     f"<table><caption>{caption}</caption>"
                     "<tbody><tr><td>Header</td></tr></tbody></table>"
                 )
                 assert rendered is not None
-                parsed = _reference.pandoc_html(rendered, _reference.require_pandoc())
+                parsed = _reference.pandoc_html(rendered, pinned_pandoc())
                 assert [node.tag for node in parsed] == ["p", "table"]
                 assert "".join(parsed[0].itertext()) == caption
 
@@ -188,7 +194,7 @@ class SourceTableTests(unittest.TestCase):
             "</tbody></table>"
         )
         assert (
-            _tables.html_table_to_pipe(source) == r"| Addr \[31:24\] | Two paras | `a  b` c |"
+            pipe_table(source) == r"| Addr \[31:24\] | Two paras | `a  b` c |"
             "\n| --- | --- | --- |\n"
             "| line1<br>line2 | leading | end |\n| in<br><br>side | trailing | |\n"
         )
@@ -198,10 +204,10 @@ class SourceTableTests(unittest.TestCase):
             "<table><tbody><tr><td>Code</td></tr>"
             "<tr><td><code>a|b</code> and <code>`literal`</code></td></tr></tbody></table>"
         )
-        rendered = _tables.html_table_to_pipe(source)
+        rendered = pipe_table(source)
         assert rendered is not None
         assert "<code>" not in rendered
-        parsed = _reference.pandoc_html(rendered, _reference.require_pandoc())
+        parsed = _reference.pandoc_html(rendered, pinned_pandoc())
         assert [node.text for node in parsed.iter("code")] == ["a|b", "`literal`"]
 
     def test_structural_fallback_reports_reason_and_discards_widths(self) -> None:
@@ -300,7 +306,7 @@ class CellListTests(unittest.TestCase):
 
     def test_lines_read_back_as_text_not_lists(self) -> None:
         rendered = self._render("<ol><li>x</li><li>y</li></ol><ul><li>z</li></ul>")
-        tree = _reference.pandoc_html(rendered.text, _reference.require_pandoc())
+        tree = _reference.pandoc_html(rendered.text, pinned_pandoc())
         assert not [node for node in tree.iter() if node.tag in {"ol", "ul"}]
         assert "1. x" in "".join(tree.itertext())
 
@@ -315,7 +321,7 @@ class CellInlineTagTests(unittest.TestCase):
             r"| A | x<sup>2</sup>, H<sub>2</sub>O, <mark>new</mark>, <u>a\|b \*c\*</u> |"
             in rendered.text
         )
-        tree = _reference.pandoc_html(rendered.text, _reference.require_pandoc())
+        tree = _reference.pandoc_html(rendered.text, pinned_pandoc())
         assert "".join(next(tree.iter("u")).itertext()) == "a|b *c*"
 
     def test_tags_with_attributes_keep_the_table_html(self) -> None:

@@ -5,7 +5,6 @@ import io
 import os
 import re
 import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,13 +13,15 @@ from unittest import mock
 import pytest
 from typing_extensions import override
 
+from md_doc_converter.markdown import preprocess
+from md_doc_converter.markdown.document import MarkdownError
+from md_doc_converter.markdown.headings import HeadingError
 from md_doc_converter.rendering import pipeline as render
 from md_doc_converter.resources import asset_path
 from md_doc_converter.toolchain.environment import Toolchain
 
 FORMAT = render.OutputFormat
 Options = render.RenderOptions
-PREPROCESS = [sys.executable, "-m", "md_doc_converter.markdown.preprocess"]
 
 
 class RenderTest(unittest.TestCase):
@@ -39,7 +40,7 @@ class RenderTest(unittest.TestCase):
         katex.parent.mkdir(parents=True)
         katex.write_text('{"version": "0.19.0"}')
         self.prepared: list[Path] = []
-        self.preprocess_commands: list[list[str]] = []
+        self.prepare_calls: list[tuple[Path, bool]] = []
         self.pandoc_calls: list[tuple[list[str], dict[str, object]]] = []
         self.styles: list[str] = []
         self.printer_commands: list[list[str]] = []
@@ -47,18 +48,21 @@ class RenderTest(unittest.TestCase):
         problems = mock.patch.object(render, "render_problems", return_value=[])
         problems.start()
         self.addCleanup(problems.stop)
+        prepare = mock.patch.object(render, "_prepare_markdown", side_effect=self.fake_prepare)
+        prepare.start()
+        self.addCleanup(prepare.stop)
+
+    def fake_prepare(self, source: Path, *, respect_gitignore: bool) -> str:
+        self.prepare_calls.append((source, respect_gitignore))
+        return "# Prepared Markdown\n"
 
     def fake_run(self, command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        if command[:3] == PREPROCESS:
-            self.preprocess_commands.append(command)
-            output = Path(command[command.index("--output") + 1])
-            self.prepared.append(output)
-            output.write_text("# Prepared Markdown\n")
-        elif command[0] == "git":
+        if command[0] == "git":
             stdout = "true\n" if self.git_work_tree else ""
             return subprocess.CompletedProcess(command, 0 if stdout else 128, stdout, "")
         elif command[0] == "pandoc":
-            assert Path(command[-1]).is_file()
+            self.prepared.append(Path(command[-1]))
+            assert self.prepared[-1].read_text(encoding="utf-8") == "# Prepared Markdown\n"
             styles = Path(command[command.index("--include-in-header") + 1])
             self.styles.append(styles.read_text(encoding="utf-8"))
             self.pandoc_calls.append((command, kwargs))
@@ -157,6 +161,7 @@ class RenderTest(unittest.TestCase):
         ):
             self.render_document(FORMAT.HTML)
         run.assert_not_called()
+        assert not self.prepare_calls
 
     def test_pdf_timeout_accepts_whole_seconds_and_defaults_when_blank(self) -> None:
         for value, expected in (
@@ -192,6 +197,7 @@ class RenderTest(unittest.TestCase):
             with pytest.raises(render.RenderError, match="MD_DOC_CONVERTER_PDF_TIMEOUT"):
                 self.render_document(FORMAT.PDF, options=Options(pdf_timeout="ten"))
             run.assert_not_called()
+            assert not self.prepare_calls
             html = self.render_document(FORMAT.HTML, options=Options(pdf_timeout="ten"))
         assert html.is_file()
         assert not self.printer_commands
@@ -249,6 +255,7 @@ class RenderTest(unittest.TestCase):
 
         def fail_pandoc(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
             if command[0] == "pandoc":
+                self.prepared.append(Path(command[-1]))
                 raise subprocess.CalledProcessError(7, command)
             return self.fake_run(command, **kwargs)
 
@@ -365,6 +372,7 @@ class RenderTest(unittest.TestCase):
         ):
             self.render_document(FORMAT.PDF)
         run.assert_not_called()
+        assert not self.prepare_calls
         assert not (self.root / "cache.v2 spec.pdf").exists()
 
     def test_gitignore_filtering_defaults_to_folders_in_git_work_trees(self) -> None:
@@ -387,7 +395,49 @@ class RenderTest(unittest.TestCase):
                 self.render_document(
                     FORMAT.HTML, source=source, options=Options(respect_gitignore=choice)
                 )
-                assert ("--respect-gitignore" in self.preprocess_commands[-1]) == expected
+                assert self.prepare_calls[-1] == (source, expected)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [MarkdownError("malformed Link"), HeadingError("malformed Header block"), ValueError("bad")],
+    ids=["markdown", "heading", "value"],
+)
+def test_preprocessing_errors_become_render_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    def fail(source: Path, *, respect_gitignore: bool) -> str:
+        raise error
+
+    monkeypatch.setattr(preprocess, "prepare_markdown", fail)
+    with pytest.raises(render.RenderError, match=re.escape(f"cannot prepare {tmp_path}: {error}")):
+        render._prepare_markdown(tmp_path, respect_gitignore=False)
+
+
+def test_markdown_that_is_not_utf8_names_the_file(tmp_path: Path) -> None:
+    source = tmp_path / "latin-1.md"
+    source.write_bytes(b"# Caf\xe9\n")
+    with pytest.raises(render.RenderError, match=r"latin-1\.md: 'utf-8' codec can't decode"):
+        render._prepare_markdown(source, respect_gitignore=False)
+
+
+def test_render_command_reports_preprocessing_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def no_problems(tools: Toolchain, *, pdf: bool) -> list[str]:
+        return []
+
+    def installed_katex(tools: Toolchain) -> str:
+        return "0.19.0"
+
+    monkeypatch.setattr(render, "render_problems", no_problems)
+    monkeypatch.setattr(render, "katex_version", installed_katex)
+    source = tmp_path / "latin-1.md"
+    source.write_bytes(b"# Caf\xe9\n")
+    assert render.main([str(source)], action="html") == 1
+    error = capsys.readouterr().err
+    assert f"md-doc-converter: cannot prepare {source}: 'utf-8' codec can't decode" in error
+    assert not (tmp_path / "latin-1.html").exists()
 
 
 class TableCodePipeFilterTest(unittest.TestCase):

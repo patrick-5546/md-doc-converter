@@ -175,6 +175,18 @@ def _filter_gitignored(choice: bool | None, source: Path) -> bool:
     return in_git_work_tree(str(source))
 
 
+def _prepare_markdown(source: Path, *, respect_gitignore: bool) -> str:
+    # Imported here so command-line help does not load the Markdown toolchain.
+    from md_doc_converter.markdown.document import MarkdownError
+    from md_doc_converter.markdown.headings import HeadingError
+    from md_doc_converter.markdown.preprocess import prepare_markdown
+
+    try:
+        return prepare_markdown(source, respect_gitignore=respect_gitignore)
+    except (MarkdownError, HeadingError, ValueError) as error:
+        raise RenderError(f"cannot prepare {source}: {error}") from error
+
+
 def _keep(work: Path, directory: Path) -> None:
     try:
         shutil.copytree(work, directory, dirs_exist_ok=True)
@@ -242,18 +254,9 @@ def render_markdown(
             name = destination.stem
             prepared = work / "markdown" / f"{name}.md"
             prepared.parent.mkdir()
-            command = [
-                sys.executable,
-                "-m",
-                "md_doc_converter.markdown.preprocess",
-                "--input",
-                str(source),
-                "--output",
-                str(prepared),
-            ]
-            if filter_gitignored:
-                command.append("--respect-gitignore")
-            subprocess.run(command, env=environment, check=True)
+            prepared.write_text(
+                _prepare_markdown(source, respect_gitignore=filter_gitignored), encoding="utf-8"
+            )
 
             styles_file = work / "page-styles.html"
             styles_file.write_text(styles, encoding="utf-8")
@@ -308,9 +311,8 @@ def render_markdown(
 
 
 def _failed_step(error: subprocess.CalledProcessError) -> str:
-    command = [str(part) for part in error.cmd] if isinstance(error.cmd, list) else [str(error.cmd)]
-    step = command[2] if command[1:2] == ["-m"] else Path(command[0]).name
-    return f"{step} failed with exit status {error.returncode}"
+    command = error.cmd[0] if isinstance(error.cmd, list) and error.cmd else error.cmd
+    return f"{Path(str(command)).name} failed with exit status {error.returncode}"
 
 
 def main(argv: list[str] | None = None, *, action: Literal["html", "pdf"]) -> int:

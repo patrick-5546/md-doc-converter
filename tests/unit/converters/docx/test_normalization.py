@@ -11,6 +11,7 @@ from md_doc_converter.converters.docx import navigation as _navigation
 from md_doc_converter.converters.docx import normalization as _normalization
 from md_doc_converter.converters.docx import recovery as _recovery
 from md_doc_converter.converters.docx import reference as _reference
+from tests.support.suites import pinned_pandoc
 
 
 class MarkdownPolicyTests(unittest.TestCase):
@@ -23,13 +24,13 @@ class MarkdownPolicyTests(unittest.TestCase):
             "    " + r"\_ctl_s_ready" + "\n\n"
             r"\_literal\_ and **bold** stay unchanged." + "\n"
         )
-        assert _normalization.simplify_identifier_escapes(
-            text, _reference.require_pandoc()
-        ) == text.replace(r"Signal \_ctl_s_ready and \_x.", "Signal _ctl_s_ready and _x.")
+        assert _normalization.simplify_identifier_escapes(text, pinned_pandoc()) == text.replace(
+            r"Signal \_ctl_s_ready and \_x.", "Signal _ctl_s_ready and _x."
+        )
 
     def test_identifier_escape_stays_when_needed_to_prevent_emphasis(self) -> None:
         text = r"\_ctl_s_ready and a closing_" + "\n"
-        assert _normalization.simplify_identifier_escapes(text, _reference.require_pandoc()) == text
+        assert _normalization.simplify_identifier_escapes(text, pinned_pandoc()) == text
 
     def test_literal_backslash_before_identifier_is_unchanged(self) -> None:
         text = r"Literal \\\_ctl_s_ready" + "\n"
@@ -256,7 +257,7 @@ class MarkdownPolicyTests(unittest.TestCase):
 
 class EscapeTests(unittest.TestCase):
     def drop(self, text: str) -> tuple[str, int]:
-        return _normalization.drop_unneeded_escapes(text, _reference.require_pandoc())
+        return _normalization.drop_unneeded_escapes(text, pinned_pandoc())
 
     def test_brackets_and_cell_numbers_lose_their_escapes(self) -> None:
         text = (
