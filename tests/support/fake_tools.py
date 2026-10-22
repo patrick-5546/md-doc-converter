@@ -1,18 +1,19 @@
-"""Disposable stand-ins for the native renderer tools.
+"""Disposable stand-ins for the native renderer tools, and a fake toolchain.
 
-The fakes record each call in a JSON-lines log. The fake Pandoc answers the
-preprocessor's ``--to=json`` parses with headings only, so test inputs should be
-plain Markdown without links or reference definitions. The fake mmdc writes each
-diagram's text as its SVG and fails on diagrams that contain ``FAIL``.
+The executables are small scripts that run `tests.support.fake_tool`, which describes what
+each fake does; every call is recorded in a JSON-lines log.
 """
 
 from __future__ import annotations
 
 import json
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from md_doc_converter.toolchain.environment import BROWSER, Toolchain, write_stamp
+from tests.support.fake_tool import Config
+from tests.support.project import PROJECT_ROOT
 
 VERSIONS = {
     "pandoc": "pandoc 3.12.1",
@@ -44,92 +45,11 @@ RECORDED_VARIABLES = (
     "MD_DOC_CONVERTER_KATEX_CSS",
 )
 
-FAKE_TOOL = """#!{python}
-import json, os, re, shutil, sys
-from pathlib import Path
-
-log = Path({log!r})
-versions = {versions!r}
-tool = Path(sys.argv[0]).name
-arguments = sys.argv[1:]
-if arguments[:1] == ["--version"]:
-    print(versions[tool])
-    sys.exit(0)
-if tool == "pandoc" and "--to=json" in arguments:
-    blocks, used = [], set()
-    for line in sys.stdin.read().splitlines():
-        heading = re.match(r"^(#{{1,6}})\\s+(.*)", line)
-        if not heading:
-            continue
-        title = heading.group(2)
-        base = re.sub(r"[^\\w -]", "", title.lower()).replace(" ", "-")
-        identifier, index = base, 0
-        while identifier in used:
-            index += 1
-            identifier = base + "-" + str(index)
-        used.add(identifier)
-        blocks.append({{"t": "Header", "c": [len(heading.group(1)), [identifier, [], []],
-                       [{{"t": "Str", "c": title}}]]}})
-    print(json.dumps({{"blocks": blocks}}))
-    sys.exit(0)
-if os.environ.get("FAKE_TOOL_FAIL") == tool:
-    sys.exit(3)
-status = 0
-record = {{
-    "tool": tool,
-    "path": sys.argv[0],
-    "arguments": arguments,
-    "cwd": os.getcwd(),
-    "environment": {{name: os.environ.get(name) for name in {variables!r}}},
-}}
-if tool == "pandoc":
-    styles = Path(arguments[arguments.index("--include-in-header") + 1]).read_text()
-    record["input"] = Path(arguments[-1]).read_text()
-    record["styles"] = styles
-    Path(arguments[arguments.index("-o") + 1]).write_text(
-        "<html>" + styles + record["input"] + "</html>"
-    )
-elif tool == "node":
-    Path(arguments[arguments.index("-o") + 1]).write_bytes(b"%PDF-fake")
-elif tool == "mmdc":
-    def option(name):
-        return arguments[arguments.index(name) + 1]
-    source = Path(option("--input")).read_text()
-    output = Path(option("--output"))
-    if "--artefacts" in arguments:
-        diagrams = re.findall(r"^```mermaid\\n(.*?)\\n```$", source, re.S | re.M)
-        images = [
-            Path(option("--artefacts")) / (output.stem + "-" + str(number) + ".svg")
-            for number in range(1, len(diagrams) + 1)
-        ]
-    else:
-        diagrams, images = [source], [output]
-    record["diagrams"] = diagrams
-    if any("FAIL" in diagram for diagram in diagrams):
-        sys.stderr.write("Error: Parse error on line 2\\n    at parse (file:///mermaid.mjs:1:1)\\n")
-        status = 1
-    else:
-        for diagram, image in zip(diagrams, images):
-            image.write_text("<svg>" + diagram + "</svg>")
-elif tool == "npm":
-    modules = Path.cwd() / "node_modules"
-    executable = modules / ".bin" / "mmdc"
-    executable.parent.mkdir(parents=True, exist_ok=True)
-    executable.write_text("#!/bin/sh\\n")
-    executable.chmod(0o755)
-    # The fake Puppeteer CLI is this script under another name.
-    shutil.copy(sys.argv[0], modules / ".bin" / "puppeteer")
-    for name, text in {packages!r}.items():
-        (modules / name).parent.mkdir(parents=True, exist_ok=True)
-        (modules / name).write_text(text)
-elif tool == "puppeteer":
-    browser = Path(os.environ["PUPPETEER_CACHE_DIR"]) / {browser_path!r}
-    browser.parent.mkdir(parents=True, exist_ok=True)
-    browser.write_text("#!/bin/sh\\n")
-    browser.chmod(0o755)
-with log.open("a") as stream:
-    stream.write(json.dumps(record) + "\\n")
-sys.exit(status)
+SHIM = """#!{python}
+import sys
+sys.path.insert(0, {root!r})
+from tests.support.fake_tool import main
+sys.exit(main({config!r}))
 """
 
 
@@ -141,18 +61,17 @@ def write_fake_tools(
 ) -> Path:
     """Create fake executables, by default pandoc, node and npm, in a directory."""
     directory.mkdir(parents=True, exist_ok=True)
-    selected = {**VERSIONS, **(versions or {})}
-    script = FAKE_TOOL.format(
-        python=sys.executable,
-        log=str(log),
-        versions=selected,
-        variables=RECORDED_VARIABLES,
-        browser_path=BROWSER_PATH,
-        packages=PACKAGE_FILES,
-    )
+    config: Config = {
+        "log": str(log),
+        "versions": {**VERSIONS, **(versions or {})},
+        "variables": list(RECORDED_VARIABLES),
+        "browser_path": BROWSER_PATH,
+        "packages": PACKAGE_FILES,
+    }
+    script = SHIM.format(python=sys.executable, root=str(PROJECT_ROOT), config=config)
     for name in names:
         executable = directory / name
-        executable.write_text(script)
+        executable.write_text(script, encoding="utf-8")
         executable.chmod(0o755)
     return directory
 
@@ -162,12 +81,12 @@ def install_fake_toolchain(root: Path, log: Path) -> Toolchain:
     tools = Toolchain(root)
     executable = tools.node_executable("mmdc")
     executable.parent.mkdir(parents=True)
-    executable.write_text("#!/bin/sh\n")
+    executable.write_text("#!/bin/sh\n", encoding="utf-8")
     executable.chmod(0o755)
     write_packages(tools)
     browser = tools.puppeteer_cache / BROWSER_PATH
     browser.parent.mkdir(parents=True)
-    browser.write_text("#!/bin/sh\n")
+    browser.write_text("#!/bin/sh\n", encoding="utf-8")
     browser.chmod(0o755)
     write_fake_tools(tools.bin_dir, log, ("pandoc",))
     write_stamp(tools)
@@ -186,3 +105,23 @@ def read_log(log: Path) -> list[dict[str, object]]:
     if not log.exists():
         return []
     return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+
+
+@dataclass(frozen=True)
+class FakeTools:
+    """Fake executables in one directory, which record their calls in one log."""
+
+    bin: Path
+    log: Path
+
+    def write(self, *names: str, versions: dict[str, str] | None = None) -> Path:
+        """Write the named fakes, by default pandoc, node and npm; return their directory."""
+        return write_fake_tools(self.bin, self.log, names or ("pandoc", "node", "npm"), versions)
+
+    def toolchain(self, root: Path) -> Toolchain:
+        """Install a complete, current fake toolchain at root, logging to the same log."""
+        return install_fake_toolchain(root, self.log)
+
+    def calls(self, tool: str | None = None) -> list[dict[str, object]]:
+        """The recorded calls, of one tool or of all."""
+        return [call for call in read_log(self.log) if tool is None or call["tool"] == tool]

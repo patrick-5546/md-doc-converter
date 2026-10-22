@@ -1,12 +1,14 @@
-"""pytest hooks for the test suites' policies; see tests/support/suites.py."""
+"""pytest hooks for the test suites' policies (see tests/support/suites.py), and shared fixtures."""
 
 from __future__ import annotations
 
 from collections.abc import Generator
+from pathlib import Path
 
 import pytest
 
 from tests.support import suites
+from tests.support.fake_tools import FakeTools
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -33,3 +35,15 @@ def pytest_runtest_makereport() -> Generator[None, pytest.TestReport, pytest.Tes
         report.outcome = "failed"
         report.longrepr = f"tests must not skip: {reason}"
     return report
+
+
+@pytest.fixture(scope="session")
+def pandoc() -> str:
+    """The pinned Pandoc, which every suite requires before it runs."""
+    return suites.pinned_pandoc()
+
+
+@pytest.fixture
+def fake_tools(tmp_path: Path) -> FakeTools:
+    """Fake pandoc, node, npm, mmdc and Puppeteer, written on request with `write`."""
+    return FakeTools(tmp_path / "fake-bin", tmp_path / "tools.jsonl")
