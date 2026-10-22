@@ -10,14 +10,20 @@ recursively. Output files are written next to the source CSVs. When
 ``--output-dir`` is given for a directory, source subdirectories are preserved
 under the selected output directory.
 
+Files are read as UTF-8, with or without a byte-order mark. Each file's delimiter, a
+comma, semicolon or tab, is detected from its header line unless ``--delimiter``
+selects one.
+
 Usage:
     md-doc-converter csv-to-md data.csv
     md-doc-converter csv-to-md data.csv -o out/
     md-doc-converter csv-to-md path/to/csvs/ -o out/ --dry-run
+    md-doc-converter csv-to-md data.csv --delimiter semicolon
 """
 
 import argparse
 import csv
+import io
 import subprocess
 import sys
 from pathlib import Path
@@ -31,11 +37,37 @@ def _title_from_stem(stem: str) -> str:
     return stem.replace("-", " ")
 
 
-def csv_to_md(csv_path: Path) -> str:
-    """Return the Markdown string for a single CSV file."""
-    with csv_path.open(newline="", encoding="utf-8") as f:
-        reader = csv.reader(f)
-        rows = list(reader)
+# The delimiters that detection chooses from, by name; on a tie the first wins.
+DELIMITERS = {"comma": ",", "semicolon": ";", "tab": "\t"}
+
+
+def detect_delimiter(text: str) -> str:
+    """The delimiter of CSV *text*: the most frequent of comma, semicolon and tab outside
+    quotes in its header line. A comma wins a tie, and is the default."""
+    counts = dict.fromkeys(DELIMITERS.values(), 0)
+    quoted = False
+    for character in text:
+        if character == '"':
+            quoted = not quoted
+        elif not quoted:
+            if character in "\r\n":
+                break
+            if character in counts:
+                counts[character] += 1
+    return max(counts, key=counts.__getitem__)
+
+
+def csv_to_md(csv_path: Path, delimiter: str | None = None) -> str:
+    """Return the Markdown string for a single CSV file.
+
+    *delimiter* is detected from the header line unless given.
+    """
+    # Excel's "CSV UTF-8" starts the file with a byte-order mark, which is not data.
+    text = csv_path.read_text(encoding="utf-8-sig")
+    reader = csv.reader(
+        io.StringIO(text, newline=""), delimiter=delimiter or detect_delimiter(text)
+    )
+    rows = list(reader)
 
     if not rows:
         return ""
@@ -73,6 +105,7 @@ def convert(
     input_path: str,
     output_dir: str | None = None,
     dry_run: bool = False,
+    delimiter: str | None = None,
 ) -> None:
     src = Path(input_path)
     if not src.exists():
@@ -100,7 +133,7 @@ def convert(
         return
 
     for csv_path in csv_files:
-        md_text = csv_to_md(csv_path)
+        md_text = csv_to_md(csv_path, delimiter)
         if not md_text:
             print(f"Skipped (empty): {csv_path}")
             continue
@@ -137,9 +170,15 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Show what would be written without creating files",
     )
+    parser.add_argument(
+        "--delimiter",
+        choices=DELIMITERS,
+        help="Field delimiter (default: detected from each file's header line)",
+    )
     args = parser.parse_args(argv)
+    delimiter = DELIMITERS[args.delimiter] if args.delimiter else None
 
     try:
-        convert(args.input, args.output_dir, args.dry_run)
+        convert(args.input, args.output_dir, args.dry_run, delimiter)
     except (OSError, UnicodeError, csv.Error, ValueError) as error:
         sys.exit(f"csv-to-md: error: {error}")

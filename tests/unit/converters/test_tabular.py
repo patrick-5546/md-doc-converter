@@ -217,3 +217,39 @@ def test_csv_to_md_reports_a_missing_input(tmp_path: Path) -> None:
     missing = tmp_path / "missing.csv"
     with pytest.raises(SystemExit, match=f"^csv-to-md: error: not found: {missing}$"):
         main(["csv-to-md", str(missing)])
+
+
+@pytest.mark.parametrize(
+    ("content", "header"),
+    [
+        pytest.param(
+            b"\xef\xbb\xbfName,Value\nalpha,1\n", "| Name | Value |", id="byte-order-mark"
+        ),
+        pytest.param(b"Name;Value\nalpha;1\n", "| Name | Value |", id="semicolon"),
+        pytest.param(b"Name\tValue\nalpha\t1\n", "| Name | Value |", id="tab"),
+        pytest.param(
+            b'"Name, full";Value\n"alpha, a";1\n', "| Name, full | Value |", id="quoted-comma"
+        ),
+        pytest.param(b"Name;alias,Value\nx;y,1\n", "| Name;alias | Value |", id="tie-is-comma"),
+        pytest.param(b"Name\nalpha\n", "| Name |", id="one-column"),
+    ],
+)
+def test_csv_encoding_and_delimiter_are_detected(
+    tmp_path: Path, content: bytes, header: str
+) -> None:
+    source = tmp_path / "signals.csv"
+    source.write_bytes(content)
+    table = [line for line in csv_to_md.csv_to_md(source).splitlines() if line.startswith("|")]
+    assert table[0] == header
+    assert len(table) == 3
+
+
+def test_the_delimiter_option_overrides_detection(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = tmp_path / "signals.csv"
+    source.write_text("Name,alias;Value\nx,y;1\n", encoding="utf-8")
+    assert main(["csv-to-md", str(source), "--delimiter", "semicolon"]) == 0
+    assert capsys.readouterr().out == f"Written: {source.with_suffix('.md')}\n"
+    table = source.with_suffix(".md").read_text(encoding="utf-8").splitlines()[4:]
+    assert table == ["| Name,alias | Value |", "| --- | --- |", "| x,y | 1 |"]

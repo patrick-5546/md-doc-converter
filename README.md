@@ -71,7 +71,7 @@ command's options.
 | --- | --- |
 | `docx-to-md DOCX [-o FILE.md]` | Convert a Word document to Markdown with its images; see [Word conversion](docs/word-conversion.md) |
 | `excel-to-csv WORKBOOK [-o DIR]` | Write each worksheet as `<sheet name>.csv` |
-| `csv-to-md PATH [-o DIR] [--dry-run]` | Convert a CSV file, or every CSV in a folder, to Markdown |
+| `csv-to-md PATH [-o DIR] [--dry-run] [--delimiter NAME]` | Convert a CSV file, or every CSV in a folder, to Markdown |
 | `md-to-html INPUT [-o FILE.html]` | Render a Markdown file or folder to standalone HTML; see [Rendering](docs/rendering.md) |
 | `md-to-pdf INPUT [-o FILE.pdf]` | Render a Markdown file or folder to a paged PDF |
 | `setup [--no-render] [--downloads DIR] [--force]` | Install the pinned toolchain; `--no-render` installs only Pandoc |
@@ -95,6 +95,11 @@ has a heading from the file name, with hyphens as spaces, a note that it is
 generated, and the table. Pages are written beside each CSV unless `-o` is set;
 for a folder, `-o` keeps the relative subfolders. Short rows are padded; rows
 wider than the header fail instead of silently dropping cells.
+
+CSV files are read as UTF-8, with or without the byte-order mark that Excel's
+"CSV UTF-8" format writes. Each file's delimiter is detected from its header
+line: a comma, or a semicolon or tab, as Excel writes in some languages and
+regions. `--delimiter comma`, `semicolon` or `tab` selects one for every file.
 
 Cell contents stay literal: backslashes, pipes, HTML-like text, entity names,
 code delimiters, and Markdown punctuation remain text, not formatting.
