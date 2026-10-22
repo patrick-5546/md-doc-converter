@@ -2,10 +2,16 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions:
   contents: read
+
+concurrency:
+  # A newer push to a pull request supersedes its run in progress; runs on main all finish.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # Fail instead of updating uv.lock, including in the uv runs that make starts.
@@ -15,17 +21,20 @@ jobs:
   lint-and-core:
     name: Lint and core tests (Python ${{ matrix.python }})
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         python: ["3.11", "3.14"]
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           python-version: ${{ matrix.python }}
       - name: Cache Pandoc
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .toolchain/bin/pandoc
           key: pandoc-${{ runner.os }}-${{ hashFiles('src/md_doc_converter/toolchain/install.py') }}
@@ -38,8 +47,11 @@ jobs:
   render:
     name: Rendering tests
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Install LibreOffice and Poppler
         run: |
           sudo apt-get update
@@ -47,12 +59,12 @@ jobs:
       - name: Allow the browser sandbox
         # Ubuntu 23.10 and later restrict the unprivileged user namespaces that Chrome's sandbox uses.
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-      - uses: astral-sh/setup-uv@v10.3.2
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
       - name: Cache the toolchain
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .toolchain
           key: toolchain-${{ runner.os }}-${{ hashFiles('src/md_doc_converter/toolchain/package.json', 'src/md_doc_converter/toolchain/package-lock.json', 'src/md_doc_converter/toolchain/environment.py', 'src/md_doc_converter/toolchain/install.py') }}
@@ -63,9 +75,12 @@ jobs:
   package:
     name: Build and install check
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
       - name: Build
         run: uv build
       - name: Check the wheel contents

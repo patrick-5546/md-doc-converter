@@ -112,22 +112,30 @@ minimum is enforced; use it to find untested code.
 
 ## Updating dependencies
 
+Dependabot (`.github/dependabot.yml`) proposes weekly updates for the Python
+packages, the bundled npm manifests and the workflow's actions, once a release
+is a week old, in one pull request per ecosystem; major Python and npm updates
+come separately. To update by hand:
+
 - **Python:** edit `pyproject.toml`, then run `uv lock`. MarkItDown stays pinned
   to one version, and mammoth, its Word reader, to one release series, because
   Word alignment depends on their exact output.
 - **npm packages:** edit `src/md_doc_converter/toolchain/package.json`, then run
   `make lock-npm`. The next `setup` reinstalls the packages because the
   manifests' digest changes. A test checks that every locked package resolves
-  from `registry.npmjs.org`. Rendered HTML links the stylesheet of the installed
-  KaTeX version. When a package needs a newer Node.js, raise `NODE_MINIMUM` in
-  `toolchain/environment.py`, which `setup` and `doctor` check.
+  from `registry.npmjs.org`. When a package needs a newer Node.js, raise
+  `NODE_MINIMUM` in `toolchain/environment.py`, which `setup` and `doctor`
+  check.
 - **Pandoc:** update `PANDOC_VERSION` in `toolchain/environment.py` and the
   `PANDOC` checksum in `toolchain/install.py` (the `sha256sum` of the release's
   `linux-amd64` archive), then update tests that compare exact Pandoc output.
 
 ## Continuous integration
 
-`.github/workflows/ci.yml` runs on pushes and pull requests:
+`.github/workflows/ci.yml` runs on pushes to `main` and on pull requests; a
+newer push to a pull request cancels its run in progress. Actions are pinned by
+commit SHA, checkouts keep no credentials, and each job has a time limit. The
+jobs:
 
 - `lint-and-core`: lint, then the core suite on Python 3.11 and 3.14, with the
   pinned Pandoc cached by `toolchain/install.py`;
