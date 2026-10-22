@@ -1,10 +1,8 @@
-"""Synthetic DOCX regression coverage."""
+"""docx-to-md end to end: synthetic Word documents, converted with MarkItDown and Pandoc."""
 
 from __future__ import annotations
 
-import contextlib
 import copy
-import io
 import json
 import os
 import re
@@ -12,15 +10,14 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import unittest
 import zipfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import NoReturn
-from unittest.mock import patch
+from unittest import mock
 from xml.etree import ElementTree as ET
 
 import pytest
-from typing_extensions import override
 
 from md_doc_converter.converters.docx import diagnostics as _diagnostics
 from md_doc_converter.converters.docx import media as _media
@@ -61,33 +58,37 @@ from tests.support.docx import (
     word_style,
     write_docx,
 )
-from tests.support.suites import pinned_pandoc
 
 COMMAND = [sys.executable, "-m", "md_doc_converter", "docx-to-md"]
+# Word document relationships: (identifier, type, target, target mode).
+Relations = tuple[tuple[str, str, str, str], ...]
 
 
-class ConversionTests(unittest.TestCase):
-    @override
-    def setUp(self) -> None:
-        self.temporary = tempfile.TemporaryDirectory(prefix="docx-conversion-test-")
-        self.addCleanup(self.temporary.cleanup)
-        self.root = Path(self.temporary.name)
-        self.source = self.root / "Synthetic Guide.docx"
-        self.pandoc = pinned_pandoc()
+@dataclass(frozen=True)
+class Converter:
+    """Writes a Word document of synthetic body elements to the source path and converts it.
 
-    def convert(
+    `result, stats = convert(body)` returns the Markdown and the conversion's statistics;
+    `result, report, warnings = convert.reported(body)` also keeps a transform report.
+    """
+
+    source: Path
+    capsys: pytest.CaptureFixture[str]
+
+    def __call__(
         self,
         body: list[ET.Element],
         *,
         output: Path | None = None,
         split_depth: int = 0,
         qualify: bool = False,
-        relations: tuple[tuple[str, str, str, str], ...] = (),
+        relations: Relations = (),
         media: dict[str, bytes] | None = None,
         report: _diagnostics.TransformReport | None = None,
         extras: dict[str, bytes] | None = None,
         styles: tuple[ET.Element, ...] = (),
     ) -> tuple[str, dict[str, int]]:
+        """Convert a document of *body*; return the Markdown for *output* and the statistics."""
         write_docx(
             self.source, body, relations=relations, media=media, extras=extras, styles=styles
         )
@@ -100,3211 +101,3412 @@ class ConversionTests(unittest.TestCase):
         )
         return _publication.requested_output(self.source, output).read_text(encoding="utf-8"), stats
 
-    def convert_reported(
+    def reported(
         self,
         body: list[ET.Element],
         *,
         output: Path | None = None,
-        relations: tuple[tuple[str, str, str, str], ...] = (),
+        relations: Relations = (),
         media: dict[str, bytes] | None = None,
         extras: dict[str, bytes] | None = None,
         styles: tuple[ET.Element, ...] = (),
         explain: bool = False,
     ) -> tuple[str, _diagnostics.TransformReport, str]:
-        """Convert with a transform report; return the output, the report, and the warnings."""
+        """Convert with a transform report; return the output, the report, and its warnings."""
         report = _diagnostics.TransformReport(explaining=explain)
-        stderr = io.StringIO()
-        with contextlib.redirect_stderr(stderr):
-            result, _stats = self.convert(
-                body,
-                output=output,
-                relations=relations,
-                media=media,
-                report=report,
-                extras=extras,
-                styles=styles,
+        self.capsys.readouterr()  # Earlier output is not this conversion's warnings.
+        result, _stats = self(
+            body,
+            output=output,
+            relations=relations,
+            media=media,
+            report=report,
+            extras=extras,
+            styles=styles,
+        )
+        return result, report, self.capsys.readouterr().err
+
+
+@pytest.fixture
+def source(tmp_path: Path) -> Path:
+    """Where a test writes its Word document; the Markdown goes next to it by default."""
+    return tmp_path / "Synthetic Guide.docx"
+
+
+@pytest.fixture
+def convert(source: Path, capsys: pytest.CaptureFixture[str]) -> Converter:
+    """Converts synthetic Word documents written to `source`; see `Converter`."""
+    return Converter(source, capsys)
+
+
+def hide_pandoc(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Let `shutil.which` find every tool but Pandoc, as where Pandoc is not installed."""
+    original = shutil.which
+
+    def which(command: str, mode: int = os.F_OK | os.X_OK, path: str | None = None) -> str | None:
+        return None if command == "pandoc" else original(command, mode, path)
+
+    monkeypatch.setattr(shutil, "which", which)
+
+
+def fail_alignment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make aligning the Pandoc and MarkItDown conversions fail."""
+
+    def fail(*_arguments: object) -> NoReturn:
+        raise _models.ConversionError("synthetic alignment failure")
+
+    monkeypatch.setattr(_pipeline, "_aligned_markdown", fail)
+
+
+def test_default_keeps_step_and_status_labels_and_index_content(convert: Converter) -> None:
+    result, stats = convert(
+        [
+            paragraph("Title.", "Heading1"),
+            paragraph("Gap.", "Heading4"),
+            paragraph("1)", bold=True),
+            paragraph("Do the thing."),
+            paragraph("Closed.", bold=True),
+            paragraph("Contents", "Heading1"),
+            paragraph("Original index entry"),
+            paragraph("Flow.", "Heading3"),
+            paragraph("Flow.", "Heading3"),
+        ]
+    )
+    # Headings lose trailing punctuation and skipped levels; bold labels keep theirs.
+    assert "# Title\n" in result
+    assert "## Gap\n" in result
+    assert "**1)**\n\nDo the thing." in result
+    assert "**Closed.**" in result
+    assert "# Contents" in result
+    assert "Original index entry" in result
+    assert result.count("## Flow\n") == 2
+    assert stats["qualified_headings"] == 0
+    assert result.endswith("\n")
+    assert not result.endswith("\n\n")
+
+
+def test_ordered_list_start_and_nesting_survive_conversion_and_splitting(
+    source: Path, tmp_path: Path, pandoc: str
+) -> None:
+    write_docx(
+        source,
+        [
+            paragraph("Numbers.", "Heading1"),
+            numbered("Seven"),
+            numbered("Nested seven", 1),
+            numbered("Nested eight", 1),
+            numbered("Eight"),
+        ],
+        extras={"word/numbering.xml": numbering_xml()},
+    )
+    _pipeline.convert_docx(source, split_depth=1)
+    content = (tmp_path / "Synthetic Guide" / "01-numbers.md").read_text(encoding="utf-8")
+    shape = _recovery._list_shape(_reference.pandoc_html(content, pandoc))
+    assert shape == [("ol", "1", 7, 2), ("ol", "1", 7, 2)]
+
+
+def test_unordered_word_lists_are_dash_markdown(source: Path, pandoc: str) -> None:
+    write_docx(
+        source,
+        [numbered("First"), numbered("Nested", 1), numbered("Last")],
+        extras={"word/numbering.xml": numbering_xml("bullet", 1)},
+    )
+    _pipeline.convert_docx(source)
+    content = source.with_suffix(".md").read_text(encoding="utf-8")
+    assert "- " in content
+    assert "* " not in content
+    assert "+ " not in content
+    assert _recovery._list_shape(_reference.pandoc_html(content, pandoc)) == [
+        ("ul", "1", 1, 2),
+        ("ul", "1", 1, 1),
+    ]
+
+
+def test_nondecimal_ordered_list_becomes_a_numbered_markdown_list(
+    source: Path, pandoc: str
+) -> None:
+    # Markdown numbers lists only with decimals; Word's letters become numbers, not HTML.
+    write_docx(
+        source,
+        [numbered("First"), numbered("Second")],
+        extras={"word/numbering.xml": numbering_xml("lowerLetter", 3)},
+    )
+    _pipeline.convert_docx(source)
+    content = source.with_suffix(".md").read_text(encoding="utf-8")
+    assert "<" not in content
+    assert re.search(r"^3\.\s+First\n+4\.\s+Second\n", content)
+    assert _recovery._list_shape(_reference.pandoc_html(content, pandoc)) == [("ol", "1", 3, 2)]
+
+
+def test_list_defined_by_a_word_list_style_is_a_list(convert: Converter, pandoc: str) -> None:
+    # Pandoc ignores w:numStyleLink; the converter resolves it for both converters.
+    result, report, warnings = convert.reported(
+        [
+            paragraph("Intro"),
+            numbered("Alpha", number="2"),
+            numbered("Beta", number="2"),
+            paragraph("Outro"),
+        ],
+        styles=(word_style("Bullets", "numbering", number="1"),),
+        extras={"word/numbering.xml": numbering_xml("bullet", 1, style_link="Bullets")},
+    )
+    assert report.status("lists") == "applied"
+    assert re.search(r"Intro\n\n- Alpha\n+- Beta\n\nOutro", result)
+    assert _recovery._list_shape(_reference.pandoc_html(result, pandoc)) == [("ul", "1", 1, 2)]
+    assert "lists:" not in warnings
+
+
+def test_inherited_style_numbering_replaces_plain_markitdown_paragraphs(
+    convert: Converter, pandoc: str
+) -> None:
+    # Mammoth gives paragraphs numbered through a basedOn style as plain paragraphs.
+    result, report, warnings = convert.reported(
+        [
+            paragraph("Intro"),
+            paragraph("Alpha", "Point"),
+            paragraph("Beta", "Point"),
+            paragraph("Outro"),
+        ],
+        styles=(
+            word_style("ListBullet", number="1"),
+            word_style("Point", based_on="ListBullet"),
+        ),
+        extras={"word/numbering.xml": numbering_xml("bullet", 1)},
+    )
+    assert report.status("lists") == "applied"
+    assert re.search(r"Intro\n\n- Alpha\n+- Beta\n\nOutro", result)
+    assert _recovery._list_shape(_reference.pandoc_html(result, pandoc)) == [("ul", "1", 1, 2)]
+    assert "lists:" not in warnings
+
+
+@pytest.mark.parametrize(
+    "extras",
+    [
+        pytest.param({"word/numbering.xml": numbering_xml("bullet", 1)}, id="undefined-list"),
+        pytest.param(None, id="no-numbering-part"),
+    ],
+)
+def test_paragraphs_without_a_defined_word_list_are_not_list_items(
+    extras: dict[str, bytes] | None, convert: Converter
+) -> None:
+    body = [paragraph("Intro"), numbered("Alpha", number="9"), numbered("Beta", number="9")]
+    result, report, warnings = convert.reported(body, extras=extras)
+    assert report.status("lists") == "not needed"
+    assert "Intro\n\nAlpha\n\nBeta" in result
+    assert "lists:" not in warnings
+
+
+def test_lists_after_fields_pandoc_cannot_close_keep_word_numbering(convert: Converter) -> None:
+    # Pandoc leaves such a field open and moves later list items' text out of the list.
+    def marks(*kinds: str) -> list[ET.Element]:
+        runs: list[ET.Element] = []
+        for kind in kinds:
+            run = ET.Element(W + "r")
+            if kind in {"begin", "separate", "end"}:
+                ET.SubElement(run, W + "fldChar", {W + "fldCharType": kind})
+            else:
+                ET.SubElement(run, W + "instrText").text = kind
+            runs.append(run)
+        return runs
+
+    contents = hyperlink("Scope ", anchor="_Toc1")
+    entry = contents.find(W + "hyperlink")
+    assert entry is not None
+    entry.extend(page_reference("_Toc1", "3"))
+    for position, run in enumerate(marks("begin", ' TOC \\o "1-3" \\h ', "separate")):
+        contents.insert(position, run)
+    closing = paragraph()
+    closing.extend(marks("end"))
+    revision = paragraph("Revision ")
+    revision.extend([*marks("begin", "separate"), _ooxml.word_run("2"), *marks("end")])
+    caption = paragraph("Figure ")
+    caption.extend(
+        [*marks("begin", " SEQ Figure ", "separate"), _ooxml.word_run("1"), *marks("end")]
+    )
+    result, report, _warnings = convert.reported(
+        [
+            contents,
+            closing,
+            bookmark("_Toc1", "Scope", "Heading1"),
+            revision,
+            caption,
+            paragraph("Intro"),
+            numbered("Alpha"),
+            numbered("Beta"),
+            paragraph("Outro"),
+        ],
+        extras={"word/numbering.xml": numbering_xml()},
+    )
+    assert report.status("lists") == "applied"
+    assert re.search(r"Intro\n\n7\.\s+Alpha\n+8\.\s+Beta\n\nOutro", result)
+    for text in ("[Scope](#scope)", "Revision 2", "Figure 1"):
+        assert f"\n{text}\n" in f"\n{result}"
+    assert (
+        "  fields: applied (2 field(s) unwrapped, 1 table-of-contents page number(s) dropped)"
+        in report.summary()
+    )
+
+
+def test_lists_that_start_at_a_nested_level_keep_word_numbering(convert: Converter) -> None:
+    # MarkItDown writes one marker per level for such a list, such as "* 1. Alpha".
+    result, report, warnings = convert.reported(
+        [paragraph("Intro"), numbered("Alpha", 1), numbered("Beta", 1), paragraph("Outro")],
+        extras={"word/numbering.xml": numbering_xml()},
+    )
+    assert report.status("lists") == "applied"
+    assert re.search(r"Intro\n\n7\.\s+Alpha\n+8\.\s+Beta\n\nOutro", result)
+    assert "lists:" not in warnings
+
+
+def test_consecutive_lists_at_a_nested_level_stay_separate_lists(
+    convert: Converter, pandoc: str
+) -> None:
+    # MarkItDown nests the second list in the first, four spaces in: "    1. B one".
+    result, report, warnings = convert.reported(
+        [
+            paragraph("Intro"),
+            numbered("A one", 2, number="2"),
+            numbered("A two", 2, number="2"),
+            numbered("B one", 2),
+            numbered("B two", 2),
+            paragraph("Outro"),
+        ],
+        extras={"word/numbering.xml": numbering_xml(second="bullet")},
+    )
+    assert report.status("lists") == "applied"
+    assert re.search(r"Intro\n\n- A one\n+- A two\n\n7\.\s+B one\n+8\.\s+B two\n\nOutro", result)
+    parsed = _reference.pandoc_html(result, pandoc)
+    assert [node.tag for node in parsed] == ["p", "ul", "ol", "p"]
+    assert "lists:" not in warnings
+
+
+def test_numbered_outline_level_heading_stays_a_list_item(convert: Converter) -> None:
+    # Pandoc and MarkItDown read it as a list item; only a "heading N" style is a heading.
+    outlined = numbered("Gamma")
+    properties = outlined.find(W + "pPr")
+    assert properties is not None
+    ET.SubElement(properties, W + "outlineLvl", {W + "val": "1"})
+    result, report, warnings = convert.reported(
+        [paragraph("Intro"), numbered("Alpha"), numbered("Beta"), outlined, paragraph("Outro")],
+        extras={"word/numbering.xml": numbering_xml()},
+    )
+    assert report.status("lists") == "applied"
+    assert re.search(r"Intro\n\n7\.\s+Alpha\n+8\.\s+Beta\n+9\.\s+Gamma\n\nOutro", result)
+    assert (
+        "    not applied (1): Word numbers this outline-level heading as a list item; "
+        "kept as a list item" in report.summary()
+    )
+    assert report.status("cleanup") == "not needed"
+    assert "lists:" not in warnings
+
+
+def test_headings_lose_trailing_punctuation_that_list_items_keep(convert: Converter) -> None:
+    outlined = numbered("Gamma.")
+    properties = outlined.find(W + "pPr")
+    assert properties is not None
+    ET.SubElement(properties, W + "outlineLvl", {W + "val": "1"})
+    result, report, _warnings = convert.reported(
+        [
+            paragraph("Overview:", "Heading1"),
+            paragraph("Why?", "Heading2"),
+            bookmark("_Steps", "Steps.", "Heading2"),
+            numbered("Alpha."),
+            outlined,
+            hyperlink("Back to the steps", anchor="_Steps"),
+        ],
+        extras={"word/numbering.xml": numbering_xml()},
+    )
+    assert "# Overview\n" in result
+    assert "## Why?\n" in result
+    assert "## Steps\n" in result
+    assert re.search(r"7\.\s+Alpha\.\n+8\.\s+Gamma\.", result)
+    assert "[Back to the steps](#steps)" in result
+    assert (
+        "  headings: partial (3 applied, 2 heading(s) with trailing punctuation trimmed, "
+        "1 not applied)" in report.summary()
+    )
+    assert report.status("checks") == "applied"
+
+
+def test_skipped_heading_levels_close_with_their_subheadings(convert: Converter) -> None:
+    result, report, _warnings = convert.reported(
+        [
+            paragraph("Start", "Heading2"),
+            paragraph("One", "Heading1"),
+            paragraph("Three", "Heading3"),
+            paragraph("Four", "Heading4"),
+            paragraph("Three again", "Heading3"),
+            paragraph("Two", "Heading2"),
+            paragraph("Five", "Heading5"),
+            table(row(cell(paragraph("In a cell", "Heading4"))), columns=1),
+        ]
+    )
+    levels = re.findall(r"^(#+) (.+)$", result, re.MULTILINE)
+    assert levels == [
+        ("##", "Start"),
+        ("#", "One"),
+        ("##", "Three"),
+        ("###", "Four"),
+        ("##", "Three again"),
+        ("##", "Two"),
+        ("###", "Five"),
+    ]
+    assert "<h4>In a cell</h4>" in result
+    assert "4 heading(s) moved up to close a skipped level" in "\n".join(report.summary())
+    assert report.status("checks") == "applied"
+
+
+def test_bare_web_and_e_mail_addresses_become_autolinks(convert: Converter) -> None:
+    result, report, _warnings = convert.reported(
+        [
+            paragraph("Owner: Jane <jane@example.com>; see https://example.com/spec."),
+            hyperlink("https://linked.example", relation="site"),
+            table(
+                row(cell("Page"), header=True),
+                row(cell("https://cell.example/p")),
+                # As Outlook writes a name and address, which the final check accepts.
+                row(cell("Reviewer <reviewer@cell.example>")),
+                columns=1,
+            ),
+        ],
+        relations=(("site", "hyperlink", "https://linked.example", "External"),),
+    )
+    assert "Owner: Jane <jane@example.com>; see <https://example.com/spec>." in result
+    assert "<https://linked.example>" in result
+    assert "| <https://cell.example/p> |" in result
+    assert "| Reviewer <reviewer@cell.example> |" in result
+    assert "  links: applied (1, 4 bare web or e-mail address(es) linked)" in report.summary()
+    assert report.status("checks") == "applied"
+
+
+def explained(
+    convert: Converter, words: str, output: Path, *, explain: bool = True
+) -> tuple[str, _diagnostics.TransformReport]:
+    """Convert a document with one item each transform skips; *words* is all of its text."""
+    outlined = numbered(f"{words} outlined")
+    properties = outlined.find(W + "pPr")
+    assert properties is not None
+    ET.SubElement(properties, W + "outlineLvl", {W + "val": "1"})
+    # A footnote in a list item is a known gap: that list stays as MarkItDown converted it.
+    noted = numbered(f"{words} noted")
+    ET.SubElement(ET.SubElement(noted, W + "r"), W + "footnoteReference", {W + "id": "1"})
+    notes = ET.Element(W + "footnotes")
+    ET.SubElement(notes, W + "footnote", {W + "id": "1"}).append(paragraph(f"{words} note"))
+    result, report, _warnings = convert.reported(
+        [
+            bookmark("_Toc1", f"{words} heading", "Heading1"),
+            paragraph(f"{words} intro"),
+            numbered(f"{words} one"),
+            numbered(f"{words} two"),
+            outlined,
+            paragraph(f"{words} middle"),
+            noted,
+            numbered(f"{words} after"),
+            hyperlink(f"{words} link", anchor="Zanzibar_spot"),
+            hyperlink(f"{words} file", relation="guide"),
+            text_box(f"{words} box"),
+        ],
+        output=output,
+        relations=(
+            ("notes", "footnotes", "footnotes.xml", "Internal"),
+            ("guide", "hyperlink", "Xylophone%20Guide.docx", "External"),
+        ),
+        extras={
+            "word/numbering.xml": numbering_xml(),
+            "word/footnotes.xml": _ooxml.word_xml_bytes(notes),
+        },
+        explain=explain,
+    )
+    return result, report
+
+
+def test_explain_describes_what_was_not_applied_without_document_text(
+    convert: Converter, tmp_path: Path
+) -> None:
+    converted, report = explained(convert, "zephyr quill", tmp_path / "first.md")
+    _other, other = explained(convert, "quokka marble", tmp_path / "second.md")
+    lines = report.explanation()
+    assert lines == other.explanation()
+    for expected in (
+        "docx-to-md: explain (fixed labels and counts only; no document text)",
+        "  document: paragraphs 11; text boxes 1; headings 2; list items 5; links 1; bookmarks 1",
+        "  images: DrawingML text box: no embedded image; its text is omitted (1)",
+        "    placement: floating 1",
+        "  links: link to a missing Word bookmark; kept as plain text (1)",
+        "    bookmark: nowhere 1",
+        (
+            "  headings: Word numbers this outline-level heading as a list item; "
+            "kept as a list item (1)"
+        ),
+        "    headings: 1 of 2",
+        "      heading by: outline level 1/1; heading style 0/1",
+        (
+            "  lists: Word/Pandoc/MarkItDown list content cannot be aligned; "
+            "kept as MarkItDown converted it (1)"
+        ),
+        "    difference: differ at the middle: Pandoc letter / MarkItDown bracket 1",
+        "    list items: 2 of 5",
+        "      contains: text 1/4; text+note reference 1/1",
+        "  checks: a local link target does not exist (1)",
+        "    file type: docx 1",
+        "    on disk: no 1",
+    ):
+        assert expected in lines
+    shared = "\n".join(lines).casefold()
+    for word in ("zephyr", "quill", "quokka", "marble", "zanzibar", "xylophone", "guide"):
+        assert word not in shared
+    quiet, plain = explained(convert, "zephyr quill", tmp_path / "third.md", explain=False)
+    assert quiet == converted
+    assert plain.summary() == report.summary()
+    assert (plain.explanation(), plain.items, plain.events) == ([], {}, [])
+
+
+@pytest.mark.parametrize(
+    "explain", [pytest.param(True, id="explain"), pytest.param(False, id="no-explain")]
+)
+def test_explain_is_kept_in_the_diagnostic_report(
+    explain: bool, source: Path, tmp_path: Path
+) -> None:
+    write_docx(source, [hyperlink("Zephyr", anchor="Zanzibar_spot")])
+    report = _diagnostics.TransformReport(explaining=explain)
+    diagnostics = tmp_path / "diagnostics"
+    _pipeline.convert_docx(source, keep_intermediates=diagnostics, report=report)
+    data = json.loads((diagnostics / "diagnostics.json").read_text(encoding="utf-8"))
+    if explain:
+        assert data["explain"] == report.explanation()
+        assert "    bookmark: nowhere 1" in data["explain"]
+    else:
+        assert "explain" not in data
+
+
+def test_numbering_off_paragraphs_stay_with_the_list_item_before_them(convert: Converter) -> None:
+    result, report, warnings = convert.reported(
+        [
+            paragraph("Intro"),
+            numbered("Alpha"),
+            numbered("More alpha", number="0"),
+            numbered("Beta"),
+            numbered("More beta", number="0"),
+            paragraph("Outro"),
+            numbered("Loose", number="0"),
+        ],
+        extras={"word/numbering.xml": numbering_xml()},
+    )
+    assert report.status("lists") == "applied"
+    assert re.search(
+        r"7\.\s+Alpha\n+ {4}More alpha\n+8\.\s+Beta\n+ {4}More beta\n\nOutro\n\nLoose", result
+    )
+    assert "lists:" not in warnings
+
+
+def test_paragraphs_pandoc_reads_as_headings_are_not_list_items(convert: Converter) -> None:
+    contents = word_style("TOCHeading", based_on="Heading1", number="1")
+    properties = contents.find(W + "pPr")
+    assert properties is not None
+    ET.SubElement(properties, W + "outlineLvl", {W + "val": "9"})
+    result, report, warnings = convert.reported(
+        [
+            paragraph("Contents", "TOCHeading"),
+            paragraph("Intro"),
+            numbered("Alpha"),
+            paragraph("Outro"),
+        ],
+        styles=(contents,),
+        extras={"word/numbering.xml": numbering_xml()},
+    )
+    assert report.status("lists") == "applied"
+    assert "Contents" in result
+    assert "lists:" not in warnings
+
+
+def test_backticks_backslashes_and_hashes_keep_their_text(convert: Converter, pandoc: str) -> None:
+    texts = (
+        "Use `uvm_info and `uvm_error.",
+        "# of entries",
+        "Path C:\\tools\\a\\*b and \\\\server.",
+    )
+    items = ("Run `run_test and `uvm_fatal.", "Done")
+    result, report, _warnings = convert.reported(
+        [*(paragraph(text) for text in texts), *(numbered(item) for item in items)],
+        extras={"word/numbering.xml": numbering_xml()},
+    )
+    parsed = _reference.pandoc_html(result, pandoc)
+
+    def shown(tag: str) -> list[str]:
+        return [" ".join("".join(node.itertext()).split()) for node in parsed.iter(tag)]
+
+    assert shown("p")[: len(texts)] == list(texts)
+    assert shown("li") == list(items)
+    assert not list(parsed.iter("code"))
+    assert not list(parsed.iter("h1"))
+    assert report.status("lists") == "applied"
+    assert "  literal-text: applied (10)" in report.summary()
+
+
+def test_brackets_stay_text_rather_than_links(convert: Converter, pandoc: str) -> None:
+    result, report, _warnings = convert.reported(
+        [
+            paragraph("Set bit[3](W1C) and see [note]."),
+            numbered("Clear field[7:0](RW) first."),
+            numbered("Done"),
+        ],
+        extras={"word/numbering.xml": numbering_xml()},
+    )
+    parsed = _reference.pandoc_html(result, pandoc)
+    assert _validation.collect_references(parsed).links == []
+    visible = "".join(parsed.itertext())
+    for literal in ("Set bit[3](W1C) and see [note].", "Clear field[7:0](RW) first."):
+        assert literal in visible
+    assert report.status("lists") == "applied"
+    assert report.status("checks") == "applied"
+
+
+def test_symbol_fonts_and_unclosable_emphasis_keep_lists(convert: Converter) -> None:
+    def styled(text: str, *, font: str | None = None, bold: bool = False) -> ET.Element:
+        run = _ooxml.word_run(text)
+        properties = ET.Element(W + "rPr")
+        if bold:
+            ET.SubElement(properties, W + "b")
+        if font is not None:
+            ET.SubElement(properties, W + "rFonts", {W + "ascii": font, W + "hAnsi": font})
+        run.insert(0, properties)
+        return run
+
+    def line(*runs: ET.Element, item: bool = False) -> ET.Element:
+        result = numbered("") if item else paragraph()
+        for run in result.findall(W + "r"):
+            result.remove(run)
+        result.extend(runs)
+        return result
+
+    check = styled("\u00fc", font="Wingdings")
+    result, report, warnings = convert.reported(
+        [
+            line(_ooxml.word_run("Passed "), check),
+            line(_ooxml.word_run("Reviewed "), copy.deepcopy(check), item=True),
+            line(styled("Note:", bold=True), _ooxml.word_run("next"), item=True),
+            line(_ooxml.word_run("A "), styled("\u00ae", font="Symbol"), _ooxml.word_run(" B")),
+        ],
+        extras={"word/numbering.xml": numbering_xml()},
+    )
+    assert "Passed ✓\n" in result
+    assert "Reviewed ✓" in result
+    assert "A → B" in result
+    assert "ü" not in result
+    assert "<strong>Note:</strong>next" in result
+    assert report.status("lists") == "applied"
+    assert "  symbols: applied (3)" in report.summary()
+    assert "lists:" not in warnings
+
+
+def test_vml_text_boxes_in_list_items_keep_the_list(convert: Converter) -> None:
+    # Pandoc splits a paragraph around a VML text box; MarkItDown puts its text after.
+    item = numbered("Lead ")
+    item.extend(list(text_box("Box label", legacy=True)))
+    item.append(_ooxml.word_run(" tail"))
+    result, report, _warnings = convert.reported(
+        [paragraph("Intro"), item, numbered("Beta"), paragraph("Outro")],
+        extras={"word/numbering.xml": numbering_xml()},
+    )
+    assert report.status("lists") == "applied"
+    assert re.search(r"7\.\s+Lead tail\n\nBox label\n\n8\.\s+Beta\n", result)
+
+
+def test_lists_inside_tables_keep_word_numbers(source: Path) -> None:
+    write_docx(
+        source,
+        [
+            table(
+                row(cell("Header"), header=True),
+                row(cell(numbered("Seven"), numbered("Eight"))),
+                columns=1,
+            ),
+        ],
+        extras={"word/numbering.xml": numbering_xml()},
+    )
+    _pipeline.convert_docx(source)
+    content = source.with_suffix(".md").read_text(encoding="utf-8")
+    assert "| 7. Seven<br>8. Eight |" in content
+
+
+def test_multiple_empty_headerless_and_nested_tables(convert: Converter, pandoc: str) -> None:
+    nested = table(row(cell("nested")), columns=1)
+    result, stats = convert(
+        [
+            paragraph("Before"),
+            table(row(cell(""), cell("")), row(cell("data"), cell("")), row(cell(""), cell(""))),
+            table(),
+            table(row(cell(""), cell(""))),
+            table(row(cell("Outer", nested), cell("Tail"))),
+            paragraph("After"),
+        ]
+    )
+    parsed = _reference.pandoc_html(result, pandoc)
+    tables = list(parsed.iter("table"))
+    assert len(tables) == 5
+    # The first table's empty rows go, so its data row leads a Markdown table.
+    assert [len(_tables.html_rows(item)) for item in tables] == [1, 0, 1, 1, 1]
+    assert stats["tables"] == 5
+    assert len(list(parsed.iter("thead"))) == 1
+    assert "nested" in result
+    assert "Before" in result
+    assert "After" in result
+
+
+def test_rows_with_grid_gaps_keep_their_word_cells(convert: Converter, pandoc: str) -> None:
+    # Pandoc writes an empty cell per grid column for gridBefore and pads short rows.
+    def gapped(before: int, after: int, *texts: str) -> ET.Element:
+        result = row(*(cell(text) for text in texts))
+        properties = ET.Element(W + "trPr")
+        for name, value in (("gridBefore", before), ("gridAfter", after)):
+            if value:
+                ET.SubElement(properties, W + name, {W + "val": str(value)})
+        result.insert(0, properties)
+        return result
+
+    result, report, warnings = convert.reported(
+        [
+            table(
+                row(cell("a"), cell("b"), cell("c")),
+                gapped(2, 0, "z"),
+                gapped(0, 2, "x"),
+                gapped(0, 0, "p", "q"),
+                columns=3,
             )
-        return result, report, stderr.getvalue()
-
-    def test_default_keeps_step_and_status_labels_and_index_content(self) -> None:
-        result, stats = self.convert(
-            [
-                paragraph("Title.", "Heading1"),
-                paragraph("Gap.", "Heading4"),
-                paragraph("1)", bold=True),
-                paragraph("Do the thing."),
-                paragraph("Closed.", bold=True),
-                paragraph("Contents", "Heading1"),
-                paragraph("Original index entry"),
-                paragraph("Flow.", "Heading3"),
-                paragraph("Flow.", "Heading3"),
-            ]
-        )
-        # Headings lose trailing punctuation and skipped levels; bold labels keep theirs.
-        assert "# Title\n" in result
-        assert "## Gap\n" in result
-        assert "**1)**\n\nDo the thing." in result
-        assert "**Closed.**" in result
-        assert "# Contents" in result
-        assert "Original index entry" in result
-        assert result.count("## Flow\n") == 2
-        assert stats["qualified_headings"] == 0
-        assert result.endswith("\n")
-        assert not result.endswith("\n\n")
-
-    def test_ordered_list_start_and_nesting_survive_conversion_and_splitting(self) -> None:
-        write_docx(
-            self.source,
-            [
-                paragraph("Numbers.", "Heading1"),
-                numbered("Seven"),
-                numbered("Nested seven", 1),
-                numbered("Nested eight", 1),
-                numbered("Eight"),
-            ],
-            extras={"word/numbering.xml": numbering_xml()},
-        )
-        _pipeline.convert_docx(self.source, split_depth=1)
-        content = (self.root / "Synthetic Guide" / "01-numbers.md").read_text(encoding="utf-8")
-        shape = _recovery._list_shape(_reference.pandoc_html(content, self.pandoc))
-        assert shape == [("ol", "1", 7, 2), ("ol", "1", 7, 2)]
-
-    def test_unordered_word_lists_are_dash_markdown(self) -> None:
-        write_docx(
-            self.source,
-            [numbered("First"), numbered("Nested", 1), numbered("Last")],
-            extras={"word/numbering.xml": numbering_xml("bullet", 1)},
-        )
-        _pipeline.convert_docx(self.source)
-        content = self.source.with_suffix(".md").read_text(encoding="utf-8")
-        assert "- " in content
-        assert "* " not in content
-        assert "+ " not in content
-        assert _recovery._list_shape(_reference.pandoc_html(content, self.pandoc)) == [
-            ("ul", "1", 1, 2),
-            ("ul", "1", 1, 1),
         ]
+    )
+    assert report.status("tables") == "applied"
+    assert "tables:" not in warnings
+    shape = [
+        [(node.get("colspan", "1"), "".join(node.itertext())) for node in tr]
+        for tr in _tables.html_rows(next(_reference.pandoc_html(result, pandoc).iter("table")))
+    ]
+    assert shape == [
+        [("1", "a"), ("1", "b"), ("1", "c")],
+        [("2", ""), ("1", "z")],
+        [("1", "x"), ("2", "")],
+        [("1", "p"), ("1", "q")],
+    ]
 
-    def test_nondecimal_ordered_list_becomes_a_numbered_markdown_list(self) -> None:
-        # Markdown numbers lists only with decimals; Word's letters become numbers, not HTML.
-        write_docx(
-            self.source,
-            [numbered("First"), numbered("Second")],
-            extras={"word/numbering.xml": numbering_xml("lowerLetter", 3)},
-        )
-        _pipeline.convert_docx(self.source)
-        content = self.source.with_suffix(".md").read_text(encoding="utf-8")
-        assert "<" not in content
-        assert re.search(r"^3\.\s+First\n+4\.\s+Second\n", content)
-        assert _recovery._list_shape(_reference.pandoc_html(content, self.pandoc)) == [
-            ("ol", "1", 3, 2)
+
+def test_rows_wider_than_the_table_grid_keep_every_cell(convert: Converter, pandoc: str) -> None:
+    # Pandoc drops the cells beyond w:tblGrid, which Word tolerates.
+    result, report, warnings = convert.reported(
+        [
+            table(
+                row(cell("a"), cell("b"), cell("c")),
+                row(cell("x"), cell("y"), cell("z")),
+                columns=2,
+            )
         ]
+    )
+    assert report.status("tables") == "applied"
+    assert "tables:" not in warnings
+    parsed = next(_reference.pandoc_html(result, pandoc).iter("table"))
+    assert [["".join(node.itertext()) for node in tr] for tr in _tables.html_rows(parsed)] == [
+        ["a", "b", "c"],
+        ["x", "y", "z"],
+    ]
 
-    def test_list_defined_by_a_word_list_style_is_a_list(self) -> None:
-        # Pandoc ignores w:numStyleLink; the converter resolves it for both converters.
-        result, report, warnings = self.convert_reported(
-            [
-                paragraph("Intro"),
-                numbered("Alpha", number="2"),
-                numbered("Beta", number="2"),
-                paragraph("Outro"),
-            ],
-            styles=(word_style("Bullets", "numbering", number="1"),),
-            extras={"word/numbering.xml": numbering_xml("bullet", 1, style_link="Bullets")},
-        )
-        assert report.status("lists") == "applied"
-        assert re.search(r"Intro\n\n- Alpha\n+- Beta\n\nOutro", result)
-        assert _recovery._list_shape(_reference.pandoc_html(result, self.pandoc)) == [
-            ("ul", "1", 1, 2)
+
+def test_a_narrow_first_body_row_keeps_every_table_cell(convert: Converter, pandoc: str) -> None:
+    # Pandoc takes a table's columns from its first body row and drops the rest.
+    title = row(cell("Title", colspan=2))
+    result, report, warnings = convert.reported(
+        [
+            table(
+                row(cell("h1"), cell("h2"), cell("h3"), header=True),
+                row(cell("a"), cell("b")),
+                row(cell("x"), cell("y"), cell("z")),
+                columns=3,
+            ),
+            table(title, row(cell("p"), cell("q"), cell("r")), columns=3),
         ]
-        assert "lists:" not in warnings
-
-    def test_inherited_style_numbering_replaces_plain_markitdown_paragraphs(self) -> None:
-        # Mammoth gives paragraphs numbered through a basedOn style as plain paragraphs.
-        result, report, warnings = self.convert_reported(
-            [
-                paragraph("Intro"),
-                paragraph("Alpha", "Point"),
-                paragraph("Beta", "Point"),
-                paragraph("Outro"),
-            ],
-            styles=(
-                word_style("ListBullet", number="1"),
-                word_style("Point", based_on="ListBullet"),
-            ),
-            extras={"word/numbering.xml": numbering_xml("bullet", 1)},
-        )
-        assert report.status("lists") == "applied"
-        assert re.search(r"Intro\n\n- Alpha\n+- Beta\n\nOutro", result)
-        assert _recovery._list_shape(_reference.pandoc_html(result, self.pandoc)) == [
-            ("ul", "1", 1, 2)
-        ]
-        assert "lists:" not in warnings
-
-    def test_paragraphs_without_a_defined_word_list_are_not_list_items(self) -> None:
-        body = [paragraph("Intro"), numbered("Alpha", number="9"), numbered("Beta", number="9")]
-        for name, extras in (
-            ("undefined list", {"word/numbering.xml": numbering_xml("bullet", 1)}),
-            ("no numbering part", None),
-        ):
-            with self.subTest(name):
-                result, report, warnings = self.convert_reported(
-                    body, output=self.root / f"{name}.md", extras=extras
-                )
-                assert report.status("lists") == "not needed"
-                assert "Intro\n\nAlpha\n\nBeta" in result
-                assert "lists:" not in warnings
-
-    def test_lists_after_fields_pandoc_cannot_close_keep_word_numbering(self) -> None:
-        # Pandoc leaves such a field open and moves later list items' text out of the list.
-        def marks(*kinds: str) -> list[ET.Element]:
-            runs: list[ET.Element] = []
-            for kind in kinds:
-                run = ET.Element(W + "r")
-                if kind in {"begin", "separate", "end"}:
-                    ET.SubElement(run, W + "fldChar", {W + "fldCharType": kind})
-                else:
-                    ET.SubElement(run, W + "instrText").text = kind
-                runs.append(run)
-            return runs
-
-        contents = hyperlink("Scope ", anchor="_Toc1")
-        entry = contents.find(W + "hyperlink")
-        assert entry is not None
-        entry.extend(page_reference("_Toc1", "3"))
-        for position, run in enumerate(marks("begin", ' TOC \\o "1-3" \\h ', "separate")):
-            contents.insert(position, run)
-        closing = paragraph()
-        closing.extend(marks("end"))
-        revision = paragraph("Revision ")
-        revision.extend([*marks("begin", "separate"), _ooxml.word_run("2"), *marks("end")])
-        caption = paragraph("Figure ")
-        caption.extend(
-            [*marks("begin", " SEQ Figure ", "separate"), _ooxml.word_run("1"), *marks("end")]
-        )
-        result, report, _warnings = self.convert_reported(
-            [
-                contents,
-                closing,
-                bookmark("_Toc1", "Scope", "Heading1"),
-                revision,
-                caption,
-                paragraph("Intro"),
-                numbered("Alpha"),
-                numbered("Beta"),
-                paragraph("Outro"),
-            ],
-            extras={"word/numbering.xml": numbering_xml()},
-        )
-        assert report.status("lists") == "applied"
-        assert re.search(r"Intro\n\n7\.\s+Alpha\n+8\.\s+Beta\n\nOutro", result)
-        for text in ("[Scope](#scope)", "Revision 2", "Figure 1"):
-            assert f"\n{text}\n" in f"\n{result}"
-        assert (
-            "  fields: applied (2 field(s) unwrapped, 1 table-of-contents page number(s) dropped)"
-            in report.summary()
-        )
-
-    def test_lists_that_start_at_a_nested_level_keep_word_numbering(self) -> None:
-        # MarkItDown writes one marker per level for such a list, such as "* 1. Alpha".
-        result, report, warnings = self.convert_reported(
-            [paragraph("Intro"), numbered("Alpha", 1), numbered("Beta", 1), paragraph("Outro")],
-            extras={"word/numbering.xml": numbering_xml()},
-        )
-        assert report.status("lists") == "applied"
-        assert re.search(r"Intro\n\n7\.\s+Alpha\n+8\.\s+Beta\n\nOutro", result)
-        assert "lists:" not in warnings
-
-    def test_consecutive_lists_at_a_nested_level_stay_separate_lists(self) -> None:
-        # MarkItDown nests the second list in the first, four spaces in: "    1. B one".
-        result, report, warnings = self.convert_reported(
-            [
-                paragraph("Intro"),
-                numbered("A one", 2, number="2"),
-                numbered("A two", 2, number="2"),
-                numbered("B one", 2),
-                numbered("B two", 2),
-                paragraph("Outro"),
-            ],
-            extras={"word/numbering.xml": numbering_xml(second="bullet")},
-        )
-        assert report.status("lists") == "applied"
-        assert re.search(
-            r"Intro\n\n- A one\n+- A two\n\n7\.\s+B one\n+8\.\s+B two\n\nOutro", result
-        )
-        parsed = _reference.pandoc_html(result, self.pandoc)
-        assert [node.tag for node in parsed] == ["p", "ul", "ol", "p"]
-        assert "lists:" not in warnings
-
-    def test_numbered_outline_level_heading_stays_a_list_item(self) -> None:
-        # Pandoc and MarkItDown read it as a list item; only a "heading N" style is a heading.
-        outlined = numbered("Gamma")
-        properties = outlined.find(W + "pPr")
-        assert properties is not None
-        ET.SubElement(properties, W + "outlineLvl", {W + "val": "1"})
-        result, report, warnings = self.convert_reported(
-            [paragraph("Intro"), numbered("Alpha"), numbered("Beta"), outlined, paragraph("Outro")],
-            extras={"word/numbering.xml": numbering_xml()},
-        )
-        assert report.status("lists") == "applied"
-        assert re.search(r"Intro\n\n7\.\s+Alpha\n+8\.\s+Beta\n+9\.\s+Gamma\n\nOutro", result)
-        assert (
-            "    not applied (1): Word numbers this outline-level heading as a list item; "
-            "kept as a list item" in report.summary()
-        )
-        assert report.status("cleanup") == "not needed"
-        assert "lists:" not in warnings
-
-    def test_headings_lose_trailing_punctuation_that_list_items_keep(self) -> None:
-        outlined = numbered("Gamma.")
-        properties = outlined.find(W + "pPr")
-        assert properties is not None
-        ET.SubElement(properties, W + "outlineLvl", {W + "val": "1"})
-        result, report, _warnings = self.convert_reported(
-            [
-                paragraph("Overview:", "Heading1"),
-                paragraph("Why?", "Heading2"),
-                bookmark("_Steps", "Steps.", "Heading2"),
-                numbered("Alpha."),
-                outlined,
-                hyperlink("Back to the steps", anchor="_Steps"),
-            ],
-            extras={"word/numbering.xml": numbering_xml()},
-        )
-        assert "# Overview\n" in result
-        assert "## Why?\n" in result
-        assert "## Steps\n" in result
-        assert re.search(r"7\.\s+Alpha\.\n+8\.\s+Gamma\.", result)
-        assert "[Back to the steps](#steps)" in result
-        assert (
-            "  headings: partial (3 applied, 2 heading(s) with trailing punctuation trimmed, "
-            "1 not applied)" in report.summary()
-        )
-        assert report.status("checks") == "applied"
-
-    def test_skipped_heading_levels_close_with_their_subheadings(self) -> None:
-        result, report, _warnings = self.convert_reported(
-            [
-                paragraph("Start", "Heading2"),
-                paragraph("One", "Heading1"),
-                paragraph("Three", "Heading3"),
-                paragraph("Four", "Heading4"),
-                paragraph("Three again", "Heading3"),
-                paragraph("Two", "Heading2"),
-                paragraph("Five", "Heading5"),
-                table(row(cell(paragraph("In a cell", "Heading4"))), columns=1),
-            ]
-        )
-        levels = re.findall(r"^(#+) (.+)$", result, re.MULTILINE)
-        assert levels == [
-            ("##", "Start"),
-            ("#", "One"),
-            ("##", "Three"),
-            ("###", "Four"),
-            ("##", "Three again"),
-            ("##", "Two"),
-            ("###", "Five"),
-        ]
-        assert "<h4>In a cell</h4>" in result
-        assert "4 heading(s) moved up to close a skipped level" in "\n".join(report.summary())
-        assert report.status("checks") == "applied"
-
-    def test_bare_web_and_e_mail_addresses_become_autolinks(self) -> None:
-        result, report, _warnings = self.convert_reported(
-            [
-                paragraph("Owner: Jane <jane@example.com>; see https://example.com/spec."),
-                hyperlink("https://linked.example", relation="site"),
-                table(
-                    row(cell("Page"), header=True),
-                    row(cell("https://cell.example/p")),
-                    # As Outlook writes a name and address, which the final check accepts.
-                    row(cell("Reviewer <reviewer@cell.example>")),
-                    columns=1,
-                ),
-            ],
-            relations=(("site", "hyperlink", "https://linked.example", "External"),),
-        )
-        assert "Owner: Jane <jane@example.com>; see <https://example.com/spec>." in result
-        assert "<https://linked.example>" in result
-        assert "| <https://cell.example/p> |" in result
-        assert "| Reviewer <reviewer@cell.example> |" in result
-        assert "  links: applied (1, 4 bare web or e-mail address(es) linked)" in report.summary()
-        assert report.status("checks") == "applied"
-
-    def explained(
-        self, words: str, name: str, *, explain: bool = True
-    ) -> tuple[str, _diagnostics.TransformReport]:
-        """A document with one item each transform skips; *words* is all of its text."""
-        outlined = numbered(f"{words} outlined")
-        properties = outlined.find(W + "pPr")
-        assert properties is not None
-        ET.SubElement(properties, W + "outlineLvl", {W + "val": "1"})
-        # A footnote in a list item is a known gap: that list stays as MarkItDown converted it.
-        noted = numbered(f"{words} noted")
-        ET.SubElement(ET.SubElement(noted, W + "r"), W + "footnoteReference", {W + "id": "1"})
-        notes = ET.Element(W + "footnotes")
-        ET.SubElement(notes, W + "footnote", {W + "id": "1"}).append(paragraph(f"{words} note"))
-        result, report, _warnings = self.convert_reported(
-            [
-                bookmark("_Toc1", f"{words} heading", "Heading1"),
-                paragraph(f"{words} intro"),
-                numbered(f"{words} one"),
-                numbered(f"{words} two"),
-                outlined,
-                paragraph(f"{words} middle"),
-                noted,
-                numbered(f"{words} after"),
-                hyperlink(f"{words} link", anchor="Zanzibar_spot"),
-                hyperlink(f"{words} file", relation="guide"),
-                text_box(f"{words} box"),
-            ],
-            output=self.root / f"{name}.md",
-            relations=(
-                ("notes", "footnotes", "footnotes.xml", "Internal"),
-                ("guide", "hyperlink", "Xylophone%20Guide.docx", "External"),
-            ),
-            extras={
-                "word/numbering.xml": numbering_xml(),
-                "word/footnotes.xml": _ooxml.word_xml_bytes(notes),
-            },
-            explain=explain,
-        )
-        return result, report
-
-    def test_explain_describes_what_was_not_applied_without_document_text(self) -> None:
-        converted, report = self.explained("zephyr quill", "first")
-        _other, other = self.explained("quokka marble", "second")
-        lines = report.explanation()
-        assert lines == other.explanation()
-        for expected in (
-            "docx-to-md: explain (fixed labels and counts only; no document text)",
-            (
-                "  document: paragraphs 11; text boxes 1; headings 2; list items 5; links 1; "
-                "bookmarks 1"
-            ),
-            "  images: DrawingML text box: no embedded image; its text is omitted (1)",
-            "    placement: floating 1",
-            "  links: link to a missing Word bookmark; kept as plain text (1)",
-            "    bookmark: nowhere 1",
-            (
-                "  headings: Word numbers this outline-level heading as a list item; "
-                "kept as a list item (1)"
-            ),
-            "    headings: 1 of 2",
-            "      heading by: outline level 1/1; heading style 0/1",
-            (
-                "  lists: Word/Pandoc/MarkItDown list content cannot be aligned; "
-                "kept as MarkItDown converted it (1)"
-            ),
-            "    difference: differ at the middle: Pandoc letter / MarkItDown bracket 1",
-            "    list items: 2 of 5",
-            "      contains: text 1/4; text+note reference 1/1",
-            "  checks: a local link target does not exist (1)",
-            "    file type: docx 1",
-            "    on disk: no 1",
-        ):
-            assert expected in lines
-        shared = "\n".join(lines).casefold()
-        for word in ("zephyr", "quill", "quokka", "marble", "zanzibar", "xylophone", "guide"):
-            assert word not in shared
-        quiet, plain = self.explained("zephyr quill", "third", explain=False)
-        assert quiet == converted
-        assert plain.summary() == report.summary()
-        assert (plain.explanation(), plain.items, plain.events) == ([], {}, [])
-
-    def test_explain_is_kept_in_the_diagnostic_report(self) -> None:
-        write_docx(self.source, [hyperlink("Zephyr", anchor="Zanzibar_spot")])
-        for explain in (True, False):
-            with self.subTest(explain=explain):
-                report = _diagnostics.TransformReport(explaining=explain)
-                diagnostics = self.root / f"diagnostics-{explain}"
-                with contextlib.redirect_stderr(io.StringIO()):
-                    _pipeline.convert_docx(
-                        self.source,
-                        self.root / f"out-{explain}.md",
-                        keep_intermediates=diagnostics,
-                        report=report,
-                    )
-                data = json.loads((diagnostics / "diagnostics.json").read_text(encoding="utf-8"))
-                if explain:
-                    assert data["explain"] == report.explanation()
-                    assert "    bookmark: nowhere 1" in data["explain"]
-                else:
-                    assert "explain" not in data
-
-    def test_numbering_off_paragraphs_stay_with_the_list_item_before_them(self) -> None:
-        result, report, warnings = self.convert_reported(
-            [
-                paragraph("Intro"),
-                numbered("Alpha"),
-                numbered("More alpha", number="0"),
-                numbered("Beta"),
-                numbered("More beta", number="0"),
-                paragraph("Outro"),
-                numbered("Loose", number="0"),
-            ],
-            extras={"word/numbering.xml": numbering_xml()},
-        )
-        assert report.status("lists") == "applied"
-        assert re.search(
-            r"7\.\s+Alpha\n+ {4}More alpha\n+8\.\s+Beta\n+ {4}More beta\n\nOutro\n\nLoose", result
-        )
-        assert "lists:" not in warnings
-
-    def test_paragraphs_pandoc_reads_as_headings_are_not_list_items(self) -> None:
-        contents = word_style("TOCHeading", based_on="Heading1", number="1")
-        properties = contents.find(W + "pPr")
-        assert properties is not None
-        ET.SubElement(properties, W + "outlineLvl", {W + "val": "9"})
-        result, report, warnings = self.convert_reported(
-            [
-                paragraph("Contents", "TOCHeading"),
-                paragraph("Intro"),
-                numbered("Alpha"),
-                paragraph("Outro"),
-            ],
-            styles=(contents,),
-            extras={"word/numbering.xml": numbering_xml()},
-        )
-        assert report.status("lists") == "applied"
-        assert "Contents" in result
-        assert "lists:" not in warnings
-
-    def test_backticks_backslashes_and_hashes_keep_their_text(self) -> None:
-        texts = (
-            "Use `uvm_info and `uvm_error.",
-            "# of entries",
-            "Path C:\\tools\\a\\*b and \\\\server.",
-        )
-        items = ("Run `run_test and `uvm_fatal.", "Done")
-        result, report, _warnings = self.convert_reported(
-            [*(paragraph(text) for text in texts), *(numbered(item) for item in items)],
-            extras={"word/numbering.xml": numbering_xml()},
-        )
-        parsed = _reference.pandoc_html(result, self.pandoc)
-
-        def shown(tag: str) -> list[str]:
-            return [" ".join("".join(node.itertext()).split()) for node in parsed.iter(tag)]
-
-        assert shown("p")[: len(texts)] == list(texts)
-        assert shown("li") == list(items)
-        assert not list(parsed.iter("code"))
-        assert not list(parsed.iter("h1"))
-        assert report.status("lists") == "applied"
-        assert "  literal-text: applied (10)" in report.summary()
-
-    def test_brackets_stay_text_rather_than_links(self) -> None:
-        result, report, _warnings = self.convert_reported(
-            [
-                paragraph("Set bit[3](W1C) and see [note]."),
-                numbered("Clear field[7:0](RW) first."),
-                numbered("Done"),
-            ],
-            extras={"word/numbering.xml": numbering_xml()},
-        )
-        parsed = _reference.pandoc_html(result, self.pandoc)
-        assert _validation.collect_references(parsed).links == []
-        visible = "".join(parsed.itertext())
-        for literal in ("Set bit[3](W1C) and see [note].", "Clear field[7:0](RW) first."):
-            assert literal in visible
-        assert report.status("lists") == "applied"
-        assert report.status("checks") == "applied"
-
-    def test_symbol_fonts_and_unclosable_emphasis_keep_lists(self) -> None:
-        def styled(text: str, *, font: str | None = None, bold: bool = False) -> ET.Element:
-            run = _ooxml.word_run(text)
-            properties = ET.Element(W + "rPr")
-            if bold:
-                ET.SubElement(properties, W + "b")
-            if font is not None:
-                ET.SubElement(properties, W + "rFonts", {W + "ascii": font, W + "hAnsi": font})
-            run.insert(0, properties)
-            return run
-
-        def line(*runs: ET.Element, item: bool = False) -> ET.Element:
-            result = numbered("") if item else paragraph()
-            for run in result.findall(W + "r"):
-                result.remove(run)
-            result.extend(runs)
-            return result
-
-        check = styled("\u00fc", font="Wingdings")
-        result, report, warnings = self.convert_reported(
-            [
-                line(_ooxml.word_run("Passed "), check),
-                line(_ooxml.word_run("Reviewed "), copy.deepcopy(check), item=True),
-                line(styled("Note:", bold=True), _ooxml.word_run("next"), item=True),
-                line(_ooxml.word_run("A "), styled("\u00ae", font="Symbol"), _ooxml.word_run(" B")),
-            ],
-            extras={"word/numbering.xml": numbering_xml()},
-        )
-        assert "Passed ✓\n" in result
-        assert "Reviewed ✓" in result
-        assert "A → B" in result
-        assert "ü" not in result
-        assert "<strong>Note:</strong>next" in result
-        assert report.status("lists") == "applied"
-        assert "  symbols: applied (3)" in report.summary()
-        assert "lists:" not in warnings
-
-    def test_vml_text_boxes_in_list_items_keep_the_list(self) -> None:
-        # Pandoc splits a paragraph around a VML text box; MarkItDown puts its text after.
-        item = numbered("Lead ")
-        item.extend(list(text_box("Box label", legacy=True)))
-        item.append(_ooxml.word_run(" tail"))
-        result, report, _warnings = self.convert_reported(
-            [paragraph("Intro"), item, numbered("Beta"), paragraph("Outro")],
-            extras={"word/numbering.xml": numbering_xml()},
-        )
-        assert report.status("lists") == "applied"
-        assert re.search(r"7\.\s+Lead tail\n\nBox label\n\n8\.\s+Beta\n", result)
-
-    def test_lists_inside_tables_keep_word_numbers(self) -> None:
-        write_docx(
-            self.source,
-            [
-                table(
-                    row(cell("Header"), header=True),
-                    row(cell(numbered("Seven"), numbered("Eight"))),
-                    columns=1,
-                ),
-            ],
-            extras={"word/numbering.xml": numbering_xml()},
-        )
-        _pipeline.convert_docx(self.source)
-        content = self.source.with_suffix(".md").read_text(encoding="utf-8")
-        assert "| 7. Seven<br>8. Eight |" in content
-
-    def test_multiple_empty_headerless_and_nested_tables(self) -> None:
-        nested = table(row(cell("nested")), columns=1)
-        result, stats = self.convert(
-            [
-                paragraph("Before"),
-                table(
-                    row(cell(""), cell("")), row(cell("data"), cell("")), row(cell(""), cell(""))
-                ),
-                table(),
-                table(row(cell(""), cell(""))),
-                table(row(cell("Outer", nested), cell("Tail"))),
-                paragraph("After"),
-            ]
-        )
-        parsed = _reference.pandoc_html(result, self.pandoc)
-        tables = list(parsed.iter("table"))
-        assert len(tables) == 5
-        # The first table's empty rows go, so its data row leads a Markdown table.
-        assert [len(_tables.html_rows(item)) for item in tables] == [1, 0, 1, 1, 1]
-        assert stats["tables"] == 5
-        assert len(list(parsed.iter("thead"))) == 1
-        assert "nested" in result
-        assert "Before" in result
-        assert "After" in result
-
-    def test_rows_with_grid_gaps_keep_their_word_cells(self) -> None:
-        # Pandoc writes an empty cell per grid column for gridBefore and pads short rows.
-        def gapped(before: int, after: int, *texts: str) -> ET.Element:
-            result = row(*(cell(text) for text in texts))
-            properties = ET.Element(W + "trPr")
-            for name, value in (("gridBefore", before), ("gridAfter", after)):
-                if value:
-                    ET.SubElement(properties, W + name, {W + "val": str(value)})
-            result.insert(0, properties)
-            return result
-
-        result, report, warnings = self.convert_reported(
-            [
-                table(
-                    row(cell("a"), cell("b"), cell("c")),
-                    gapped(2, 0, "z"),
-                    gapped(0, 2, "x"),
-                    gapped(0, 0, "p", "q"),
-                    columns=3,
-                )
-            ]
-        )
-        assert report.status("tables") == "applied"
-        assert "tables:" not in warnings
-        shape = [
+    )
+    assert report.status("tables") == "applied"
+    assert "tables:" not in warnings
+    shapes = [
+        [
             [(node.get("colspan", "1"), "".join(node.itertext())) for node in tr]
-            for tr in _tables.html_rows(
-                next(_reference.pandoc_html(result, self.pandoc).iter("table"))
+            for tr in _tables.html_rows(rendered)
+        ]
+        for rendered in _reference.pandoc_html(result, pandoc).iter("table")
+    ]
+    assert shapes == [
+        [
+            [("1", "h1"), ("1", "h2"), ("1", "h3")],
+            [("1", "a"), ("1", "b")],
+            [("1", "x"), ("1", "y"), ("1", "z")],
+        ],
+        [[("2", "Title")], [("1", "p"), ("1", "q"), ("1", "r")]],
+    ]
+
+
+def test_a_blank_header_row_goes_and_the_next_row_leads(convert: Converter, pandoc: str) -> None:
+    result, _stats = convert(
+        [
+            table(
+                row(cell(""), cell(""), header=True),
+                row(cell("A | B"), cell("first", "", "second")),
+                row(cell(""), cell("")),
+            ),
+        ]
+    )
+    assert "<table" not in result
+    # The row that leads is the header, whose paragraphs become spaces.
+    assert r"| A \| B | first second |" in result
+    parsed = _reference.pandoc_html(result, pandoc)
+    actual = next(parsed.iter("table"))
+    assert len(_tables.html_rows(actual)) == 1
+
+
+def test_nonempty_header_uses_editable_multiline_pipe_table(
+    convert: Converter, pandoc: str
+) -> None:
+    result, stats = convert(
+        [
+            table(
+                row(cell("Name"), cell("Details"), header=True),
+                row(cell("A | B"), cell("first", "", "second")),
+                row(cell(""), cell("")),
+            ),
+        ]
+    )
+    assert "| Name | Details |" in result
+    assert "| --- | --- |" in result
+    assert r"A \| B" in result
+    assert "first<br><br>second" in result
+    assert stats["multiline_tables"] == 1
+    assert len(list(_reference.pandoc_html(result, pandoc).iter("tr"))) == 2
+
+
+def test_aligned_word_cells_have_plain_separators_without_changing_literal_values(
+    convert: Converter, pandoc: str
+) -> None:
+    headers: list[ET.Element] = []
+    for alignment in ("left", "center", "right"):
+        heading = paragraph(alignment.title())
+        props = ET.Element(W + "pPr")
+        ET.SubElement(props, W + "jc", {W + "val": alignment})
+        heading.insert(0, props)
+        headers.append(cell(heading))
+    result, _stats = convert(
+        [
+            table(
+                row(*headers, header=True),
+                row(cell(":---:"), cell("---:"), cell(":---")),
+                columns=3,
             )
         ]
-        assert shape == [
-            [("1", "a"), ("1", "b"), ("1", "c")],
-            [("2", ""), ("1", "z")],
-            [("1", "x"), ("2", "")],
-            [("1", "p"), ("1", "q")],
+    )
+    assert "| Left | Center | Right |\n| --- | --- | --- |\n" in result
+    assert "| :---: | ---: | :--- |\n" in result
+    assert "text-align" not in _reference.html_element(_reference.pandoc_html(result, pandoc))
+
+
+def test_signal_identifiers_are_readable_in_prose_and_table_cells(convert: Converter) -> None:
+    result, _stats = convert(
+        [
+            paragraph("Signal _ctl_s_ready is low."),
+            table(row(cell("Signal")), row(cell("_ctl_s_ready")), columns=1),
         ]
+    )
+    assert "Signal _ctl_s_ready is low." in result
+    assert "| _ctl_s_ready |" in result
+    assert r"\_ctl_s_ready" not in result
 
-    def test_rows_wider_than_the_table_grid_keep_every_cell(self) -> None:
-        # Pandoc drops the cells beyond w:tblGrid, which Word tolerates.
-        result, report, warnings = self.convert_reported(
-            [
-                table(
-                    row(cell("a"), cell("b"), cell("c")),
-                    row(cell("x"), cell("y"), cell("z")),
-                    columns=2,
-                )
-            ]
-        )
-        assert report.status("tables") == "applied"
-        assert "tables:" not in warnings
-        parsed = next(_reference.pandoc_html(result, self.pandoc).iter("table"))
-        assert [["".join(node.itertext()) for node in tr] for tr in _tables.html_rows(parsed)] == [
-            ["a", "b", "c"],
-            ["x", "y", "z"],
+
+def test_an_all_empty_table_keeps_its_first_row_after_splitting(
+    convert: Converter, tmp_path: Path, pandoc: str
+) -> None:
+    convert(
+        [
+            paragraph("Tables.", "Heading1"),
+            table(row(cell(""), cell("")), row(cell(""), cell("")), row(cell(""), cell(""))),
+        ],
+        split_depth=6,
+    )
+    content = (tmp_path / "Synthetic Guide" / "01-tables.md").read_text(encoding="utf-8")
+    assert len(list(_reference.pandoc_html(content, pandoc).iter("tr"))) == 1
+
+
+def test_zero_cell_rows_survive_actual_converter_streams(convert: Converter, pandoc: str) -> None:
+    result, _stats = convert(
+        [
+            table(row(), row(cell("A"), cell("B")), row()),
+            paragraph("Between"),
+            table(row(), row()),
         ]
+    )
+    tables = _reference.pandoc_html(result, pandoc).iter("table")
+    # Rows without cells show nothing, so they go unless no other row would be left.
+    assert [[len(item) for item in _tables.html_rows(actual)] for actual in tables] == [
+        [2],
+        [0],
+    ]
 
-    def test_a_narrow_first_body_row_keeps_every_table_cell(self) -> None:
-        # Pandoc takes a table's columns from its first body row and drops the rest.
-        title = row(cell("Title", colspan=2))
-        result, report, warnings = self.convert_reported(
-            [
-                table(
-                    row(cell("h1"), cell("h2"), cell("h3"), header=True),
-                    row(cell("a"), cell("b")),
-                    row(cell("x"), cell("y"), cell("z")),
-                    columns=3,
-                ),
-                table(title, row(cell("p"), cell("q"), cell("r")), columns=3),
-            ]
-        )
-        assert report.status("tables") == "applied"
-        assert "tables:" not in warnings
-        shapes = [
-            [
-                [(node.get("colspan", "1"), "".join(node.itertext())) for node in tr]
-                for tr in _tables.html_rows(rendered)
-            ]
-            for rendered in _reference.pandoc_html(result, self.pandoc).iter("table")
-        ]
-        assert shapes == [
-            [
-                [("1", "h1"), ("1", "h2"), ("1", "h3")],
-                [("1", "a"), ("1", "b")],
-                [("1", "x"), ("1", "y"), ("1", "z")],
-            ],
-            [[("2", "Title")], [("1", "p"), ("1", "q"), ("1", "r")]],
-        ]
 
-    def test_a_blank_header_row_goes_and_the_next_row_leads(self) -> None:
-        result, _stats = self.convert(
-            [
-                table(
-                    row(cell(""), cell(""), header=True),
-                    row(cell("A | B"), cell("first", "", "second")),
-                    row(cell(""), cell("")),
-                ),
-            ]
-        )
-        assert "<table" not in result
-        # The row that leads is the header, whose paragraphs become spaces.
-        assert r"| A \| B | first second |" in result
-        parsed = _reference.pandoc_html(result, self.pandoc)
-        actual = next(parsed.iter("table"))
-        assert len(_tables.html_rows(actual)) == 1
-
-    def test_nonempty_header_uses_editable_multiline_pipe_table(self) -> None:
-        result, stats = self.convert(
-            [
-                table(
-                    row(cell("Name"), cell("Details"), header=True),
-                    row(cell("A | B"), cell("first", "", "second")),
-                    row(cell(""), cell("")),
-                ),
-            ]
-        )
-        assert "| Name | Details |" in result
-        assert "| --- | --- |" in result
-        assert r"A \| B" in result
-        assert "first<br><br>second" in result
-        assert stats["multiline_tables"] == 1
-        assert len(list(_reference.pandoc_html(result, self.pandoc).iter("tr"))) == 2
-
-    def test_aligned_word_cells_have_plain_separators_without_changing_literal_values(self) -> None:
-        headers: list[ET.Element] = []
-        for alignment in ("left", "center", "right"):
-            heading = paragraph(alignment.title())
-            props = ET.Element(W + "pPr")
-            ET.SubElement(props, W + "jc", {W + "val": alignment})
-            heading.insert(0, props)
-            headers.append(cell(heading))
-        result, _stats = self.convert(
-            [
-                table(
-                    row(*headers, header=True),
-                    row(cell(":---:"), cell("---:"), cell(":---")),
-                    columns=3,
-                )
-            ]
-        )
-        assert "| Left | Center | Right |\n| --- | --- | --- |\n" in result
-        assert "| :---: | ---: | :--- |\n" in result
-        assert "text-align" not in _reference.html_element(
-            _reference.pandoc_html(result, self.pandoc)
-        )
-
-    def test_signal_identifiers_are_readable_in_prose_and_table_cells(self) -> None:
-        result, _stats = self.convert(
-            [
-                paragraph("Signal _ctl_s_ready is low."),
-                table(row(cell("Signal")), row(cell("_ctl_s_ready")), columns=1),
-            ]
-        )
-        assert "Signal _ctl_s_ready is low." in result
-        assert "| _ctl_s_ready |" in result
-        assert r"\_ctl_s_ready" not in result
-
-    def test_an_all_empty_table_keeps_its_first_row_after_splitting(self) -> None:
-        self.convert(
-            [
-                paragraph("Tables.", "Heading1"),
-                table(row(cell(""), cell("")), row(cell(""), cell("")), row(cell(""), cell(""))),
-            ],
-            split_depth=6,
-        )
-        content = (self.root / "Synthetic Guide" / "01-tables.md").read_text(encoding="utf-8")
-        assert len(list(_reference.pandoc_html(content, self.pandoc).iter("tr"))) == 1
-
-    def test_zero_cell_rows_survive_actual_converter_streams(self) -> None:
-        result, _stats = self.convert(
-            [
-                table(row(), row(cell("A"), cell("B")), row()),
-                paragraph("Between"),
-                table(row(), row()),
-            ]
-        )
-        tables = _reference.pandoc_html(result, self.pandoc).iter("table")
-        # Rows without cells show nothing, so they go unless no other row would be left.
-        assert [[len(item) for item in _tables.html_rows(actual)] for actual in tables] == [
-            [2],
-            [0],
-        ]
-
-    def test_empty_rows_are_omitted_and_reported(self) -> None:
-        marked = row(cell(bookmark("_RowMark", "")), cell(""))
-        result, report, _warnings = self.convert_reported(
-            [
-                paragraph("Tables", "Heading1"),
-                table(
-                    row(cell(""), cell("")),
-                    row(cell("Name"), cell("Value")),
-                    row(cell(""), cell("")),
-                    row(cell("a"), cell("1")),
-                    marked,
-                ),
-                table(
-                    row(cell("Field"), cell("Notes")),
-                    row(cell(""), cell("")),
-                    row(cell(""), cell("")),
-                ),
-                hyperlink("Back to the row", anchor="_RowMark"),
-            ]
-        )
-        assert "| Name | Value |\n| --- | --- |\n| a | 1 |\n" in result
-        # A template's fill-in row stays.
-        assert "| Field | Notes |\n| --- | --- |\n| | |\n" in result
-        assert "<table" not in result
-        assert "[Back to the row](#tables)" in result
-        assert "  tables: applied (2 Markdown, 4 empty row(s) omitted)" in report.summary()
-        assert report.status("checks") == "applied"
-
-    def test_legacy_horizontal_merge_is_source_aware(self) -> None:
-        first, continuation = cell("Merged"), cell("")
-        first_props = first.find(W + "tcPr")
-        continuation_props = continuation.find(W + "tcPr")
-        assert first_props is not None
-        assert continuation_props is not None
-        ET.SubElement(first_props, W + "hMerge", {W + "val": "restart"})
-        ET.SubElement(continuation_props, W + "hMerge")
-        result, _stats = self.convert(
-            [
-                table(row(first, continuation, header=True), row(cell("left"), cell("right"))),
-            ]
-        )
-        assert 'colspan="2"' in result
-        assert len(list(_reference.pandoc_html(result, self.pandoc).iter("tr"))) == 2
-
-    def test_merged_rows_and_source_caption_survive(self) -> None:
-        result, _stats = self.convert(
-            [
-                table(
-                    row(cell("Header", colspan=2), header=True),
-                    row(cell("Shared", merge="restart"), cell("one")),
-                    row(cell("", merge="continue"), cell("two")),
-                    caption="A source caption",
-                ),
-            ]
-        )
-        assert 'colspan="2"' in result
-        assert 'rowspan="2"' in result
-        assert "<caption>A source caption</caption>" in result
-        assert len(list(_reference.pandoc_html(result, self.pandoc).iter("tr"))) == 3
-
-    def test_bookmark_and_parenthesized_identity(self) -> None:
-        result, stats = self.convert(
-            [
-                bookmark("_Ref_(detail)", "Destination.", "Heading3"),
-                hyperlink("See it", anchor="_Ref_(detail)"),
-            ]
-        )
-        assert "<a " not in result
-        assert "[See it](#destination)" in result
-        assert "### Destination\n" in result
-        assert stats["bookmarks"] == 1
-
-    def test_bookmark_matching_its_heading_id_needs_no_html_workaround(self) -> None:
-        result, _stats = self.convert(
-            [
-                bookmark("title", "Title", "Heading1"),
-                hyperlink("Go", anchor="title"),
-            ],
-            split_depth=1,
-        )
-        assert "Title" in result
-        child = (self.root / "Synthetic Guide" / "01-title.md").read_text(encoding="utf-8")
-        parsed = _validation.collect_references(_reference.pandoc_html(child, self.pandoc))
-        assert parsed.anchors.count("title") == 1
-        assert "# Title" in child
-        assert "[Go](#title)" in child
-        assert "<h1" not in child
-        assert "<a " not in child
-
-    def test_word_bookmark_wins_over_a_different_heading_id(self) -> None:
-        result, _stats = self.convert(
-            [
-                paragraph("Title", "Heading1"),
-                hyperlink("Real destination", anchor="title"),
-                bookmark("title", "Actual target", "Heading1"),
-            ]
-        )
-        assert "[Real destination](#actual-target)" in result
-        assert "<a " not in result
-        assert _validation.collect_references(
-            _reference.pandoc_html(result, self.pandoc)
-        ).anchors == ["title", "actual-target"]
-
-    def test_missing_word_bookmark_is_not_replaced_by_matching_heading_slug(self) -> None:
-        result, report, warnings = self.convert_reported(
-            [
-                paragraph("Title", "Heading1"),
-                hyperlink("Missing real bookmark", anchor="title"),
-            ]
-        )
-        assert "Missing real bookmark" in result
-        assert "](#title)" not in result
-        assert report.status("links") == "not applied"
-        assert "link to missing Word bookmark 'title'; kept as plain text" in warnings
-
-    def test_unicode_bookmark_and_output_name(self) -> None:
-        output = self.root / "R\u00e9sum\u00e9.v2.md"
-        result, _stats = self.convert(
-            [
-                bookmark("_R\u00e9sum\u00e9", "R\u00e9sum\u00e9. 1", "Heading3"),
-                hyperlink("Go", anchor="_R\u00e9sum\u00e9"),
-                image(),
-            ],
-            output=output,
-            relations=(("image", "image", "media/image.png", "Internal"),),
-            media={"image.png": PNG},
-        )
-        assert "<a " not in result
-        assert "#r%C3%A9sum%C3%A9-1" in result
-        assert (
-            "résumé-1"
-            in _validation.collect_references(_reference.pandoc_html(result, self.pandoc)).anchors
-        )
-        assert (self.root / ".images" / "Résumé.v2" / "image.png").is_file()
-
-    def test_bookmark_in_table_and_table_link(self) -> None:
-        result, _stats = self.convert(
-            [
-                bookmark("_Top", "Title.", "Heading1"),
-                table(
-                    row(cell("Header"), header=True),
-                    row(cell(bookmark("_Cell", "Target"), hyperlink("Back", anchor="_Top"))),
-                    columns=1,
-                ),
-                hyperlink("Cell", anchor="_Cell"),
-            ]
-        )
-        assert "<a " not in result
-        assert "<table" not in result
-        assert "| Header |" in result
-        assert "[Cell](#title)" in result
-        assert "[Back](#title)" in result
-
-    def test_complex_table_bookmarks_use_section_links_without_anchor_wrappers(self) -> None:
-        result, _stats = self.convert(
-            [
-                paragraph("1. Overview", "Heading1"),
-                table(
-                    row(cell(bookmark("_Cell", "Merged target"), colspan=2)),
-                    row(cell(hyperlink("Return", anchor="_Cell")), cell("Data")),
-                ),
-                hyperlink("Go to table", anchor="_Cell"),
-            ]
-        )
-        assert "<table" in result
-        assert 'href="#1-overview"' in result
-        assert "[Go to table](#1-overview)" in result
-        assert 'id="_Cell"' not in result
-        assert 'name="_Cell"' not in result
-        assert "<span" not in result
-
-    def test_preamble_bookmark_targets_document_top_across_split_pages(self) -> None:
-        for depth in (0, 1):
-            with self.subTest(depth=depth), contextlib.redirect_stderr(io.StringIO()):
-                output = self.root / f"preamble-{depth}" / "guide.md"
-                result, _stats = self.convert(
-                    [
-                        bookmark("_Before", "Opening text"),
-                        hyperlink("Opening", anchor="_Before"),
-                        paragraph("Body", "Heading1"),
-                        hyperlink("Top", anchor="_Before"),
-                    ],
-                    output=output,
-                    split_depth=depth,
-                )
-                assert "[Opening](#)" in result
-                assert "<a " not in result
-                if depth:
-                    child = (output.parent / "guide" / "01-body.md").read_text(encoding="utf-8")
-                    assert "[Top](../guide.md)" in child
-                else:
-                    assert "[Top](#)" in result
-                    assert result.startswith("Opening text")
-
-    def test_only_referenced_nonheading_bookmarks_report_retargeting(self) -> None:
-        write_docx(
-            self.source,
-            [
-                bookmark("_Before", "Preamble"),
-                bookmark("_Exact", "1. Overview", "Heading1"),
-                bookmark("_Body", "Body target"),
-                bookmark("_Unused", "No incoming links"),
-                hyperlink("Preamble", anchor="_Before"),
-                hyperlink("Section", anchor="_Exact"),
-                hyperlink("Body", anchor="_Body"),
-            ],
-        )
-        diagnostics = self.root / "diagnostics"
-        stderr = io.StringIO()
-        with contextlib.redirect_stderr(stderr):
-            _pipeline.convert_docx(self.source, keep_intermediates=diagnostics)
-        warnings = stderr.getvalue()
-        assert "'_Before' now links to the document top" in warnings
-        assert "'_Body' now links to its containing section #1-overview" in warnings
-        assert "_Unused" not in warnings
-        assert "_Exact" not in warnings
-        report = json.loads((diagnostics / "diagnostics.json").read_text(encoding="utf-8"))
-        assert report["bookmark_targets"]["_Exact"]["kind"] == "heading"
-        assert report["bookmark_targets"]["_Body"]["kind"] == "section"
-        assert report["bookmark_targets"]["_Before"]["kind"] == "document_top"
-
-    def test_duplicate_heading_links_use_final_page_local_ids(self) -> None:
-        for depth in (0, 1, 2):
-            with self.subTest(depth=depth):
-                output = self.root / f"duplicates-{depth}" / "guide.md"
-                result, _stats = self.convert(
-                    [
-                        paragraph("First", "Heading1"),
-                        bookmark("_One", "2. Same & Detail", "Heading2"),
-                        hyperlink("Second target", anchor="_Two"),
-                        paragraph("Second", "Heading1"),
-                        bookmark("_Two", "2. Same & Detail", "Heading2"),
-                        hyperlink("First target", anchor="_One"),
-                    ],
-                    output=output,
-                    split_depth=depth,
-                )
-                if depth == 0:
-                    assert "[Second target](#2-same--detail-1)" in result
-                    assert "[First target](#2-same--detail)" in result
-                elif depth == 1:
-                    first = (output.parent / "guide" / "01-first.md").read_text(encoding="utf-8")
-                    second = (output.parent / "guide" / "02-second.md").read_text(encoding="utf-8")
-                    assert "[Second target](02-second.md#2-same--detail)" in first
-                    assert "[First target](01-first.md#2-same--detail)" in second
-                else:
-                    first = (
-                        output.parent / "guide" / "01-first" / "01-2-same-detail.md"
-                    ).read_text(encoding="utf-8")
-                    assert (
-                        "[Second target](../02-second/01-2-same-detail.md#2-same--detail)" in first
-                    )
-
-    def test_markdown_caption_does_not_change_word_section_mapping(self) -> None:
-        result, _stats = self.convert(
-            [
-                bookmark("_Heading", "Heading", "Heading1"),
-                table(row(cell("Header")), columns=1, caption="# Not a heading"),
-                hyperlink("Actual section", anchor="_Heading"),
-            ]
-        )
-        assert "<table" not in result
-        parsed = _reference.pandoc_html(result, self.pandoc)
-        assert _validation.collect_references(parsed).headings == [1]
-        assert "# Not a heading" in "".join(parsed.itertext())
-        assert "[Actual section](#heading)" in result
-
-    def test_link_to_missing_bookmark_is_kept_as_text_and_summarized(self) -> None:
-        output = self.root / "output.md"
-        output.write_text("old", encoding="utf-8")
-        result, report, _warnings = self.convert_reported(
-            [hyperlink("Missing", anchor="_Missing")], output=output
-        )
-        assert result == "Missing\n"
-        summary = report.summary()
-        assert summary[0] == "docx-to-md: transforms (baseline: MarkItDown)"
-        assert "  alignment: applied" in summary
-        assert "  links: not applied (1)" in summary
-        assert "    not applied (1): link to a missing Word bookmark; kept as plain text" in summary
-        assert "  checks: passed" in summary
-        assert "_Missing" not in "\n".join(summary)
-
-    def test_cross_references_to_missing_bookmarks_are_kept_as_text(self) -> None:
-        def reference(anchor: str, value: str, *, simple: bool = False) -> ET.Element:
-            result = paragraph("See ")
-            result.extend(page_reference(anchor, value, simple=simple))
-            return result
-
-        result, report, warnings = self.convert_reported(
-            [
-                bookmark("_Target", "Target", "Heading1"),
-                table(
-                    row(cell(reference("_Missing", "3")), cell(reference("_Target", "4"))),
-                    row(cell(reference("_Gone", "5", simple=True)), cell("Plain")),
-                ),
-                reference("_Missing", "6"),
-            ]
-        )
-        assert "| See 3 | See [4](#target) |" in result
-        assert "| See 5 | Plain |" in result
-        assert "See 6" in result
-        assert dict(report.records["links"].skipped) == {
-            "link to a missing Word bookmark; kept as plain text": 3
-        }
-        assert (
-            "links: cross-reference to missing Word bookmark '_Gone'; kept as plain text"
-            in warnings
-        )
-        assert report.status("pages") == "applied"
-        assert report.status("checks") == "applied"
-
-    def test_simple_fields_keep_their_cached_results(self) -> None:
-        def field(instruction: str, *children: ET.Element) -> ET.Element:
-            result = ET.Element(W + "fldSimple", {W + "instr": instruction})
-            result.extend(children)
-            return result
-
-        def line(*parts: str | ET.Element) -> ET.Element:
-            result = ET.Element(W + "p")
-            result.extend(
-                _ooxml.word_run(part) if isinstance(part, str) else part for part in parts
-            )
-            return result
-
-        def fail(*_arguments: object) -> NoReturn:
-            raise _models.ConversionError("synthetic alignment failure")
-
-        figure = field(
-            " SEQ Figure \\* ARABIC ",
-            ET.Element(W + "bookmarkStart", {W + "id": "5", W + "name": "_RefFigure"}),
-            _ooxml.word_run("3"),
-            ET.Element(W + "bookmarkEnd", {W + "id": "5"}),
-        )
-        body = [
-            paragraph("Results", "Heading1"),
-            line(
-                "Table ",
-                field(" STYLEREF 1 \\s ", _ooxml.word_run("2")),
-                "\u2011",
-                field(" SEQ Table \\* ARABIC \\s 1 ", _ooxml.word_run("1")),
-                ": Registers",
+def test_empty_rows_are_omitted_and_reported(convert: Converter) -> None:
+    marked = row(cell(bookmark("_RowMark", "")), cell(""))
+    result, report, _warnings = convert.reported(
+        [
+            paragraph("Tables", "Heading1"),
+            table(
+                row(cell(""), cell("")),
+                row(cell("Name"), cell("Value")),
+                row(cell(""), cell("")),
+                row(cell("a"), cell("1")),
+                marked,
             ),
-            line("Figure ", figure, ": Pipeline"),
-            line("See ", field(" REF _RefFigure \\h ", _ooxml.word_run("Figure 3")), "."),
-            hyperlink("Back to the figure", anchor="_RefFigure"),
+            table(
+                row(cell("Field"), cell("Notes")),
+                row(cell(""), cell("")),
+                row(cell(""), cell("")),
+            ),
+            hyperlink("Back to the row", anchor="_RowMark"),
         ]
-        for aligned in (True, False):
-            with self.subTest(aligned=aligned), contextlib.ExitStack() as stack:
-                if not aligned:
-                    stack.enter_context(patch.object(_pipeline, "_aligned_markdown", fail))
-                result, report, _warnings = self.convert_reported(
-                    body, output=self.root / f"fields-{aligned}.md"
-                )
-                for text in ("Table 2\u20111: Registers", "Figure 3: Pipeline", "See Figure 3."):
-                    assert f"\n{text}\n" in result
-                assert report.status("fields") == "applied"
-                assert "  fields: applied (4 simple field(s) kept)" in report.summary()
-                if aligned:
-                    assert "[Back to the figure](#results)" in result
-                    assert not report.records["bookmarks"].skipped
-                    assert report.status("checks") == "applied"
-                    assert not report.records["checks"].skipped
+    )
+    assert "| Name | Value |\n| --- | --- |\n| a | 1 |\n" in result
+    # A template's fill-in row stays.
+    assert "| Field | Notes |\n| --- | --- |\n| | |\n" in result
+    assert "<table" not in result
+    assert "[Back to the row](#tables)" in result
+    assert "  tables: applied (2 Markdown, 4 empty row(s) omitted)" in report.summary()
+    assert report.status("checks") == "applied"
 
-    def test_bookmarks_in_leading_title_paragraphs_keep_their_position(self) -> None:
-        # Pandoc reads leading Title and Subtitle paragraphs as metadata, outside its body.
-        result, report, warnings = self.convert_reported(
-            [
-                paragraph(""),
-                bookmark("_Hlk1", "Document title", "Title"),
-                paragraph("Document subtitle", "Subtitle"),
-                paragraph("Body"),
-                hyperlink("Back to the title", anchor="_Hlk1"),
-            ],
-            styles=(word_style("Title"), word_style("Subtitle")),
-        )
-        assert report.status("checks") == "applied"
-        assert not report.records["checks"].skipped
-        assert report.status("bookmarks") == "applied"
-        assert re.search(
-            r"Document title\n\nDocument subtitle\n\nBody\n\n\[Back to the title\]\(#", result
-        )
-        assert "checks:" not in warnings
 
-    def test_word_line_breaks_start_new_paragraphs(self) -> None:
-        # MarkItDown strips the trailing spaces of its hard breaks, so Word's line breaks
-        # are restored, as paragraph breaks; one in a heading stays a space.
-        def broken(*parts: ET.Element | str, style: str | None = None) -> ET.Element:
-            result = paragraph("", style)
-            for run in result.findall(W + "r"):
-                result.remove(run)
-            for index, part in enumerate(parts):
-                if index:
-                    ET.SubElement(ET.SubElement(result, W + "r"), W + "br")
-                if isinstance(part, str):
-                    result.append(_ooxml.word_run(part))
-                else:
-                    result.extend(list(part))
-            return result
+def test_legacy_horizontal_merge_is_source_aware(convert: Converter, pandoc: str) -> None:
+    first, continuation = cell("Merged"), cell("")
+    first_props = first.find(W + "tcPr")
+    continuation_props = continuation.find(W + "tcPr")
+    assert first_props is not None
+    assert continuation_props is not None
+    ET.SubElement(first_props, W + "hMerge", {W + "val": "restart"})
+    ET.SubElement(continuation_props, W + "hMerge")
+    result, _stats = convert(
+        [
+            table(row(first, continuation, header=True), row(cell("left"), cell("right"))),
+        ]
+    )
+    assert 'colspan="2"' in result
+    assert len(list(_reference.pandoc_html(result, pandoc).iter("tr"))) == 2
 
-        result, report, _warnings = self.convert_reported(
-            [
-                broken("first line", "second line"),
-                broken("Heading top", "Heading bottom", style="Heading1"),
-                broken(image("art"), hyperlink("Source", relation="site")),
-            ],
-            relations=(
-                ("art", "image", "media/art.png", "Internal"),
-                ("site", "hyperlink", "https://example.test/a?b=1&c=2", "External"),
+
+def test_merged_rows_and_source_caption_survive(convert: Converter, pandoc: str) -> None:
+    result, _stats = convert(
+        [
+            table(
+                row(cell("Header", colspan=2), header=True),
+                row(cell("Shared", merge="restart"), cell("one")),
+                row(cell("", merge="continue"), cell("two")),
+                caption="A source caption",
             ),
-            media={"art.png": PNG},
-        )
-        assert "first line\n\nsecond line\n" in result
-        assert "# Heading top Heading bottom\n" in result
-        assert re.search(
-            r"!\[Diagram\]\(\.images/[^)\n]+\)\n\n\[Source\]\(https://example\.test/a\?b=1&amp;c=2\)",
-            result,
-        )
-        assert "\\\n" not in result
-        assert "  line-breaks: partial (2 applied, 1 not applied)" in report.summary()
-        assert report.status("checks") == "applied"
-        assert not report.records["checks"].skipped
+        ]
+    )
+    assert 'colspan="2"' in result
+    assert 'rowspan="2"' in result
+    assert "<caption>A source caption</caption>" in result
+    assert len(list(_reference.pandoc_html(result, pandoc).iter("tr"))) == 3
 
-    def test_line_breaks_at_block_ends_leave_no_backslash(self) -> None:
-        def trailing(content: ET.Element) -> ET.Element:
-            ET.SubElement(ET.SubElement(content, W + "r"), W + "br")
-            return content
 
-        result, report, warnings = self.convert_reported(
-            [
-                paragraph("Intro"),
-                trailing(numbered("Alpha")),
-                numbered("Beta"),
-                trailing(paragraph("Plain")),
-                trailing(bookmark("_Ref1", "Marked")),
-                hyperlink("Back", anchor="_Ref1"),
-            ],
-            extras={"word/numbering.xml": numbering_xml()},
-        )
-        assert "\\" not in result
-        assert re.search(r"7\.\s+Alpha\n+8\.\s+Beta\n\nPlain\n\nMarked\n", result)
-        assert report.status("lists") == "applied"
-        assert "<ol" not in result
-        assert "lists:" not in warnings
+def test_bookmark_and_parenthesized_identity(convert: Converter) -> None:
+    result, stats = convert(
+        [
+            bookmark("_Ref_(detail)", "Destination.", "Heading3"),
+            hyperlink("See it", anchor="_Ref_(detail)"),
+        ]
+    )
+    assert "<a " not in result
+    assert "[See it](#destination)" in result
+    assert "### Destination\n" in result
+    assert stats["bookmarks"] == 1
 
-    def test_stray_field_marks_do_not_stop_markitdown(self) -> None:
-        def fail(*_arguments: object) -> NoReturn:
-            raise _models.ConversionError("synthetic alignment failure")
 
-        stray = paragraph("Before")
-        ET.SubElement(ET.SubElement(stray, W + "r"), W + "fldChar", {W + "fldCharType": "end"})
-        for aligned in (True, False):
-            with self.subTest(aligned=aligned), contextlib.ExitStack() as stack:
-                if not aligned:
-                    stack.enter_context(patch.object(_pipeline, "_aligned_markdown", fail))
-                result, report, _warnings = self.convert_reported(
-                    [stray, paragraph("After")], output=self.root / f"stray-{aligned}.md"
-                )
-                assert "Before\n\nAfter" in result
-                assert "  fields: applied (1 stray field mark(s) removed)" in report.summary()
+def test_bookmark_matching_its_heading_id_needs_no_html_workaround(
+    convert: Converter, tmp_path: Path, pandoc: str
+) -> None:
+    result, _stats = convert(
+        [
+            bookmark("title", "Title", "Heading1"),
+            hyperlink("Go", anchor="title"),
+        ],
+        split_depth=1,
+    )
+    assert "Title" in result
+    child = (tmp_path / "Synthetic Guide" / "01-title.md").read_text(encoding="utf-8")
+    parsed = _validation.collect_references(_reference.pandoc_html(child, pandoc))
+    assert parsed.anchors.count("title") == 1
+    assert "# Title" in child
+    assert "[Go](#title)" in child
+    assert "<h1" not in child
+    assert "<a " not in child
 
-    def test_nested_empty_and_targetless_hyperlinks(self) -> None:
-        nested = hyperlink("Outer ", relation="outer")
-        outer = nested.find(W + "hyperlink")
-        assert outer is not None
-        ET.SubElement(outer, W + "hyperlink", {R + "id": "inner"}).append(_ooxml.word_run("Inner"))
-        result, report, warnings = self.convert_reported(
-            [nested, hyperlink(" ", relation="outer"), hyperlink("Plain")],
-            relations=(
-                ("outer", "hyperlink", "https://example.test/outer", "External"),
-                ("inner", "hyperlink", "https://example.test/inner", "External"),
+
+def test_word_bookmark_wins_over_a_different_heading_id(convert: Converter, pandoc: str) -> None:
+    result, _stats = convert(
+        [
+            paragraph("Title", "Heading1"),
+            hyperlink("Real destination", anchor="title"),
+            bookmark("title", "Actual target", "Heading1"),
+        ]
+    )
+    assert "[Real destination](#actual-target)" in result
+    assert "<a " not in result
+    assert _validation.collect_references(_reference.pandoc_html(result, pandoc)).anchors == [
+        "title",
+        "actual-target",
+    ]
+
+
+def test_missing_word_bookmark_is_not_replaced_by_matching_heading_slug(convert: Converter) -> None:
+    result, report, warnings = convert.reported(
+        [
+            paragraph("Title", "Heading1"),
+            hyperlink("Missing real bookmark", anchor="title"),
+        ]
+    )
+    assert "Missing real bookmark" in result
+    assert "](#title)" not in result
+    assert report.status("links") == "not applied"
+    assert "link to missing Word bookmark 'title'; kept as plain text" in warnings
+
+
+def test_unicode_bookmark_and_output_name(convert: Converter, tmp_path: Path, pandoc: str) -> None:
+    output = tmp_path / "R\u00e9sum\u00e9.v2.md"
+    result, _stats = convert(
+        [
+            bookmark("_R\u00e9sum\u00e9", "R\u00e9sum\u00e9. 1", "Heading3"),
+            hyperlink("Go", anchor="_R\u00e9sum\u00e9"),
+            image(),
+        ],
+        output=output,
+        relations=(("image", "image", "media/image.png", "Internal"),),
+        media={"image.png": PNG},
+    )
+    assert "<a " not in result
+    assert "#r%C3%A9sum%C3%A9-1" in result
+    assert (
+        "résumé-1" in _validation.collect_references(_reference.pandoc_html(result, pandoc)).anchors
+    )
+    assert (tmp_path / ".images" / "Résumé.v2" / "image.png").is_file()
+
+
+def test_bookmark_in_table_and_table_link(convert: Converter) -> None:
+    result, _stats = convert(
+        [
+            bookmark("_Top", "Title.", "Heading1"),
+            table(
+                row(cell("Header"), header=True),
+                row(cell(bookmark("_Cell", "Target"), hyperlink("Back", anchor="_Top"))),
+                columns=1,
             ),
-        )
-        assert result == "[Outer Inner](https://example.test/outer)\n\nPlain\n"
-        summary = report.summary()
-        assert "  links: partial (1 applied, 1 not applied)" in summary
-        assert (
-            "    not applied (1): Word hyperlink nested in another hyperlink; "
-            "its text stays in the outer link" in summary
-        )
-        assert warnings.count("links:") == 1
+            hyperlink("Cell", anchor="_Cell"),
+        ]
+    )
+    assert "<a " not in result
+    assert "<table" not in result
+    assert "| Header |" in result
+    assert "[Cell](#title)" in result
+    assert "[Back](#title)" in result
 
-    def test_underline_stays_but_not_in_links_headings_or_code(self) -> None:
-        def underlined(node: ET.Element) -> ET.Element:
-            for run in node.iter(W + "r"):
-                formatted(run, "u", "single")
-            return node
 
-        body = paragraph_of(
-            _ooxml.word_run("Do "),
-            formatted(_ooxml.word_run("not"), "u", "single"),
-            _ooxml.word_run(" connect."),
-        )
-        code = paragraph_of(
-            _ooxml.word_run("Call "),
-            formatted(code_run("init()"), "u", "single"),
-            _ooxml.word_run(" first."),
-        )
-        must = paragraph_of(
-            _ooxml.word_run("Must "), formatted(_ooxml.word_run("not"), "u", "single")
-        )
-        grid = table(
-            row(cell("Rule"), cell("Link"), header=True),
-            row(cell(must), cell(underlined(hyperlink("Site", relation="site")))),
-        )
-        result, report, _warnings = self.convert_reported(
-            [
-                underlined(paragraph("Overview", "Heading1")),
-                body,
-                underlined(hyperlink("Spec site", relation="site")),
-                code,
-                grid,
-            ],
-            relations=(("site", "hyperlink", "https://example.test/spec", "External"),),
-        )
-        assert (
-            result
-            == "# Overview\n\nDo <u>not</u> connect.\n\n[Spec site](https://example.test/spec)\n\n"
-            "Call `init()` first.\n\n| Rule | Link |\n| --- | --- |\n"
-            "| Must <u>not</u> | [Site](https://example.test/spec) |\n"
-        )
-        assert "  underline: applied (4)" in report.summary()
-
-    def test_screen_tips_become_link_titles_and_double_strikethrough_is_struck(self) -> None:
-        tipped = hyperlink("Spec site", relation="site")
-        link = tipped.find(W + "hyperlink")
-        assert link is not None
-        link.set(W + "tooltip", 'Opens the "specification"')
-        struck = paragraph_of(
-            formatted(_ooxml.word_run("double"), "dstrike"),
-            _ooxml.word_run(" and "),
-            formatted(_ooxml.word_run("single"), "strike"),
-        )
-        result, _report, _warnings = self.convert_reported(
-            [tipped, struck],
-            relations=(("site", "hyperlink", "https://example.test/spec", "External"),),
-        )
-        assert (
-            result == '[Spec site](https://example.test/spec "Opens the \\"specification\\"")\n\n'
-            "~~double~~ and ~~single~~\n"
-        )
-
-    def test_hyperlink_with_a_missing_relationship_still_converts(self) -> None:
-        def fail(*_arguments: object) -> NoReturn:
-            raise _models.ConversionError("synthetic alignment failure")
-
-        for aligned in (True, False):
-            with self.subTest(aligned=aligned), contextlib.ExitStack() as stack:
-                if not aligned:
-                    stack.enter_context(patch.object(_pipeline, "_aligned_markdown", fail))
-                result, report, warnings = self.convert_reported(
-                    [paragraph("Before"), hyperlink("Dangling", relation="gone")],
-                    output=self.root / f"dangling-{aligned}.md",
-                )
-                assert result == "Before\n\nDangling\n"
-                assert (report.records["alignment"].failure is None) == aligned
-                assert dict(report.records["links"].skipped) == {
-                    "Word hyperlink relationship is missing; its target is dropped": 1
-                }
-                assert (
-                    "links: Word hyperlink relationship 'gone' is missing; its target is dropped"
-                    in warnings
-                )
-
-    def test_hyperlink_that_pandoc_splits_keeps_the_markitdown_link(self) -> None:
-        content = hyperlink("Label", relation="site")
-        link = content.find(W + "hyperlink")
-        assert link is not None
-        ET.SubElement(ET.SubElement(link, W + "r"), W + "footnoteReference", {W + "id": "1"})
-        notes = (
-            f'<w:footnotes xmlns:w="{W[1:-1]}"><w:footnote w:id="1"><w:p><w:r>'
-            "<w:t>Note</w:t></w:r></w:p></w:footnote></w:footnotes>"
-        )
-        result, report, _warnings = self.convert_reported(
-            [content],
-            relations=(
-                ("site", "hyperlink", "https://example.test/a", "External"),
-                ("notes", "footnotes", "footnotes.xml", "Internal"),
+def test_complex_table_bookmarks_use_section_links_without_anchor_wrappers(
+    convert: Converter,
+) -> None:
+    result, _stats = convert(
+        [
+            paragraph("1. Overview", "Heading1"),
+            table(
+                row(cell(bookmark("_Cell", "Merged target"), colspan=2)),
+                row(cell(hyperlink("Return", anchor="_Cell")), cell("Data")),
             ),
-            extras={"word/footnotes.xml": notes.encode()},
-        )
-        assert "https://example.test/a" in result
-        assert dict(report.records["links"].skipped) == {
-            "Pandoc rendered N links for one Word hyperlink; kept as MarkItDown converted it": 1
-        }
+            hyperlink("Go to table", anchor="_Cell"),
+        ]
+    )
+    assert "<table" in result
+    assert 'href="#1-overview"' in result
+    assert "[Go to table](#1-overview)" in result
+    assert 'id="_Cell"' not in result
+    assert 'name="_Cell"' not in result
+    assert "<span" not in result
 
-    def test_png_and_svg_do_not_require_office_or_poppler(self) -> None:
-        original = shutil.which
 
-        def forbid_optional(command: str) -> str | None:
-            if command in {"libreoffice", "soffice", "pdftocairo"}:
-                self.fail(f"Unnecessary optional dependency probe: {command}")
-            return original(command)
+@pytest.mark.parametrize(
+    "depth", [pytest.param(0, id="one-page"), pytest.param(1, id="split-pages")]
+)
+def test_preamble_bookmark_targets_document_top_across_split_pages(
+    depth: int, convert: Converter, tmp_path: Path
+) -> None:
+    output = tmp_path / "guide.md"
+    result, _stats = convert(
+        [
+            bookmark("_Before", "Opening text"),
+            hyperlink("Opening", anchor="_Before"),
+            paragraph("Body", "Heading1"),
+            hyperlink("Top", anchor="_Before"),
+        ],
+        output=output,
+        split_depth=depth,
+    )
+    assert "[Opening](#)" in result
+    assert "<a " not in result
+    if depth:
+        child = (tmp_path / "guide" / "01-body.md").read_text(encoding="utf-8")
+        assert "[Top](../guide.md)" in child
+    else:
+        assert "[Top](#)" in result
+        assert result.startswith("Opening text")
 
-        with patch.object(shutil, "which", forbid_optional):
-            result, stats = self.convert(
-                [image("png"), image("svg")],
-                relations=(
-                    ("png", "image", "media/image.png", "Internal"),
-                    ("svg", "image", "media/image.svg", "Internal"),
-                ),
-                media={"image.png": PNG, "image.svg": SVG},
-            )
-        assert ".images/Synthetic%20Guide/image.png" in result
-        assert ".images/Synthetic%20Guide/image.svg" in result
-        assert stats["image_occurrences"] == 2
-        assert (self.root / ".images" / "Synthetic Guide" / "image.png").read_bytes() == PNG
 
-    def test_line_breaks_in_list_items_formatting_and_links(self) -> None:
-        item = numbered("Alpha")
-        ET.SubElement(ET.SubElement(item, W + "r"), W + "br")
-        item.append(_ooxml.word_run("continued"))
-        bold = paragraph("Bold", bold=True)
-        for child in ("br", "t"):
-            run = ET.SubElement(bold, W + "r")
-            ET.SubElement(ET.SubElement(run, W + "rPr"), W + "b")
-            ET.SubElement(run, W + child).text = "text" if child == "t" else None
-        link = hyperlink("Line one", relation="site")
-        anchor = link.find(W + "hyperlink")
-        assert anchor is not None
-        ET.SubElement(ET.SubElement(anchor, W + "r"), W + "br")
-        anchor.append(_ooxml.word_run("Line two"))
-        result, report, _warnings = self.convert_reported(
-            [item, numbered("Beta"), bold, link],
-            relations=(("site", "hyperlink", "https://example.test/", "External"),),
-            extras={"word/numbering.xml": numbering_xml()},
-        )
-        assert (
-            result == "7. Alpha\n\n    continued\n\n8. Beta\n\n**Bold**\n\n**text**\n\n"
-            "[Line one Line two](https://example.test/)\n"
-        )
-        assert report.status("lists") == "applied"
-        assert report.status("checks") == "applied"
+def test_only_referenced_nonheading_bookmarks_report_retargeting(
+    source: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_docx(
+        source,
+        [
+            bookmark("_Before", "Preamble"),
+            bookmark("_Exact", "1. Overview", "Heading1"),
+            bookmark("_Body", "Body target"),
+            bookmark("_Unused", "No incoming links"),
+            hyperlink("Preamble", anchor="_Before"),
+            hyperlink("Section", anchor="_Exact"),
+            hyperlink("Body", anchor="_Body"),
+        ],
+    )
+    diagnostics = tmp_path / "diagnostics"
+    _pipeline.convert_docx(source, keep_intermediates=diagnostics)
+    warnings = capsys.readouterr().err
+    assert "'_Before' now links to the document top" in warnings
+    assert "'_Body' now links to its containing section #1-overview" in warnings
+    assert "_Unused" not in warnings
+    assert "_Exact" not in warnings
+    report = json.loads((diagnostics / "diagnostics.json").read_text(encoding="utf-8"))
+    assert report["bookmark_targets"]["_Exact"]["kind"] == "heading"
+    assert report["bookmark_targets"]["_Body"]["kind"] == "section"
+    assert report["bookmark_targets"]["_Before"]["kind"] == "document_top"
 
-    def test_list_markers_take_one_space_and_lines_have_no_trailing_whitespace(self) -> None:
-        result, report, _warnings = self.convert_reported(
+
+@pytest.mark.parametrize(
+    ("depth", "links"),
+    [
+        pytest.param(
+            0,
             [
-                hyperlink("Go", anchor="_Toc1"),
-                bookmark("_Toc1", "Scope\u00a0", "Heading1"),
-                paragraph("Text ends with spaces\u00a0 "),
-                numbered("Alpha\u00a0"),
-                numbered(""),
-                numbered("Beta"),
-                paragraph("Outro"),
+                ("guide.md", "[Second target](#2-same--detail-1)"),
+                ("guide.md", "[First target](#2-same--detail)"),
             ],
-            extras={"word/numbering.xml": numbering_xml()},
-        )
-        assert (
-            result == "[Go](#scope)\n\n# Scope\n\nText ends with spaces\n\n"
-            "7. Alpha\n\n8.\n\n9. Beta\n\nOutro\n"
-        )
-        assert "  spaces: applied (3)" in report.summary()
-        assert "  cleanup: applied (1 line(s) with trailing whitespace trimmed)" in report.summary()
-        assert report.status("checks") == "applied"
-
-    def test_empty_headings_are_omitted_and_do_not_prevent_splitting(self) -> None:
-        report = _diagnostics.TransformReport()
-        with contextlib.redirect_stderr(io.StringIO()):
-            self.convert(
-                [
-                    paragraph("One", "Heading1"),
-                    paragraph("", "Heading2"),
-                    paragraph("Text"),
-                    paragraph("Two", "Heading1"),
-                    paragraph("\u00a0", "Heading2"),
-                    paragraph("End"),
-                ],
-                split_depth=1,
-                qualify=True,
-                report=report,
-            )
-        assert report.status("pages") == "applied"
-        assert report.status("duplicate-headings") == "not needed"
-        assert "    not applied (2): Word heading has no text; omitted" in report.summary()
-        pages = self.root / "Synthetic Guide"
-        assert (pages / "01-one.md").read_text(encoding="utf-8") == "# One\n\nText\n"
-        assert (pages / "02-two.md").read_text(encoding="utf-8") == "# Two\n\nEnd\n"
-
-    def test_bookmark_on_an_empty_heading_goes_to_the_heading_after_it(self) -> None:
-        # Enter at the start of a heading leaves its table-of-contents bookmark in the
-        # empty heading above it.
-        result, report, _warnings = self.convert_reported(
+            id="one-page",
+        ),
+        pytest.param(
+            1,
             [
-                hyperlink("2.1 Interfaces", anchor="_Toc1"),
-                hyperlink("Notes", anchor="_Ref2"),
-                paragraph("Design", "Heading1"),
-                paragraph("Text"),
-                bookmark("_Toc1", "", "Heading2"),
-                paragraph("", "Heading3"),
-                paragraph("Interfaces", "Heading2"),
-                paragraph("Ports"),
-                bookmark("_Ref2", "", "Heading2"),
-                paragraph("A note under Interfaces"),
-            ]
-        )
-        assert (
-            result
-            == "[2.1 Interfaces](#interfaces)\n\n[Notes](#interfaces)\n\n# Design\n\nText\n\n"
-            "## Interfaces\n\nPorts\n\nA note under Interfaces\n"
-        )
-        assert "    not applied (3): Word heading has no text; omitted" in report.summary()
-        assert report.status("checks") == "applied"
-        assert not report.records["checks"].skipped
-
-    def test_bookmark_in_an_empty_paragraph_goes_to_the_heading_after_it(self) -> None:
-        result, report, warnings = self.convert_reported(
-            [
-                hyperlink("Figure 1: Pipe", anchor="_Toc5"),
-                paragraph("Previous", "Heading1"),
-                paragraph("Text"),
-                bookmark("_Toc5", ""),
-                paragraph("Buffers", "Heading1"),
-                paragraph("Figure 1: Pipe"),
-            ]
-        )
-        assert "[Figure 1: Pipe](#buffers)" in result
-        assert report.status("checks") == "applied"
-        assert "_Toc5" not in warnings
-
-    def test_heading_with_only_a_picture_is_a_paragraph(self) -> None:
-        picture = image()
-        properties = ET.Element(W + "pPr")
-        ET.SubElement(properties, W + "pStyle", {W + "val": "Heading3"})
-        picture.insert(0, properties)
-        picture.insert(1, ET.Element(W + "bookmarkStart", {W + "id": "9", W + "name": "_Toc9"}))
-        picture.append(ET.Element(W + "bookmarkEnd", {W + "id": "9"}))
-        result, report, _warnings = self.convert_reported(
-            [
-                hyperlink("Figure 1: Diagram", anchor="_Toc9"),
-                paragraph("Block diagram", "Heading2"),
-                picture,
-                paragraph("Figure 1: Diagram"),
-                paragraph("Next", "Heading2"),
+                ("guide/01-first.md", "[Second target](02-second.md#2-same--detail)"),
+                ("guide/02-second.md", "[First target](01-first.md#2-same--detail)"),
             ],
-            relations=(("image", "image", "media/image.png", "Internal"),),
-            media={"image.png": PNG},
-        )
-        assert (
-            result == "[Figure 1: Diagram](#block-diagram)\n\n## Block diagram\n\n"
-            "![Diagram](.images/Synthetic%20Guide/image.png)\n\nFigure 1: Diagram\n\n## Next\n"
-        )
-        assert (
-            "    not applied (1): Word heading has only a picture; kept as a paragraph"
-            in report.summary()
-        )
-        assert report.status("images") == "applied"
-        assert report.status("checks") == "applied"
-
-    def test_word_title_becomes_the_only_h1(self) -> None:
-        result, report, _warnings = self.convert_reported(
+            id="pages-at-level-1",
+        ),
+        pytest.param(
+            2,
             [
-                paragraph("XYZ_TOP Guide #2", "Title"),
-                paragraph("Date: today"),
-                hyperlink("Go to setup", anchor="_Toc1"),
-                paragraph("Intro", "Heading1"),
-                paragraph("Text"),
-                bookmark("_Toc1", "Setup", "Heading2"),
-                paragraph("More"),
-            ],
-            styles=(word_style("Title"),),
-        )
-        assert (
-            result == "# XYZ_TOP Guide \\#2\n\nDate: today\n\n[Go to setup](#setup)\n\n## Intro\n\n"
-            "Text\n\n### Setup\n\nMore\n"
-        )
-        assert "  title: applied (2 heading(s) moved down one level)" in report.summary()
-        assert report.status("checks") == "applied"
-
-    def test_word_title_stays_a_paragraph_when_headings_cannot_move_down(self) -> None:
-        for name, body, reason in (
-            (
-                "level 6",
-                [paragraph(f"Level {level}", f"Heading{level}") for level in range(1, 7)],
                 (
-                    "a heading is at level 6, the deepest Markdown level, so headings cannot "
-                    "move down; the title stays a paragraph"
-                ),
-            ),
-            (
-                "same text",
-                [paragraph("Guide Title", "Heading1"), paragraph("Text")],
-                "the title as a heading would change other heading IDs; it stays a paragraph",
-            ),
-        ):
-            with self.subTest(name=name):
-                result, report, warnings = self.convert_reported(
-                    [paragraph("Guide Title", "Title"), *body],
-                    output=self.root / name / "guide.md",
-                    styles=(word_style("Title"),),
+                    "guide/01-first/01-2-same-detail.md",
+                    "[Second target](../02-second/01-2-same-detail.md#2-same--detail)",
                 )
-                assert result.startswith("Guide Title\n\n# ")
-                assert f"    not applied (1): {reason}" in report.summary()
-                assert "Word title 'Guide Title'" in warnings
-
-    def test_split_root_page_does_not_repeat_the_word_title(self) -> None:
-        report = _diagnostics.TransformReport()
-        with contextlib.redirect_stderr(io.StringIO()):
-            self.convert(
-                [
-                    paragraph("Guide Title", "Title"),
-                    paragraph("Date: today"),
-                    paragraph("One", "Heading1"),
-                    paragraph("Text"),
-                ],
-                split_depth=1,
-                report=report,
-                styles=(word_style("Title"),),
-            )
-        assert (self.root / "Synthetic Guide.md").read_text(
-            encoding="utf-8"
-        ) == "# Guide Title\n\nDate: today\n\n## Sections\n\n- [One](Synthetic%20Guide/01-one.md)\n"
-        assert "  title: applied (1 repeated title paragraph(s) removed)" in report.summary()
-
-    def test_images_in_table_cells_keep_a_markdown_table(self) -> None:
-        result, report, _warnings = self.convert_reported(
-            [table(row(cell("Diagram"), header=True), row(cell(image())), columns=1)],
-            relations=(("image", "image", "media/image.png", "Internal"),),
-            media={"image.png": PNG},
-        )
-        assert (
-            result == "| Diagram |\n| --- |\n| ![Diagram](.images/Synthetic%20Guide/image.png) |\n"
-        )
-        assert "  tables: applied (1 Markdown)" in report.summary()
-
-    def test_missing_alt_text_is_empty_and_reported(self) -> None:
-        stderr = io.StringIO()
-        with contextlib.redirect_stderr(stderr):
-            result, stats = self.convert(
-                [image(alt=None)],
-                relations=(("image", "image", "media/image.png", "Internal"),),
-                media={"image.png": PNG},
-            )
-        assert stats["unresolved_alt_text"] == 1
-        assert "Unresolved alt text" in stderr.getvalue()
-        assert "![](.images/Synthetic%20Guide/image.png)" in result
-
-    def test_a_document_without_images_gets_no_image_directory(self) -> None:
-        output = self.root / "out" / "Guide.md"
-        self.convert(
-            [image(alt="Diagram")],
-            output=output,
-            relations=(("image", "image", "media/image.png", "Internal"),),
-            media={"image.png": PNG},
-        )
-        assert (output.parent / ".images" / "Guide" / "image.png").is_file()
-        write_docx(self.source, [paragraph("Text only")])
-        _pipeline.convert_docx(self.source, output, replace_generated=True)
-        assert sorted(path.name for path in output.parent.iterdir()) == ["Guide.md"]
-
-    def test_caption_alt_text_is_recovered_without_invention(self) -> None:
-        result, _stats = self.convert(
-            [image(alt=None), paragraph("Figure 2-1: Request flow", "Caption")],
-            relations=(("image", "image", "media/image.png", "Internal"),),
-            media={"image.png": PNG},
-        )
-        assert (
-            next(_reference.pandoc_html(result, self.pandoc).iter("img")).get("alt")
-            == "Request flow"
-        )
-
-    def test_caption_replaces_word_alt_text_and_is_reported(self) -> None:
-        boxed = paragraph("Note")
-        boxed.extend(list(text_box("Box label", legacy=True)))
-        result, report, _warnings = self.convert_reported(
-            [
-                image(alt="Generated description"),
-                paragraph("Figure 3: Request flow", "Caption"),
-                boxed,
             ],
-            relations=(("image", "image", "media/image.png", "Internal"),),
-            media={"image.png": PNG},
-        )
-        assert "![Request flow](.images/" in result
-        assert (
-            "  images: partial (1 applied, 1 image(s) described by their caption, 1 not applied)"
-            in report.summary()
-        )
+            id="pages-at-level-2",
+        ),
+    ],
+)
+def test_duplicate_heading_links_use_final_page_local_ids(
+    depth: int, links: list[tuple[str, str]], convert: Converter, tmp_path: Path
+) -> None:
+    convert(
+        [
+            paragraph("First", "Heading1"),
+            bookmark("_One", "2. Same & Detail", "Heading2"),
+            hyperlink("Second target", anchor="_Two"),
+            paragraph("Second", "Heading1"),
+            bookmark("_Two", "2. Same & Detail", "Heading2"),
+            hyperlink("First target", anchor="_One"),
+        ],
+        output=tmp_path / "guide.md",
+        split_depth=depth,
+    )
+    for page, link in links:
+        assert link in (tmp_path / page).read_text(encoding="utf-8")
 
-    def test_an_image_directly_below_a_heading_takes_its_text(self) -> None:
-        result, report, warnings = self.convert_reported(
-            [
-                paragraph("Block diagram", "Heading1"),
-                paragraph(""),
-                image(alt=None),
-                paragraph("Details", "Heading1"),
-                paragraph("Body text"),
-                image(alt=None),
-            ],
-            relations=(("image", "image", "media/image.png", "Internal"),),
-            media={"image.png": PNG},
-        )
-        assert "![Block diagram](.images/" in result
-        assert "![](.images/" in result
-        assert (
-            "  images: applied (2, 1 image(s) described by the heading above)" in report.summary()
-        )
-        assert warnings.count("Unresolved alt text") == 1
 
-    def test_repeated_and_nested_media_keep_exact_occurrences(self) -> None:
-        result, stats = self.convert(
-            [image(), table(row(cell(image(), "Table picture")), columns=1), image()],
-            relations=(("image", "image", "media/image.png", "Internal"),),
-            media={"image.png": PNG},
-        )
-        assert len(list(_reference.pandoc_html(result, self.pandoc).iter("img"))) == 3
-        assert stats["unique_images"] == 1
+def test_markdown_caption_does_not_change_word_section_mapping(
+    convert: Converter, pandoc: str
+) -> None:
+    result, _stats = convert(
+        [
+            bookmark("_Heading", "Heading", "Heading1"),
+            table(row(cell("Header")), columns=1, caption="# Not a heading"),
+            hyperlink("Actual section", anchor="_Heading"),
+        ]
+    )
+    assert "<table" not in result
+    parsed = _reference.pandoc_html(result, pandoc)
+    assert _validation.collect_references(parsed).headings == [1]
+    assert "# Not a heading" in "".join(parsed.itertext())
+    assert "[Actual section](#heading)" in result
 
-    def test_linked_image_with_literal_alt_characters_survives(self) -> None:
-        link = hyperlink("", relation="external")
-        hyperlink_node = link.find(W + "hyperlink")
-        assert hyperlink_node is not None
-        hyperlink_node.clear()
-        hyperlink_node.set(R + "id", "external")
-        for run in image(alt=r"A [B] | C \ D").findall(W + "r"):
-            hyperlink_node.append(run)
-        result, _stats = self.convert(
-            [link],
-            relations=(
-                ("image", "image", "media/image.png", "Internal"),
-                ("external", "hyperlink", "https://example.test/target", "External"),
+
+def test_link_to_missing_bookmark_is_kept_as_text_and_summarized(
+    convert: Converter, tmp_path: Path
+) -> None:
+    output = tmp_path / "output.md"
+    output.write_text("old", encoding="utf-8")
+    result, report, _warnings = convert.reported(
+        [hyperlink("Missing", anchor="_Missing")], output=output
+    )
+    assert result == "Missing\n"
+    summary = report.summary()
+    assert summary[0] == "docx-to-md: transforms (baseline: MarkItDown)"
+    assert "  alignment: applied" in summary
+    assert "  links: not applied (1)" in summary
+    assert "    not applied (1): link to a missing Word bookmark; kept as plain text" in summary
+    assert "  checks: passed" in summary
+    assert "_Missing" not in "\n".join(summary)
+
+
+def test_cross_references_to_missing_bookmarks_are_kept_as_text(convert: Converter) -> None:
+    def reference(anchor: str, value: str, *, simple: bool = False) -> ET.Element:
+        result = paragraph("See ")
+        result.extend(page_reference(anchor, value, simple=simple))
+        return result
+
+    result, report, warnings = convert.reported(
+        [
+            bookmark("_Target", "Target", "Heading1"),
+            table(
+                row(cell(reference("_Missing", "3")), cell(reference("_Target", "4"))),
+                row(cell(reference("_Gone", "5", simple=True)), cell("Plain")),
             ),
-            media={"image.png": PNG},
-        )
-        parsed = _validation.collect_references(_reference.pandoc_html(result, self.pandoc))
-        assert parsed.links == ["https://example.test/target"]
-        assert (
-            next(_reference.pandoc_html(result, self.pandoc).iter("img")).get("alt")
-            == r"A [B] | C \ D"
+            reference("_Missing", "6"),
+        ]
+    )
+    assert "| See 3 | See [4](#target) |" in result
+    assert "| See 5 | Plain |" in result
+    assert "See 6" in result
+    assert dict(report.records["links"].skipped) == {
+        "link to a missing Word bookmark; kept as plain text": 3
+    }
+    assert "links: cross-reference to missing Word bookmark '_Gone'; kept as plain text" in warnings
+    assert report.status("pages") == "applied"
+    assert report.status("checks") == "applied"
+
+
+@pytest.mark.parametrize(
+    "aligned", [pytest.param(True, id="aligned"), pytest.param(False, id="alignment-failed")]
+)
+def test_simple_fields_keep_their_cached_results(
+    aligned: bool, convert: Converter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def field(instruction: str, *children: ET.Element) -> ET.Element:
+        result = ET.Element(W + "fldSimple", {W + "instr": instruction})
+        result.extend(children)
+        return result
+
+    def line(*parts: str | ET.Element) -> ET.Element:
+        result = ET.Element(W + "p")
+        result.extend(_ooxml.word_run(part) if isinstance(part, str) else part for part in parts)
+        return result
+
+    figure = field(
+        " SEQ Figure \\* ARABIC ",
+        ET.Element(W + "bookmarkStart", {W + "id": "5", W + "name": "_RefFigure"}),
+        _ooxml.word_run("3"),
+        ET.Element(W + "bookmarkEnd", {W + "id": "5"}),
+    )
+    body = [
+        paragraph("Results", "Heading1"),
+        line(
+            "Table ",
+            field(" STYLEREF 1 \\s ", _ooxml.word_run("2")),
+            "\u2011",
+            field(" SEQ Table \\* ARABIC \\s 1 ", _ooxml.word_run("1")),
+            ": Registers",
+        ),
+        line("Figure ", figure, ": Pipeline"),
+        line("See ", field(" REF _RefFigure \\h ", _ooxml.word_run("Figure 3")), "."),
+        hyperlink("Back to the figure", anchor="_RefFigure"),
+    ]
+    if not aligned:
+        fail_alignment(monkeypatch)
+    result, report, _warnings = convert.reported(body)
+    for text in ("Table 2\u20111: Registers", "Figure 3: Pipeline", "See Figure 3."):
+        assert f"\n{text}\n" in result
+    assert report.status("fields") == "applied"
+    assert "  fields: applied (4 simple field(s) kept)" in report.summary()
+    if aligned:
+        assert "[Back to the figure](#results)" in result
+        assert not report.records["bookmarks"].skipped
+        assert report.status("checks") == "applied"
+        assert not report.records["checks"].skipped
+
+
+def test_bookmarks_in_leading_title_paragraphs_keep_their_position(convert: Converter) -> None:
+    # Pandoc reads leading Title and Subtitle paragraphs as metadata, outside its body.
+    result, report, warnings = convert.reported(
+        [
+            paragraph(""),
+            bookmark("_Hlk1", "Document title", "Title"),
+            paragraph("Document subtitle", "Subtitle"),
+            paragraph("Body"),
+            hyperlink("Back to the title", anchor="_Hlk1"),
+        ],
+        styles=(word_style("Title"), word_style("Subtitle")),
+    )
+    assert report.status("checks") == "applied"
+    assert not report.records["checks"].skipped
+    assert report.status("bookmarks") == "applied"
+    assert re.search(
+        r"Document title\n\nDocument subtitle\n\nBody\n\n\[Back to the title\]\(#", result
+    )
+    assert "checks:" not in warnings
+
+
+def test_word_line_breaks_start_new_paragraphs(convert: Converter) -> None:
+    # MarkItDown strips the trailing spaces of its hard breaks, so Word's line breaks
+    # are restored, as paragraph breaks; one in a heading stays a space.
+    def broken(*parts: ET.Element | str, style: str | None = None) -> ET.Element:
+        result = paragraph("", style)
+        for run in result.findall(W + "r"):
+            result.remove(run)
+        for index, part in enumerate(parts):
+            if index:
+                ET.SubElement(ET.SubElement(result, W + "r"), W + "br")
+            if isinstance(part, str):
+                result.append(_ooxml.word_run(part))
+            else:
+                result.extend(list(part))
+        return result
+
+    result, report, _warnings = convert.reported(
+        [
+            broken("first line", "second line"),
+            broken("Heading top", "Heading bottom", style="Heading1"),
+            broken(image("art"), hyperlink("Source", relation="site")),
+        ],
+        relations=(
+            ("art", "image", "media/art.png", "Internal"),
+            ("site", "hyperlink", "https://example.test/a?b=1&c=2", "External"),
+        ),
+        media={"art.png": PNG},
+    )
+    assert "first line\n\nsecond line\n" in result
+    assert "# Heading top Heading bottom\n" in result
+    assert re.search(
+        r"!\[Diagram\]\(\.images/[^)\n]+\)\n\n\[Source\]\(https://example\.test/a\?b=1&amp;c=2\)",
+        result,
+    )
+    assert "\\\n" not in result
+    assert "  line-breaks: partial (2 applied, 1 not applied)" in report.summary()
+    assert report.status("checks") == "applied"
+    assert not report.records["checks"].skipped
+
+
+def test_line_breaks_at_block_ends_leave_no_backslash(convert: Converter) -> None:
+    def trailing(content: ET.Element) -> ET.Element:
+        ET.SubElement(ET.SubElement(content, W + "r"), W + "br")
+        return content
+
+    result, report, warnings = convert.reported(
+        [
+            paragraph("Intro"),
+            trailing(numbered("Alpha")),
+            numbered("Beta"),
+            trailing(paragraph("Plain")),
+            trailing(bookmark("_Ref1", "Marked")),
+            hyperlink("Back", anchor="_Ref1"),
+        ],
+        extras={"word/numbering.xml": numbering_xml()},
+    )
+    assert "\\" not in result
+    assert re.search(r"7\.\s+Alpha\n+8\.\s+Beta\n\nPlain\n\nMarked\n", result)
+    assert report.status("lists") == "applied"
+    assert "<ol" not in result
+    assert "lists:" not in warnings
+
+
+@pytest.mark.parametrize(
+    "aligned", [pytest.param(True, id="aligned"), pytest.param(False, id="alignment-failed")]
+)
+def test_stray_field_marks_do_not_stop_markitdown(
+    aligned: bool, convert: Converter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stray = paragraph("Before")
+    ET.SubElement(ET.SubElement(stray, W + "r"), W + "fldChar", {W + "fldCharType": "end"})
+    if not aligned:
+        fail_alignment(monkeypatch)
+    result, report, _warnings = convert.reported([stray, paragraph("After")])
+    assert "Before\n\nAfter" in result
+    assert "  fields: applied (1 stray field mark(s) removed)" in report.summary()
+
+
+def test_nested_empty_and_targetless_hyperlinks(convert: Converter) -> None:
+    nested = hyperlink("Outer ", relation="outer")
+    outer = nested.find(W + "hyperlink")
+    assert outer is not None
+    ET.SubElement(outer, W + "hyperlink", {R + "id": "inner"}).append(_ooxml.word_run("Inner"))
+    result, report, warnings = convert.reported(
+        [nested, hyperlink(" ", relation="outer"), hyperlink("Plain")],
+        relations=(
+            ("outer", "hyperlink", "https://example.test/outer", "External"),
+            ("inner", "hyperlink", "https://example.test/inner", "External"),
+        ),
+    )
+    assert result == "[Outer Inner](https://example.test/outer)\n\nPlain\n"
+    summary = report.summary()
+    assert "  links: partial (1 applied, 1 not applied)" in summary
+    assert (
+        "    not applied (1): Word hyperlink nested in another hyperlink; "
+        "its text stays in the outer link" in summary
+    )
+    assert warnings.count("links:") == 1
+
+
+def test_underline_stays_but_not_in_links_headings_or_code(convert: Converter) -> None:
+    def underlined(node: ET.Element) -> ET.Element:
+        for run in node.iter(W + "r"):
+            formatted(run, "u", "single")
+        return node
+
+    body = paragraph_of(
+        _ooxml.word_run("Do "),
+        formatted(_ooxml.word_run("not"), "u", "single"),
+        _ooxml.word_run(" connect."),
+    )
+    code = paragraph_of(
+        _ooxml.word_run("Call "),
+        formatted(code_run("init()"), "u", "single"),
+        _ooxml.word_run(" first."),
+    )
+    must = paragraph_of(_ooxml.word_run("Must "), formatted(_ooxml.word_run("not"), "u", "single"))
+    grid = table(
+        row(cell("Rule"), cell("Link"), header=True),
+        row(cell(must), cell(underlined(hyperlink("Site", relation="site")))),
+    )
+    result, report, _warnings = convert.reported(
+        [
+            underlined(paragraph("Overview", "Heading1")),
+            body,
+            underlined(hyperlink("Spec site", relation="site")),
+            code,
+            grid,
+        ],
+        relations=(("site", "hyperlink", "https://example.test/spec", "External"),),
+    )
+    assert (
+        result
+        == "# Overview\n\nDo <u>not</u> connect.\n\n[Spec site](https://example.test/spec)\n\n"
+        "Call `init()` first.\n\n| Rule | Link |\n| --- | --- |\n"
+        "| Must <u>not</u> | [Site](https://example.test/spec) |\n"
+    )
+    assert "  underline: applied (4)" in report.summary()
+
+
+def test_screen_tips_become_link_titles_and_double_strikethrough_is_struck(
+    convert: Converter,
+) -> None:
+    tipped = hyperlink("Spec site", relation="site")
+    link = tipped.find(W + "hyperlink")
+    assert link is not None
+    link.set(W + "tooltip", 'Opens the "specification"')
+    struck = paragraph_of(
+        formatted(_ooxml.word_run("double"), "dstrike"),
+        _ooxml.word_run(" and "),
+        formatted(_ooxml.word_run("single"), "strike"),
+    )
+    result, _report, _warnings = convert.reported(
+        [tipped, struck],
+        relations=(("site", "hyperlink", "https://example.test/spec", "External"),),
+    )
+    assert (
+        result == '[Spec site](https://example.test/spec "Opens the \\"specification\\"")\n\n'
+        "~~double~~ and ~~single~~\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "aligned", [pytest.param(True, id="aligned"), pytest.param(False, id="alignment-failed")]
+)
+def test_hyperlink_with_a_missing_relationship_still_converts(
+    aligned: bool, convert: Converter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if not aligned:
+        fail_alignment(monkeypatch)
+    result, report, warnings = convert.reported(
+        [paragraph("Before"), hyperlink("Dangling", relation="gone")]
+    )
+    assert result == "Before\n\nDangling\n"
+    assert (report.records["alignment"].failure is None) == aligned
+    assert dict(report.records["links"].skipped) == {
+        "Word hyperlink relationship is missing; its target is dropped": 1
+    }
+    assert "links: Word hyperlink relationship 'gone' is missing; its target is dropped" in warnings
+
+
+def test_hyperlink_that_pandoc_splits_keeps_the_markitdown_link(convert: Converter) -> None:
+    content = hyperlink("Label", relation="site")
+    link = content.find(W + "hyperlink")
+    assert link is not None
+    ET.SubElement(ET.SubElement(link, W + "r"), W + "footnoteReference", {W + "id": "1"})
+    notes = (
+        f'<w:footnotes xmlns:w="{W[1:-1]}"><w:footnote w:id="1"><w:p><w:r>'
+        "<w:t>Note</w:t></w:r></w:p></w:footnote></w:footnotes>"
+    )
+    result, report, _warnings = convert.reported(
+        [content],
+        relations=(
+            ("site", "hyperlink", "https://example.test/a", "External"),
+            ("notes", "footnotes", "footnotes.xml", "Internal"),
+        ),
+        extras={"word/footnotes.xml": notes.encode()},
+    )
+    assert "https://example.test/a" in result
+    assert dict(report.records["links"].skipped) == {
+        "Pandoc rendered N links for one Word hyperlink; kept as MarkItDown converted it": 1
+    }
+
+
+def test_png_and_svg_do_not_require_office_or_poppler(
+    convert: Converter, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = shutil.which
+
+    def forbid_optional(command: str) -> str | None:
+        if command in {"libreoffice", "soffice", "pdftocairo"}:
+            pytest.fail(f"Unnecessary optional dependency probe: {command}")
+        return original(command)
+
+    monkeypatch.setattr(shutil, "which", forbid_optional)
+    result, stats = convert(
+        [image("png"), image("svg")],
+        relations=(
+            ("png", "image", "media/image.png", "Internal"),
+            ("svg", "image", "media/image.svg", "Internal"),
+        ),
+        media={"image.png": PNG, "image.svg": SVG},
+    )
+    assert ".images/Synthetic%20Guide/image.png" in result
+    assert ".images/Synthetic%20Guide/image.svg" in result
+    assert stats["image_occurrences"] == 2
+    assert (tmp_path / ".images" / "Synthetic Guide" / "image.png").read_bytes() == PNG
+
+
+def test_line_breaks_in_list_items_formatting_and_links(convert: Converter) -> None:
+    item = numbered("Alpha")
+    ET.SubElement(ET.SubElement(item, W + "r"), W + "br")
+    item.append(_ooxml.word_run("continued"))
+    bold = paragraph("Bold", bold=True)
+    for child in ("br", "t"):
+        run = ET.SubElement(bold, W + "r")
+        ET.SubElement(ET.SubElement(run, W + "rPr"), W + "b")
+        ET.SubElement(run, W + child).text = "text" if child == "t" else None
+    link = hyperlink("Line one", relation="site")
+    anchor = link.find(W + "hyperlink")
+    assert anchor is not None
+    ET.SubElement(ET.SubElement(anchor, W + "r"), W + "br")
+    anchor.append(_ooxml.word_run("Line two"))
+    result, report, _warnings = convert.reported(
+        [item, numbered("Beta"), bold, link],
+        relations=(("site", "hyperlink", "https://example.test/", "External"),),
+        extras={"word/numbering.xml": numbering_xml()},
+    )
+    assert (
+        result == "7. Alpha\n\n    continued\n\n8. Beta\n\n**Bold**\n\n**text**\n\n"
+        "[Line one Line two](https://example.test/)\n"
+    )
+    assert report.status("lists") == "applied"
+    assert report.status("checks") == "applied"
+
+
+def test_list_markers_take_one_space_and_lines_have_no_trailing_whitespace(
+    convert: Converter,
+) -> None:
+    result, report, _warnings = convert.reported(
+        [
+            hyperlink("Go", anchor="_Toc1"),
+            bookmark("_Toc1", "Scope\u00a0", "Heading1"),
+            paragraph("Text ends with spaces\u00a0 "),
+            numbered("Alpha\u00a0"),
+            numbered(""),
+            numbered("Beta"),
+            paragraph("Outro"),
+        ],
+        extras={"word/numbering.xml": numbering_xml()},
+    )
+    assert (
+        result == "[Go](#scope)\n\n# Scope\n\nText ends with spaces\n\n"
+        "7. Alpha\n\n8.\n\n9. Beta\n\nOutro\n"
+    )
+    assert "  spaces: applied (3)" in report.summary()
+    assert "  cleanup: applied (1 line(s) with trailing whitespace trimmed)" in report.summary()
+    assert report.status("checks") == "applied"
+
+
+def test_empty_headings_are_omitted_and_do_not_prevent_splitting(
+    convert: Converter, tmp_path: Path
+) -> None:
+    report = _diagnostics.TransformReport()
+    convert(
+        [
+            paragraph("One", "Heading1"),
+            paragraph("", "Heading2"),
+            paragraph("Text"),
+            paragraph("Two", "Heading1"),
+            paragraph("\u00a0", "Heading2"),
+            paragraph("End"),
+        ],
+        split_depth=1,
+        qualify=True,
+        report=report,
+    )
+    assert report.status("pages") == "applied"
+    assert report.status("duplicate-headings") == "not needed"
+    assert "    not applied (2): Word heading has no text; omitted" in report.summary()
+    pages = tmp_path / "Synthetic Guide"
+    assert (pages / "01-one.md").read_text(encoding="utf-8") == "# One\n\nText\n"
+    assert (pages / "02-two.md").read_text(encoding="utf-8") == "# Two\n\nEnd\n"
+
+
+def test_bookmark_on_an_empty_heading_goes_to_the_heading_after_it(convert: Converter) -> None:
+    # Enter at the start of a heading leaves its table-of-contents bookmark in the
+    # empty heading above it.
+    result, report, _warnings = convert.reported(
+        [
+            hyperlink("2.1 Interfaces", anchor="_Toc1"),
+            hyperlink("Notes", anchor="_Ref2"),
+            paragraph("Design", "Heading1"),
+            paragraph("Text"),
+            bookmark("_Toc1", "", "Heading2"),
+            paragraph("", "Heading3"),
+            paragraph("Interfaces", "Heading2"),
+            paragraph("Ports"),
+            bookmark("_Ref2", "", "Heading2"),
+            paragraph("A note under Interfaces"),
+        ]
+    )
+    assert (
+        result == "[2.1 Interfaces](#interfaces)\n\n[Notes](#interfaces)\n\n# Design\n\nText\n\n"
+        "## Interfaces\n\nPorts\n\nA note under Interfaces\n"
+    )
+    assert "    not applied (3): Word heading has no text; omitted" in report.summary()
+    assert report.status("checks") == "applied"
+    assert not report.records["checks"].skipped
+
+
+def test_bookmark_in_an_empty_paragraph_goes_to_the_heading_after_it(convert: Converter) -> None:
+    result, report, warnings = convert.reported(
+        [
+            hyperlink("Figure 1: Pipe", anchor="_Toc5"),
+            paragraph("Previous", "Heading1"),
+            paragraph("Text"),
+            bookmark("_Toc5", ""),
+            paragraph("Buffers", "Heading1"),
+            paragraph("Figure 1: Pipe"),
+        ]
+    )
+    assert "[Figure 1: Pipe](#buffers)" in result
+    assert report.status("checks") == "applied"
+    assert "_Toc5" not in warnings
+
+
+def test_heading_with_only_a_picture_is_a_paragraph(convert: Converter) -> None:
+    picture = image()
+    properties = ET.Element(W + "pPr")
+    ET.SubElement(properties, W + "pStyle", {W + "val": "Heading3"})
+    picture.insert(0, properties)
+    picture.insert(1, ET.Element(W + "bookmarkStart", {W + "id": "9", W + "name": "_Toc9"}))
+    picture.append(ET.Element(W + "bookmarkEnd", {W + "id": "9"}))
+    result, report, _warnings = convert.reported(
+        [
+            hyperlink("Figure 1: Diagram", anchor="_Toc9"),
+            paragraph("Block diagram", "Heading2"),
+            picture,
+            paragraph("Figure 1: Diagram"),
+            paragraph("Next", "Heading2"),
+        ],
+        relations=(("image", "image", "media/image.png", "Internal"),),
+        media={"image.png": PNG},
+    )
+    assert (
+        result == "[Figure 1: Diagram](#block-diagram)\n\n## Block diagram\n\n"
+        "![Diagram](.images/Synthetic%20Guide/image.png)\n\nFigure 1: Diagram\n\n## Next\n"
+    )
+    assert (
+        "    not applied (1): Word heading has only a picture; kept as a paragraph"
+        in report.summary()
+    )
+    assert report.status("images") == "applied"
+    assert report.status("checks") == "applied"
+
+
+def test_word_title_becomes_the_only_h1(convert: Converter) -> None:
+    result, report, _warnings = convert.reported(
+        [
+            paragraph("XYZ_TOP Guide #2", "Title"),
+            paragraph("Date: today"),
+            hyperlink("Go to setup", anchor="_Toc1"),
+            paragraph("Intro", "Heading1"),
+            paragraph("Text"),
+            bookmark("_Toc1", "Setup", "Heading2"),
+            paragraph("More"),
+        ],
+        styles=(word_style("Title"),),
+    )
+    assert (
+        result == "# XYZ_TOP Guide \\#2\n\nDate: today\n\n[Go to setup](#setup)\n\n## Intro\n\n"
+        "Text\n\n### Setup\n\nMore\n"
+    )
+    assert "  title: applied (2 heading(s) moved down one level)" in report.summary()
+    assert report.status("checks") == "applied"
+
+
+@pytest.mark.parametrize(
+    ("body", "reason"),
+    [
+        pytest.param(
+            [paragraph(f"Level {level}", f"Heading{level}") for level in range(1, 7)],
+            (
+                "a heading is at level 6, the deepest Markdown level, so headings cannot "
+                "move down; the title stays a paragraph"
+            ),
+            id="level-6",
+        ),
+        pytest.param(
+            [paragraph("Guide Title", "Heading1"), paragraph("Text")],
+            "the title as a heading would change other heading IDs; it stays a paragraph",
+            id="same-text",
+        ),
+    ],
+)
+def test_word_title_stays_a_paragraph_when_headings_cannot_move_down(
+    body: list[ET.Element], reason: str, convert: Converter
+) -> None:
+    result, report, warnings = convert.reported(
+        [paragraph("Guide Title", "Title"), *body], styles=(word_style("Title"),)
+    )
+    assert result.startswith("Guide Title\n\n# ")
+    assert f"    not applied (1): {reason}" in report.summary()
+    assert "Word title 'Guide Title'" in warnings
+
+
+def test_split_root_page_does_not_repeat_the_word_title(convert: Converter, tmp_path: Path) -> None:
+    report = _diagnostics.TransformReport()
+    convert(
+        [
+            paragraph("Guide Title", "Title"),
+            paragraph("Date: today"),
+            paragraph("One", "Heading1"),
+            paragraph("Text"),
+        ],
+        split_depth=1,
+        report=report,
+        styles=(word_style("Title"),),
+    )
+    assert (tmp_path / "Synthetic Guide.md").read_text(
+        encoding="utf-8"
+    ) == "# Guide Title\n\nDate: today\n\n## Sections\n\n- [One](Synthetic%20Guide/01-one.md)\n"
+    assert "  title: applied (1 repeated title paragraph(s) removed)" in report.summary()
+
+
+def test_images_in_table_cells_keep_a_markdown_table(convert: Converter) -> None:
+    result, report, _warnings = convert.reported(
+        [table(row(cell("Diagram"), header=True), row(cell(image())), columns=1)],
+        relations=(("image", "image", "media/image.png", "Internal"),),
+        media={"image.png": PNG},
+    )
+    assert result == "| Diagram |\n| --- |\n| ![Diagram](.images/Synthetic%20Guide/image.png) |\n"
+    assert "  tables: applied (1 Markdown)" in report.summary()
+
+
+def test_missing_alt_text_is_empty_and_reported(
+    convert: Converter, capsys: pytest.CaptureFixture[str]
+) -> None:
+    result, stats = convert(
+        [image(alt=None)],
+        relations=(("image", "image", "media/image.png", "Internal"),),
+        media={"image.png": PNG},
+    )
+    assert stats["unresolved_alt_text"] == 1
+    assert "Unresolved alt text" in capsys.readouterr().err
+    assert "![](.images/Synthetic%20Guide/image.png)" in result
+
+
+def test_a_document_without_images_gets_no_image_directory(
+    convert: Converter, source: Path, tmp_path: Path
+) -> None:
+    output = tmp_path / "out" / "Guide.md"
+    convert(
+        [image(alt="Diagram")],
+        output=output,
+        relations=(("image", "image", "media/image.png", "Internal"),),
+        media={"image.png": PNG},
+    )
+    assert (output.parent / ".images" / "Guide" / "image.png").is_file()
+    write_docx(source, [paragraph("Text only")])
+    _pipeline.convert_docx(source, output, replace_generated=True)
+    assert sorted(path.name for path in output.parent.iterdir()) == ["Guide.md"]
+
+
+def test_caption_alt_text_is_recovered_without_invention(convert: Converter, pandoc: str) -> None:
+    result, _stats = convert(
+        [image(alt=None), paragraph("Figure 2-1: Request flow", "Caption")],
+        relations=(("image", "image", "media/image.png", "Internal"),),
+        media={"image.png": PNG},
+    )
+    assert next(_reference.pandoc_html(result, pandoc).iter("img")).get("alt") == "Request flow"
+
+
+def test_caption_replaces_word_alt_text_and_is_reported(convert: Converter) -> None:
+    boxed = paragraph("Note")
+    boxed.extend(list(text_box("Box label", legacy=True)))
+    result, report, _warnings = convert.reported(
+        [
+            image(alt="Generated description"),
+            paragraph("Figure 3: Request flow", "Caption"),
+            boxed,
+        ],
+        relations=(("image", "image", "media/image.png", "Internal"),),
+        media={"image.png": PNG},
+    )
+    assert "![Request flow](.images/" in result
+    assert (
+        "  images: partial (1 applied, 1 image(s) described by their caption, 1 not applied)"
+        in report.summary()
+    )
+
+
+def test_an_image_directly_below_a_heading_takes_its_text(convert: Converter) -> None:
+    result, report, warnings = convert.reported(
+        [
+            paragraph("Block diagram", "Heading1"),
+            paragraph(""),
+            image(alt=None),
+            paragraph("Details", "Heading1"),
+            paragraph("Body text"),
+            image(alt=None),
+        ],
+        relations=(("image", "image", "media/image.png", "Internal"),),
+        media={"image.png": PNG},
+    )
+    assert "![Block diagram](.images/" in result
+    assert "![](.images/" in result
+    assert "  images: applied (2, 1 image(s) described by the heading above)" in report.summary()
+    assert warnings.count("Unresolved alt text") == 1
+
+
+def test_repeated_and_nested_media_keep_exact_occurrences(convert: Converter, pandoc: str) -> None:
+    result, stats = convert(
+        [image(), table(row(cell(image(), "Table picture")), columns=1), image()],
+        relations=(("image", "image", "media/image.png", "Internal"),),
+        media={"image.png": PNG},
+    )
+    assert len(list(_reference.pandoc_html(result, pandoc).iter("img"))) == 3
+    assert stats["unique_images"] == 1
+
+
+def test_linked_image_with_literal_alt_characters_survives(convert: Converter, pandoc: str) -> None:
+    link = hyperlink("", relation="external")
+    hyperlink_node = link.find(W + "hyperlink")
+    assert hyperlink_node is not None
+    hyperlink_node.clear()
+    hyperlink_node.set(R + "id", "external")
+    for run in image(alt=r"A [B] | C \ D").findall(W + "r"):
+        hyperlink_node.append(run)
+    result, _stats = convert(
+        [link],
+        relations=(
+            ("image", "image", "media/image.png", "Internal"),
+            ("external", "hyperlink", "https://example.test/target", "External"),
+        ),
+        media={"image.png": PNG},
+    )
+    parsed = _validation.collect_references(_reference.pandoc_html(result, pandoc))
+    assert parsed.links == ["https://example.test/target"]
+    assert next(_reference.pandoc_html(result, pandoc).iter("img")).get("alt") == r"A [B] | C \ D"
+
+
+def test_multiple_images_and_text_in_one_word_run_are_not_dropped(convert: Converter) -> None:
+    content = ET.Element(W + "p")
+    run = ET.SubElement(content, W + "r")
+    ET.SubElement(run, W + "t").text = "Before "
+    for _ in range(2):
+        drawing = image().find(f"./{W}r/{W}drawing")
+        assert drawing is not None
+        run.append(drawing)
+    ET.SubElement(run, W + "t").text = " After"
+    result, stats = convert(
+        [content],
+        relations=(("image", "image", "media/image.png", "Internal"),),
+        media={"image.png": PNG},
+    )
+    assert "Before" in result
+    assert "After" in result
+    assert stats["image_occurrences"] == 2
+
+
+def test_native_svg_extension_is_preferred_over_raster_fallback(convert: Converter) -> None:
+    content = image("png")
+    blip = content.find(f".//{_ooxml.DRAWING}blip")
+    assert blip is not None
+    extension = ET.SubElement(
+        ET.SubElement(blip, _ooxml.DRAWING + "extLst"), _ooxml.DRAWING + "ext"
+    )
+    ET.SubElement(extension, _ooxml.SVG_DRAWING + "svgBlip", {R + "embed": "svg"})
+    result, stats = convert(
+        [content],
+        relations=(
+            ("png", "image", "media/fallback.png", "Internal"),
+            ("svg", "image", "media/vector.svg", "Internal"),
+        ),
+        media={"fallback.png": PNG, "vector.svg": SVG},
+    )
+    assert "vector.svg" in result
+    assert "fallback.png" not in result
+    assert stats["unique_images"] == 1
+
+
+@pytest.mark.parametrize("kind", ["pict", "object"])
+def test_legacy_picture_and_object_previews_keep_metadata(
+    kind: str, convert: Converter, pandoc: str
+) -> None:
+    result, stats = convert(
+        [legacy_image(kind)],
+        relations=(("image", "image", "media/image.png", "Internal"),),
+        media={"image.png": PNG},
+    )
+    assert stats["image_occurrences"] == 1
+    assert result.count("image.png") == 1
+    parsed = _reference.pandoc_html(result, pandoc)
+    assert next(parsed.iter("img")).get("alt") == "Legacy preview"
+
+
+def test_packaged_picture_fallback_is_used_for_unsupported_native_drawing(
+    convert: Converter,
+) -> None:
+    content = ET.Element(W + "p")
+    alternate = ET.SubElement(ET.SubElement(content, W + "r"), _ooxml.MC + "AlternateContent")
+    choice = ET.SubElement(alternate, _ooxml.MC + "Choice", {"Requires": "wpg"})
+    ET.SubElement(choice, W + "drawing")
+    fallback = ET.SubElement(alternate, _ooxml.MC + "Fallback")
+    picture = legacy_image().find(f"./{W}r/{W}pict")
+    assert picture is not None
+    fallback.append(picture)
+    result, stats = convert(
+        [content],
+        relations=(("image", "image", "media/image.png", "Internal"),),
+        media={"image.png": PNG},
+    )
+    assert stats["image_occurrences"] == 1
+    assert "Legacy preview" in result
+
+
+def test_legacy_picture_with_a_text_box_keeps_each_once(convert: Converter) -> None:
+    content = legacy_image()
+    picture = content.find(f"./{W}r/{W}pict")
+    assert picture is not None
+    caption = ET.SubElement(
+        picture, _ooxml.VML + "shape", {"id": "caption", "type": "#_x0000_t202"}
+    )
+    box = ET.SubElement(ET.SubElement(caption, _ooxml.VML + "textbox"), _ooxml.TEXT_BOX_CONTENT)
+    box.append(paragraph("Caption text"))
+    result, stats = convert(
+        [content],
+        relations=(("image", "image", "media/image.png", "Internal"),),
+        media={"image.png": PNG},
+    )
+    assert stats["image_occurrences"] == 1
+    assert result.count("image.png") == 1
+    assert result.count("Caption text") == 1
+
+
+def test_split_images_remain_relative_to_derived_namespace(
+    convert: Converter, tmp_path: Path
+) -> None:
+    convert(
+        [paragraph("Chapter.", "Heading1"), paragraph("Deep.", "Heading3"), image()],
+        split_depth=3,
+        relations=(("image", "image", "media/image.png", "Internal"),),
+        media={"image.png": PNG},
+    )
+    child = tmp_path / "Synthetic Guide" / "01-chapter" / "01-deep.md"
+    assert "../../.images/Synthetic%20Guide/image.png" in child.read_text(encoding="utf-8")
+
+
+def test_emf_svg_publication_collision_gets_a_distinct_name(
+    convert: Converter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def convert_vectors(
+        drawings: dict[str, tuple[bytes, str]], _work: Path
+    ) -> dict[str, _media.VectorResult]:
+        assert [suffix for _data, suffix in drawings.values()] == [".emf"]
+        return {name: (SVG, []) for name in drawings}
+
+    monkeypatch.setattr(_media, "_convert_vectors", convert_vectors)
+    result, report, warnings = convert.reported(
+        [image("emf"), image("svg")],
+        relations=(
+            ("emf", "image", "media/image.emf", "Internal"),
+            ("svg", "image", "media/image.svg", "Internal"),
+        ),
+        media={"image.emf": synthetic_emf(), "image.svg": SVG},
+    )
+    assert "](.images/Synthetic%20Guide/image.svg)" in result
+    assert "](.images/Synthetic%20Guide/image-2.svg)" in result
+    assert "Image name image.svg is already used; published as image-2.svg" in warnings
+    assert report.status("images") == "applied"
+    assert report.status("checks") == "applied"
+
+
+def test_media_with_same_basename_in_distinct_package_paths_are_not_flattened(
+    convert: Converter,
+) -> None:
+    result, _stats = convert(
+        [image("one"), image("two")],
+        relations=(
+            ("one", "image", "media/one/image.png", "Internal"),
+            ("two", "image", "media/two/image.png", "Internal"),
+        ),
+        media={"one/image.png": PNG, "two/image.png": PNG},
+    )
+    assert "/one/image.png" in result
+    assert "/two/image.png" in result
+
+
+def test_missing_media_is_dropped_and_reported_in_diagnostics(
+    source: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_docx(
+        source,
+        [paragraph("Before"), image(), paragraph("After")],
+        relations=(("image", "image", "media/missing.png", "Internal"),),
+    )
+    diagnostics = tmp_path / "diagnostics"
+    report = _diagnostics.TransformReport()
+    _pipeline.convert_docx(source, keep_intermediates=diagnostics, report=report)
+    warnings = capsys.readouterr().err
+    result = source.with_suffix(".md").read_text(encoding="utf-8")
+    assert "Before" in result
+    assert "After" in result
+    assert "![" not in result
+    assert "Missing Word media part 'word/media/missing.png'; image dropped" in warnings
+    saved = json.loads((diagnostics / "diagnostics.json").read_text(encoding="utf-8"))
+    assert saved["status"] == "published"
+    assert saved["baseline"] == "MarkItDown"
+    assert saved["transforms"]["images"]["status"] == "not applied"
+    assert saved["transforms"]["images"]["not_applied"] == {
+        "Missing Word media part '...'; image dropped": 1
+    }
+
+
+def test_external_images_are_not_fetched_and_are_reported(convert: Converter) -> None:
+    result, report, warnings = convert.reported(
+        [paragraph("Before"), image(), paragraph("After")],
+        relations=(("image", "image", "https://example.test/image.png", "External"),),
+    )
+    assert "After" in result
+    assert "![" not in result
+    assert "example.test" not in result
+    assert "not fetched: 'https://example.test/image.png'; image dropped" in warnings
+    assert report.status("images") == "not applied"
+
+
+def test_linked_image_with_an_embedded_copy_uses_the_copy(convert: Converter) -> None:
+    content = image()
+    blip = next(content.iter(_ooxml.DRAWING + "blip"))
+    blip.set(R + "link", "linked")
+    result, report, _warnings = convert.reported(
+        [content],
+        relations=(
+            ("image", "image", "media/image.png", "Internal"),
+            ("linked", "image", "cid:image001.png@01DA1234.5678ABCD", "External"),
+        ),
+        media={"image.png": PNG},
+    )
+    assert "](.images/Synthetic%20Guide/image.png)" in result
+    assert "cid:" not in result
+    assert report.status("images") == "applied"
+    assert report.status("checks") == "applied"
+
+
+def test_text_boxes_are_reported_without_stopping_conversion(convert: Converter) -> None:
+    result, report, warnings = convert.reported(
+        [
+            paragraph("Before"),
+            text_box("Boxed drawing text"),
+            text_box("Boxed legacy text", legacy=True),
+            paragraph("After"),
+        ]
+    )
+    assert "Before" in result
+    assert "After" in result
+    assert "Boxed legacy text" in result
+    assert dict(report.records["images"].skipped) == {
+        "DrawingML text box: no embedded image; its text is omitted": 1,
+        "VML text box: no embedded image; its text is kept after its paragraph": 1,
+    }
+    assert "DrawingML text box at paragraph 2: no embedded image" in warnings
+
+
+def test_unconverted_vector_image_is_published_as_is(
+    convert: Converter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(drawings: dict[str, tuple[bytes, str]], _work: Path) -> dict[str, _media.VectorResult]:
+        return {
+            name: (f"synthetic {suffix} converter failure", [])
+            for name, (_data, suffix) in drawings.items()
+        }
+
+    monkeypatch.setattr(_media, "_convert_vectors", fail)
+    result, report, warnings = convert.reported(
+        [image("emf")],
+        relations=(("emf", "image", "media/diagram.emf", "Internal"),),
+        media={"diagram.emf": synthetic_emf()},
+    )
+    assert "](.images/Synthetic%20Guide/diagram.emf)" in result
+    assert report.status("images") == "applied"
+    assert dict(report.records["image-conversion"].skipped) == {
+        "EMF to SVG conversion failed; published as EMF": 1
+    }
+    assert "diagram.emf: synthetic .emf converter failure" in warnings
+
+
+def test_wmf_drawings_are_converted_like_emf(
+    convert: Converter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def convert_wmf(
+        drawings: dict[str, tuple[bytes, str]], _work: Path
+    ) -> dict[str, _media.VectorResult]:
+        assert [suffix for _data, suffix in drawings.values()] == [".wmf"]
+        return {name: (SVG, []) for name in drawings}
+
+    monkeypatch.setattr(_media, "_convert_vectors", convert_wmf)
+    result, report, _warnings = convert.reported(
+        [image("wmf")],
+        relations=(("wmf", "image", "media/diagram.wmf", "Internal"),),
+        media={"diagram.wmf": b"synthetic WMF"},
+    )
+    assert "](.images/Synthetic%20Guide/diagram.svg)" in result
+    assert dict(report.records["image-conversion"].applied) == {"WMF to SVG": 1}
+    assert report.status("images") == "applied"
+
+
+def test_a_documents_drawings_convert_together_and_report_separately(
+    convert: Converter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[list[str]] = []
+
+    def convert_vectors(
+        drawings: dict[str, tuple[bytes, str]], _work: Path
+    ) -> dict[str, _media.VectorResult]:
+        calls.append(sorted(suffix for _data, suffix in drawings.values()))
+        return {
+            name: (SVG, ["synthetic note"] if suffix == ".wmf" else [])
+            for name, (_data, suffix) in drawings.items()
+        }
+
+    names = ("first", "second", "third")
+    monkeypatch.setattr(_media, "_convert_vectors", convert_vectors)
+    result, report, warnings = convert.reported(
+        [image(name) for name in names],
+        relations=(
+            ("first", "image", "media/first.emf", "Internal"),
+            ("second", "image", "media/second.emf", "Internal"),
+            ("third", "image", "media/third.wmf", "Internal"),
+        ),
+        media={
+            "first.emf": synthetic_emf(),
+            "second.emf": synthetic_emf(1),
+            "third.wmf": b"synthetic WMF",
+        },
+    )
+    assert calls == [[".emf", ".emf", ".wmf"]]
+    for name in names:
+        assert f"](.images/Synthetic%20Guide/{name}.svg)" in result
+    assert dict(report.records["image-conversion"].applied) == {
+        "EMF to SVG": 2,
+        "WMF to SVG": 1,
+    }
+    assert "third.wmf: synthetic note" in warnings
+    assert warnings.count("synthetic note") == 1
+
+
+def test_picture_in_a_drawing_group_is_published(convert: Converter) -> None:
+    result, report, _warnings = convert.reported(
+        [paragraph("Before"), grouped_image(), paragraph("After")],
+        relations=(("image", "image", "media/grouped.png", "Internal"),),
+        media={"grouped.png": PNG},
+    )
+    assert ".images/Synthetic%20Guide/grouped.png" in result
+    assert "Grouped diagram" in result
+    assert "After" in result
+    assert report.status("images") == "applied"
+    assert report.status("checks") == "applied"
+
+
+def test_dry_run_has_no_final_writes_and_retains_only_requested_bundle(
+    source: Path, tmp_path: Path
+) -> None:
+    write_docx(source, [paragraph("Title.", "Heading1")])
+    output = tmp_path / "new" / "document.md"
+    diagnostics = tmp_path / "diagnostics"
+    _pipeline.convert_docx(
+        source, output, split_depth=1, dry_run=True, keep_intermediates=diagnostics
+    )
+    assert not output.parent.exists()
+    assert (
+        json.loads((diagnostics / "diagnostics.json").read_text(encoding="utf-8"))["status"]
+        == "dry-run"
+    )
+    assert (diagnostics / "markitdown.md").is_file()
+    assert (diagnostics / "pandoc.html").is_file()
+    assert (diagnostics / "reference.docx").is_file()
+
+
+def test_dry_run_without_diagnostics_leaves_directory_listing_unchanged(
+    source: Path, tmp_path: Path
+) -> None:
+    write_docx(source, [paragraph("Title.", "Heading1")])
+    before = set(tmp_path.iterdir())
+    _pipeline.convert_docx(source, dry_run=True)
+    assert set(tmp_path.iterdir()) == before
+
+
+def test_tmpdir_inside_images_is_not_used_as_scratch(
+    source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_docx(source, [paragraph("Text")])
+    images = tmp_path / ".images" / source.stem
+    images.mkdir(parents=True)
+    original = _pipeline._convert_in_work
+
+    def inspect_work(
+        paths: _models.ConversionPaths,
+        work: Path,
+        *,
+        qualify_duplicates: bool,
+        dry_run: bool,
+        report: _diagnostics.TransformReport | None = None,
+    ) -> dict[str, int]:
+        assert not work.is_relative_to(images)
+        return original(
+            paths, work, qualify_duplicates=qualify_duplicates, dry_run=dry_run, report=report
         )
 
-    def test_multiple_images_and_text_in_one_word_run_are_not_dropped(self) -> None:
-        content = ET.Element(W + "p")
+    monkeypatch.setattr(tempfile, "tempdir", str(images))
+    monkeypatch.setattr(_pipeline, "_convert_in_work", inspect_work)
+    _pipeline.convert_docx(source, dry_run=True)
+    assert not any(images.iterdir())
+    assert not source.with_suffix(".md").exists()
+
+
+def test_postpublication_diagnostic_failure_reports_outputs_are_published(
+    source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_docx(source, [paragraph("Published content")])
+    original = _diagnostics.write_diagnostics
+    diagnostics = tmp_path / "diagnostics"
+
+    def fail_final_report(
+        work: Path,
+        paths: _models.ConversionPaths,
+        findings: list[str],
+        stats: dict[str, int],
+        changes: list[_models.HeadingChange],
+        status: str,
+        error: str | None = None,
+        *,
+        source: _models.SourceDocument | None = None,
+        report: _diagnostics.TransformReport | None = None,
+    ) -> None:
+        if status == "published":
+            raise OSError("diagnostic completion failed")
+        original(work, paths, findings, stats, changes, status, error, source=source, report=report)
+
+    monkeypatch.setattr(_diagnostics, "write_diagnostics", fail_final_report)
+    with pytest.raises(_models.ConversionError, match=r"Outputs were published"):
+        _pipeline.convert_docx(source, keep_intermediates=diagnostics)
+    assert source.with_suffix(".md").read_text(encoding="utf-8") == "Published content\n"
+    report = json.loads((diagnostics / "diagnostics.json").read_text(encoding="utf-8"))
+    assert "Outputs were published" in report["error"]
+
+
+def test_dry_run_with_replacement_permission_preserves_existing_batch(
+    source: Path, tmp_path: Path
+) -> None:
+    write_docx(source, [paragraph("New", "Heading1")])
+    output = source.with_suffix(".md")
+    output.write_text("old markdown", encoding="utf-8")
+    images = tmp_path / ".images" / "Synthetic Guide"
+    images.mkdir(parents=True)
+    (images / "old.png").write_bytes(PNG)
+    pages = tmp_path / "Synthetic Guide"
+    pages.mkdir()
+    (pages / "old.md").write_text("old page", encoding="utf-8")
+    _pipeline.convert_docx(source, split_depth=2, dry_run=True, replace_generated=True)
+    assert output.read_text(encoding="utf-8") == "old markdown"
+    assert (images / "old.png").read_bytes() == PNG
+    assert (pages / "old.md").read_text(encoding="utf-8") == "old page"
+
+
+def test_explicit_markdown_replacement_is_normal_without_directory_content(
+    convert: Converter, tmp_path: Path
+) -> None:
+    output = tmp_path / "selected.md"
+    output.write_text("old", encoding="utf-8")
+    result, _stats = convert([paragraph("new")], output=output)
+    assert result == "new\n"
+
+
+def test_unsafe_destination_is_rejected_before_conversion_or_diagnostics_creation(
+    source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_docx(source, [paragraph("Text")])
+    output = tmp_path / "alias.md"
+    os.link(source, output)
+    diagnostics = tmp_path / "diagnostics"
+    prepare = mock.Mock()
+    monkeypatch.setattr(_source, "prepare_source", prepare)
+    with pytest.raises(_models.ConversionError, match=r"aliases the source DOCX"):
+        _pipeline.convert_docx(source, output, keep_intermediates=diagnostics)
+    prepare.assert_not_called()
+    assert not diagnostics.exists()
+
+
+def test_hyperlink_field_tooltips_stay_out_of_links_without_pandoc(
+    source: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # mammoth keeps the \o switch in the link target; the fields become links first.
+    simple = ET.Element(W + "p")
+    field = ET.SubElement(
+        simple,
+        W + "fldSimple",
+        {W + "instr": ' HYPERLINK "https://example.test/item" \\o "Tip" '},
+    )
+    field.append(_ooxml.word_run("Simple label"))
+    complex_field = ET.Element(W + "p")
+    for kind in ("begin", "instruction", "separate", "text", "end"):
+        run = ET.SubElement(complex_field, W + "r")
+        if kind == "instruction":
+            instruction = ET.SubElement(run, W + "instrText")
+            instruction.text = ' HYPERLINK "https://example.test/a" \\o "Tip" '
+        elif kind == "text":
+            ET.SubElement(run, W + "t").text = "Complex label"
+        else:
+            ET.SubElement(run, W + "fldChar", {W + "fldCharType": kind})
+    write_docx(source, [simple, complex_field])
+    hide_pandoc(monkeypatch)
+    report = _diagnostics.TransformReport()
+    _pipeline.convert_docx(source, report=report)
+    assert (
+        source.with_suffix(".md").read_text(encoding="utf-8")
+        == "[Simple label](https://example.test/item)\n\n"
+        "[Complex label](https://example.test/a)\n"
+    )
+    assert report.status("cleanup") == "not needed"
+
+
+def test_missing_pandoc_publishes_the_markitdown_baseline(
+    source: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_docx(
+        source,
+        [paragraph("Title", "Heading1"), paragraph("Text"), image()],
+        relations=(("image", "image", "media/image.png", "Internal"),),
+        media={"image.png": PNG},
+    )
+    hide_pandoc(monkeypatch)
+    report = _diagnostics.TransformReport()
+    stats = _pipeline.convert_docx(source, report=report)
+    result = source.with_suffix(".md").read_text(encoding="utf-8")
+    assert "# Title" in result
+    assert "Text" in result
+    assert "](.images/Synthetic%20Guide/image.png)" in result
+    assert stats["image_occurrences"] == 1
+    assert report.baseline_images == 1
+    unavailable = "Pandoc is not installed; see md-doc-converter doctor"
+    for name in ("alignment", "images", "tables", "pages", "checks"):
+        assert report.records[name].unavailable == unavailable, name
+    assert report.summary()[:2] == [
+        "docx-to-md: transforms (baseline: MarkItDown; 1 image(s) at MarkItDown positions)",
+        f"  alignment: not applied: {unavailable}",
+    ]
+
+
+def test_hidden_text_is_dropped_with_and_without_alignment(
+    convert: Converter, source: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def hidden(text: str) -> ET.Element:
+        run = _ooxml.word_run(text)
+        properties = ET.Element(W + "rPr")
+        ET.SubElement(properties, W + "vanish")
+        run.insert(0, properties)
+        return run
+
+    mixed = paragraph("Shown ")
+    mixed.extend([hidden("SECRET "), _ooxml.word_run("text.")])
+    whole = ET.Element(W + "p")
+    whole.append(hidden("HIDDEN PARAGRAPH"))
+    body = [paragraph("Title", "Heading1"), mixed, whole, paragraph("After")]
+    result, report, _warnings = convert.reported(body)
+    assert "Shown text." in result
+    assert "SECRET" not in result
+    assert "HIDDEN" not in result
+    assert "  hidden-text: applied (2)" in report.summary()
+    assert report.status("checks") == "applied"
+    write_docx(source, body)
+    hide_pandoc(monkeypatch)
+    report = _diagnostics.TransformReport()
+    _pipeline.convert_docx(source, replace_generated=True, report=report)
+    result = source.with_suffix(".md").read_text(encoding="utf-8")
+    assert "After" in result
+    assert "SECRET" not in result
+    assert "HIDDEN" not in result
+    assert "  hidden-text: applied (2)" in report.summary()
+
+
+def test_unicode_spaces_become_spaces_except_an_indent(
+    convert: Converter, source: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    body = [
+        paragraph("Title", "Heading1"),
+        paragraph("Clock 100\u00a0MHz and\u2002bit-bash\u200b."),
+        paragraph("if (a) {"),
+        paragraph("\u00a0 \u00a0 \u00a0 b = 1;\u00a0 // set"),
+        paragraph("}"),
+        table(row(cell("Name"), cell("Value"), header=True), row(cell("a\u202fb"), cell("\u00a0"))),
+        # Word alt text, as Office writes it, can hold a zero-width space.
+        image(alt="\u200bDiagram\u00a0one"),
+    ]
+    relations = (("image", "image", "media/image.png", "Internal"),)
+    media = {"image.png": PNG}
+    result, report, warnings = convert.reported(body, relations=relations, media=media)
+    assert "Clock 100 MHz and bit-bash." in result
+    # Markdown keeps only no-break spaces at the start of a paragraph.
+    assert "if (a) {\n\n\xa0\xa0\xa0\xa0\xa0\xa0b = 1; // set\n\n}" in result
+    assert "| a b | |" in result
+    assert "![Diagram one](" in result
+    assert result.count("\xa0") == 6
+    assert "  spaces: applied (11)" in report.summary()
+    assert report.status("checks") == "applied", warnings
+    write_docx(source, body, relations=relations, media=media)
+    hide_pandoc(monkeypatch)
+    report = _diagnostics.TransformReport()
+    _pipeline.convert_docx(source, replace_generated=True, report=report)
+    result = source.with_suffix(".md").read_text(encoding="utf-8")
+    assert "Clock 100 MHz and bit-bash." in result
+    assert "![Diagram one](" in result
+    assert result.count("\xa0") == 6
+    assert "  spaces: applied (11)" in report.summary()
+
+
+def test_header_breaks_become_spaces_and_cells_lose_empty_edge_lines(convert: Converter) -> None:
+    def broken(first: str, second: str) -> ET.Element:
+        run = _ooxml.word_run(first)
+        ET.SubElement(run, W + "br")
+        ET.SubElement(run, W + "t").text = second
+        return run
+
+    result, report, warnings = convert.reported(
+        [
+            paragraph("Title", "Heading1"),
+            table(
+                row(
+                    cell(paragraph_of(broken("Addr", "[31:24]"))),
+                    cell("Two", "", "paras"),
+                    header=True,
+                ),
+                row(cell(paragraph_of(broken("line1", "line2"))), cell("in", "", "side")),
+                row(cell("trailing", ""), cell("", "leading")),
+                row(cell(paragraph_of(broken("end", ""))), cell("x")),
+            ),
+        ]
+    )
+    assert (
+        "| Addr [31:24] | Two paras |\n| --- | --- |\n| line1<br>line2 | in<br><br>side |\n"
+        "| trailing | leading |\n| end | x |\n" in result
+    )
+    assert report.status("checks") == "applied", warnings
+
+
+def test_monospace_paragraphs_become_a_fenced_code_block(convert: Converter) -> None:
+    indented = code_run("wait();")
+    indented.insert(1, ET.Element(W + "tab"))
+    blank = ET.Element(W + "p")
+    mark = ET.SubElement(ET.SubElement(blank, W + "pPr"), W + "rPr")
+    ET.SubElement(mark, W + "rFonts", {W + "ascii": "Consolas"})
+    # A line break that starts the code leaves no empty first line.
+    first = code_run("if (state == \u201cbusy\u201d) {")
+    first.insert(1, ET.Element(W + "br"))
+    body = [
+        paragraph("Title", "Heading1"),
+        paragraph("Before."),
+        paragraph_of(first),
+        paragraph_of(indented),
+        blank,
+        paragraph_of(code_run("} # end \u2013 done")),
+        paragraph_of(code_run("```")),
+        paragraph(),
+        paragraph("After."),
+    ]
+    result, report, warnings = convert.reported(body)
+    assert (
+        'Before.\n\n````text\nif (state == "busy") {\n    wait();\n\n'
+        "} # end - done\n```\n````\n\nAfter." in result
+    )
+    assert (
+        "  code: applied (1 code block(s), 3 curly quote(s) and dash(es) straightened)"
+        in report.summary()
+    )
+    assert report.status("checks") == "applied", warnings
+
+
+def test_a_one_cell_monospace_table_becomes_a_code_block(convert: Converter) -> None:
+    listing = cell(
+        paragraph_of(code_run("x = <a> & `b`")), paragraph(), paragraph_of(code_run("  y = 2"))
+    )
+    body = [
+        paragraph("Title", "Heading1"),
+        paragraph("Before."),
+        table(row(listing), columns=1),
+        paragraph("After."),
+        table(row(cell(paragraph_of(code_run("not code"))), cell("Next")), columns=2),
+    ]
+    result, report, warnings = convert.reported(body)
+    assert "Before.\n\n```text\nx = <a> & `b`\n\n  y = 2\n```\n\nAfter." in result
+    assert "| `not code` | Next |" in result
+    assert (
+        "  code: applied (1 code block(s), 1 inline code span(s), "
+        "1 one-cell table(s) made code blocks)" in report.summary()
+    )
+    assert report.status("checks") == "applied", warnings
+
+
+def test_monospace_text_becomes_inline_code_outside_headings_links_and_fields(
+    convert: Converter,
+) -> None:
+    bold = code_run("reg[3:0] ")
+    properties = bold.find(W + "rPr")
+    assert properties is not None
+    properties.insert(0, ET.Element(W + "b"))
+    broken = code_run("one")
+    ET.SubElement(broken, W + "br")
+    ET.SubElement(broken, W + "t").text = "two"
+    linked = hyperlink("linked label", relation="web")
+    monospace = code_run("").find(W + "rPr")
+    assert monospace is not None
+    for run in linked.iter(W + "r"):
+        run.insert(0, copy.deepcopy(monospace))
+    field: list[ET.Element] = []
+    for kind in ("begin", "instruction", "separate", "result", "end"):
+        run = code_run("Field Author" if kind == "result" else "")
+        if kind == "instruction":
+            run.remove(run[1])
+            ET.SubElement(run, W + "instrText").text = " AUTHOR "
+        elif kind != "result":
+            run.remove(run[1])
+            ET.SubElement(run, W + "fldChar", {W + "fldCharType": kind})
+        field.append(run)
+    body = [
+        paragraph("Title", "Heading1"),
+        paragraph_of(
+            _ooxml.word_run("Set "),
+            code_run("ctrl_"),
+            bold,
+            _ooxml.word_run("to \u201cidle\u201d."),
+        ),
+        paragraph_of(_ooxml.word_run("Run "), code_run("`cmd`"), _ooxml.word_run(" now.")),
+        paragraph_of(_ooxml.word_run("Broken "), broken, _ooxml.word_run(" end.")),
+        linked,
+        paragraph_of(_ooxml.word_run("By "), *field),
+        paragraph_of(code_run("Monospace heading"), style="Heading2"),
+        table(
+            row(cell("Field"), cell("Value"), header=True),
+            row(cell("mode"), cell(paragraph_of(code_run("a|b")))),
+        ),
+    ]
+    result, report, warnings = convert.reported(
+        body, relations=(("web", "hyperlink", "https://example.test/doc", "External"),)
+    )
+    assert "Set `ctrl_reg[3:0]` to “idle”." in result
+    assert "Run `` `cmd` `` now." in result
+    assert "Broken `one`\n\n`two` end." in result
+    assert "[linked label](https://example.test/doc)" in result
+    assert "By Field Author" in result
+    assert "## Monospace heading" in result
+    assert "| mode | `a\\|b` |" in result
+    assert "  code: applied (5 inline code span(s))" in report.summary()
+    assert report.status("checks") == "applied", warnings
+
+
+def test_failed_alignment_falls_back_to_the_markitdown_baseline(
+    convert: Converter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fail_alignment(monkeypatch)
+    result, report, warnings = convert.reported(
+        [paragraph("Title", "Heading1"), image(), paragraph("Text")],
+        relations=(("image", "image", "media/image.png", "Internal"),),
+        media={"image.png": PNG},
+    )
+    assert "Text" in result
+    assert "](.images/Synthetic%20Guide/image.png)" in result
+    assert report.records["alignment"].failure == "synthetic alignment failure"
+    assert report.records["tables"].unavailable == "alignment failed; see alignment"
+    assert report.baseline_images == 1
+    assert report.status("checks") == "applied"
+    assert "alignment: failed and was not applied: synthetic alignment failure" in warnings
+
+
+def test_a_failing_layer_is_reported_and_the_rest_is_published(
+    convert: Converter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(_markdown: str) -> tuple[str, int]:
+        raise RuntimeError("synthetic layer failure")
+
+    monkeypatch.setattr(_normalization, "normalize_unordered_lists", fail)
+    result, report, _warnings = convert.reported([paragraph("Text")])
+    assert result == "Text\n"
+    assert report.status("cleanup") == "not applied"
+    assert report.records["cleanup"].failure == "RuntimeError: synthetic layer failure"
+    assert report.status("checks") == "applied"
+
+
+def test_heading_level_seven_is_kept_as_a_paragraph(convert: Converter) -> None:
+    deep = paragraph("Level seven")
+    properties = ET.Element(W + "pPr")
+    ET.SubElement(properties, W + "outlineLvl", {W + "val": "6"})
+    deep.insert(0, properties)
+    result, report, _warnings = convert.reported([paragraph("Title", "Heading1"), deep])
+    assert "Level seven" in result
+    assert "# Level seven" not in result
+    assert dict(report.records["headings"].skipped) == {
+        "Word heading levels 7-9 have no Markdown equivalent; kept as a paragraph": 1
+    }
+
+
+def test_unnamed_and_duplicate_bookmarks_are_reported(convert: Converter) -> None:
+    result, report, _warnings = convert.reported(
+        [
+            bookmark("", "Unnamed target"),
+            bookmark("_Twice", "First", "Heading1"),
+            bookmark("_Twice", "Second", "Heading1"),
+            hyperlink("Go", anchor="_Twice"),
+        ]
+    )
+    assert "[Go](#first)" in result
+    assert dict(report.records["bookmarks"].skipped) == {
+        "Word bookmark has no name; dropped": 1,
+        "duplicate Word bookmark name; the later one is dropped": 1,
+    }
+
+
+# The page of the level-3 heading at split depth 3 or more, and its link up.
+DETAIL_PAGE = ("guide/01-first/01-third/01-detail.md", "# Detail\n\n[Up](../../01-first.md#first)")
+
+
+# Headings 1, 3, and 6 become levels 1, 2, and 3, and each depth splits at them.
+@pytest.mark.parametrize(
+    ("depth", "pages"),
+    [
+        pytest.param(
+            0,
+            [("guide.md", "# First\n\n[Deeper](#third)\n\n## Third\n\n### Detail\n\n[Up](#first)")],
+            id="depth-0",
+        ),
+        pytest.param(
+            1, [("guide/01-first.md", "## Third\n\n### Detail\n\n[Up](#first)")], id="depth-1"
+        ),
+        pytest.param(
+            2,
+            [
+                ("guide/01-first.md", "[Deeper](01-first/01-third.md#third)"),
+                (
+                    "guide/01-first/01-third.md",
+                    "# Third\n\n## Detail\n\n[Up](../01-first.md#first)",
+                ),
+            ],
+            id="depth-2",
+        ),
+        pytest.param(3, [DETAIL_PAGE], id="depth-3"),
+        pytest.param(4, [DETAIL_PAGE], id="depth-4"),
+        pytest.param(5, [DETAIL_PAGE], id="depth-5"),
+        pytest.param(6, [DETAIL_PAGE], id="depth-6"),
+    ],
+)
+def test_split_depths_follow_closed_heading_levels_and_bookmark_links(
+    depth: int, pages: list[tuple[str, str]], source: Path, tmp_path: Path
+) -> None:
+    body = [
+        paragraph("Preamble"),
+        bookmark("_A", "First.", "Heading1"),
+        hyperlink("Deeper", anchor="_B"),
+        bookmark("_B", "Third.", "Heading3"),
+        paragraph("Detail.", "Heading6"),
+        hyperlink("Up", anchor="_A"),
+    ]
+    write_docx(source, body)
+    stats = _pipeline.convert_docx(source, tmp_path / "guide.md", split_depth=depth)
+    for page, text in pages:
+        assert text in (tmp_path / page).read_text(encoding="utf-8")
+    assert stats["pages"] >= 1
+
+
+def test_depth_zero_preserves_previous_page_tree(convert: Converter, tmp_path: Path) -> None:
+    old = tmp_path / "Synthetic Guide"
+    old.mkdir()
+    (old / "old.md").write_text("old", encoding="utf-8")
+    convert([paragraph("New text")])
+    assert (old / "old.md").read_text(encoding="utf-8") == "old"
+
+
+def test_duplicate_qualification_is_opt_in(convert: Converter) -> None:
+    result, stats = convert(
+        [
+            bookmark("_A", "Same.", "Heading3"),
+            bookmark("_B", "Same.", "Heading3"),
+            hyperlink("First", anchor="_A"),
+            hyperlink("Second", anchor="_B"),
+        ],
+        qualify=True,
+    )
+    assert "### Same - occurrence 1" in result
+    assert "### Same - occurrence 2" in result
+    assert "<a " not in result
+    assert "[First](#same---occurrence-1)" in result
+    assert "[Second](#same---occurrence-2)" in result
+    assert stats["qualified_headings"] == 2
+
+
+def test_generated_toc_results_are_retained(convert: Converter, tmp_path: Path) -> None:
+    index = ET.Element(W + "p")
+    field = ET.SubElement(index, W + "fldSimple", {W + "instr": 'TOC \\o "1-3" \\h'})
+    field.append(_ooxml.word_run("Cached contents entry"))
+    result, _stats = convert(
+        [
+            paragraph("Contents", "Heading1"),
+            index,
+            paragraph("Body", "Heading1"),
+        ],
+        split_depth=1,
+    )
+    assert "Contents" in result
+    contents = tmp_path / "Synthetic Guide" / "01-contents.md"
+    assert "Cached contents entry" in contents.read_text(encoding="utf-8")
+
+
+def test_complex_toc_field_results_and_blank_rows_survive(convert: Converter, pandoc: str) -> None:
+    start = ET.Element(W + "p")
+    run = ET.SubElement(start, W + "r")
+    ET.SubElement(run, W + "fldChar", {W + "fldCharType": "begin"})
+    code_run = ET.SubElement(start, W + "r")
+    ET.SubElement(code_run, W + "instrText").text = ' TOC \\o "1-3" \\h '
+    end_run = ET.SubElement(start, W + "r")
+    ET.SubElement(end_run, W + "fldChar", {W + "fldCharType": "separate"})
+    end = ET.Element(W + "p")
+    ET.SubElement(ET.SubElement(end, W + "r"), W + "fldChar", {W + "fldCharType": "end"})
+    result, _stats = convert(
+        [
+            paragraph("Contents", "Heading1"),
+            start,
+            paragraph("Cached field entry"),
+            end,
+            table(row(cell(""), cell(""))),
+        ]
+    )
+    assert "Cached field entry" in result
+    assert len(list(_reference.pandoc_html(result, pandoc).iter("tr"))) == 1
+
+
+@pytest.mark.parametrize(
+    "simple", [pytest.param(False, id="complex-fields"), pytest.param(True, id="simple-fields")]
+)
+def test_toc_page_reference_fields_are_dropped_from_their_links(
+    simple: bool, convert: Converter, pandoc: str
+) -> None:
+    entries: list[ET.Element] = []
+    for name, title, page in (("_One", "First ", "1"), ("_Two", "Second ", "2")):
+        entry = hyperlink(title, anchor=name)
+        link = entry.find(W + "hyperlink")
+        assert link is not None
+        link.extend(page_reference(name, page, simple=simple))
+        entries.append(entry)
+    result, report, _warnings = convert.reported(
+        [
+            paragraph("Contents.", "Heading1"),
+            *entries,
+            bookmark("_One", "First.", "Heading1"),
+            bookmark("_Two", "Second.", "Heading3"),
+        ]
+    )
+
+    parsed = _reference.pandoc_html(result, pandoc)
+    assert [(node.get("href"), "".join(node.itertext())) for node in parsed.iter("a")] == [
+        ("#first", "First"),
+        ("#second", "Second"),
+    ]
+    assert report.records["fields"].applied["table-of-contents page number(s) dropped"] == 2
+    assert "## Second\n" in result
+
+
+def test_word_table_of_contents_keeps_entry_numbers_and_links_without_pages(
+    convert: Converter,
+) -> None:
+    result, report, _warnings = convert.reported(
+        [
+            paragraph("Contents"),
+            toc_entry("_Toc1", "1", "Introduction", "3", begin=True),
+            toc_entry("_Toc2", "2", "Setup", "5", end=True),
+            bookmark("_Toc1", "Introduction", "Heading1"),
+            paragraph("Text."),
+            bookmark("_Toc2", "Setup", "Heading1"),
+            paragraph("Steps."),
+        ]
+    )
+
+    assert "[1 Introduction](#introduction)\n\n[2 Setup](#setup)\n" in result
+    assert report.status("links") == "applied"
+    assert report.status("checks") == "applied"
+    assert not report.records["checks"].skipped
+
+
+def test_literal_word_placeholders_entities_and_tables_keep_their_text(
+    convert: Converter, pandoc: str
+) -> None:
+    split = paragraph("<sp", bold=True)
+    split.append(_ooxml.word_run("eeds>"))
+    result, _stats = convert(
+        [
+            paragraph("<Mode> &copy;.", "Heading3"),
+            paragraph("Choose <speeds> &copy;."),
+            paragraph("> Literal boundary"),
+            split,
+            hyperlink("<destination> &copy;", anchor="_Target"),
+            bookmark("_Target", "Target"),
+            table(
+                row(cell("Header"), header=True),
+                row(cell("<width> &copy;")),
+                columns=1,
+            ),
+            table(row(cell("<height> &copy;", colspan=2))),
+        ]
+    )
+
+    parsed = _reference.pandoc_html(result, pandoc)
+    visible = "".join(parsed.itertext())
+    for literal in (
+        "<Mode> &copy;",
+        "Choose <speeds> &copy;.",
+        "> Literal boundary",
+        "<speeds>",
+        "<destination> &copy;",
+        "<width> &copy;",
+        "<height> &copy;",
+    ):
+        assert literal in visible
+    assert not list(parsed.iter("speeds"))
+    assert not list(parsed.iter("blockquote"))
+    assert _validation.collect_references(parsed).links == ["#mode-copy"]
+    # The heading loses its period, not the semicolon of its entity-like text.
+    assert "".join(next(parsed.iter("h3")).itertext()) == "<Mode> &copy;"
+
+
+def test_rich_table_heading_is_not_a_split_page_heading(
+    convert: Converter, tmp_path: Path, pandoc: str
+) -> None:
+    convert(
+        [
+            paragraph("Chapter.", "Heading1"),
+            table(row(cell(paragraph("In-cell heading.", "Heading1"))), columns=1),
+        ],
+        split_depth=2,
+    )
+    child = tmp_path / "Synthetic Guide" / "01-chapter.md"
+    content = child.read_text(encoding="utf-8")
+    assert "<h1>In-cell heading</h1>" in content
+    assert (
+        _validation.collect_references(_reference.pandoc_html(content, pandoc)).headings.count(1)
+        == 1
+    )
+
+
+def test_urls_as_link_text_stay_one_link(convert: Converter, pandoc: str) -> None:
+    # GFM's bare-URL autolinks would nest a link in the link text and break the outer one.
+    url = "https://example.test/a_b_c?x=1&y=2"
+    result, report, _warnings = convert.reported(
+        [
+            hyperlink(url, relation="site"),
+            hyperlink("www.example.test/a_b", relation="www"),
+            paragraph("See https://example.test/plain_path for details."),
+        ],
+        relations=(
+            ("site", "hyperlink", url, "External"),
+            ("www", "hyperlink", "https://www.example.test/a_b", "External"),
+        ),
+    )
+    assert "[[" not in result
+    assert "&#92;" not in result
+    links = [
+        (node.get("href"), "".join(node.itertext()))
+        for node in _reference.pandoc_html(result, pandoc).iter("a")
+    ]
+    assert links == [
+        (url, url),
+        ("https://www.example.test/a_b", "www.example.test/a_b"),
+        # A bare URL in prose becomes an autolink of its own.
+        ("https://example.test/plain_path", "https://example.test/plain_path"),
+    ]
+    assert "See <https://example.test/plain_path> for details." in result
+    assert report.status("checks") == "applied"
+    assert not report.records["checks"].skipped
+
+
+def test_hyperlink_field_preserves_destination_label_and_screen_tip(convert: Converter) -> None:
+    content = ET.Element(W + "p")
+    field = ET.SubElement(
+        content,
+        W + "fldSimple",
+        {
+            W + "instr": ' HYPERLINK "https://example.test/item" \\o "Say \\"hi\\"" ',
+        },
+    )
+    field.append(_ooxml.word_run("Source label"))
+    result, _stats = convert([content])
+    assert result == '[Source label](https://example.test/item "Say \\"hi\\"")\n'
+
+
+def test_complex_hyperlink_field_and_tooltip_preserve_link(convert: Converter) -> None:
+    content = ET.Element(W + "p")
+    for kind in ("begin", "instruction", "separate", "text", "end"):
         run = ET.SubElement(content, W + "r")
-        ET.SubElement(run, W + "t").text = "Before "
-        for _ in range(2):
+        if kind == "instruction":
+            ET.SubElement(
+                run, W + "instrText"
+            ).text = ' HYPERLINK "https://example.test/a" \\o "Tip" '
+        elif kind == "text":
+            ET.SubElement(run, W + "t").text = "Cached label"
+        else:
+            ET.SubElement(run, W + "fldChar", {W + "fldCharType": kind})
+    result, _stats = convert([content])
+    assert result == '[Cached label](https://example.test/a "Tip")\n'
+
+
+@pytest.mark.parametrize(
+    "bold", [pytest.param(False, id="plain"), pytest.param(True, id="bold-tab-and-images")]
+)
+def test_field_boundary_run_content_survives_real_conversion(
+    bold: bool, convert: Converter, pandoc: str
+) -> None:
+    content = boundary_hyperlink_field()
+    if bold:
+        for run in (content[0], content[-1]):
+            properties = ET.Element(W + "rPr")
+            ET.SubElement(properties, W + "b")
+            run.insert(0, properties)
+        content[0].insert(2, ET.Element(W + "tab"))
+        for run in (content[0], content[-1]):
             drawing = image().find(f"./{W}r/{W}drawing")
             assert drawing is not None
-            run.append(drawing)
-        ET.SubElement(run, W + "t").text = " After"
-        result, stats = self.convert(
-            [content],
-            relations=(("image", "image", "media/image.png", "Internal"),),
-            media={"image.png": PNG},
-        )
-        assert "Before" in result
-        assert "After" in result
-        assert stats["image_occurrences"] == 2
+            run.insert(2, drawing)
+    result, _stats = convert(
+        [content],
+        relations=(("image", "image", "media/image.png", "Internal"),),
+        media={"image.png": PNG},
+    )
+    parsed = _reference.pandoc_html(result, pandoc)
+    visible = "".join(parsed.itertext())
+    assert "Before" in visible
+    assert "Cached label" in visible
+    assert "After" in visible
+    assert _validation.collect_references(parsed).links == ["https://example.test/plain"]
+    if bold:
+        strong = ["".join(node.itertext()) for node in parsed.iter("strong")]
+        assert any("Before" in text for text in strong)
+        assert any("After" in text for text in strong)
+        assert len(_validation.collect_references(parsed).images) == 2
 
-    def test_native_svg_extension_is_preferred_over_raster_fallback(self) -> None:
-        content = image("png")
-        blip = content.find(f".//{_ooxml.DRAWING}blip")
-        assert blip is not None
-        extension = ET.SubElement(
-            ET.SubElement(blip, _ooxml.DRAWING + "extLst"), _ooxml.DRAWING + "ext"
-        )
-        ET.SubElement(extension, _ooxml.SVG_DRAWING + "svgBlip", {R + "embed": "svg"})
-        result, stats = self.convert(
-            [content],
-            relations=(
-                ("png", "image", "media/fallback.png", "Internal"),
-                ("svg", "image", "media/vector.svg", "Internal"),
-            ),
-            media={"fallback.png": PNG, "vector.svg": SVG},
-        )
-        assert "vector.svg" in result
-        assert "fallback.png" not in result
-        assert stats["unique_images"] == 1
 
-    def test_legacy_picture_and_object_previews_keep_metadata(self) -> None:
-        for kind in ("pict", "object"):
-            with self.subTest(kind=kind):
-                result, stats = self.convert(
-                    [legacy_image(kind)],
-                    output=self.root / f"{kind}.md",
-                    relations=(("image", "image", "media/image.png", "Internal"),),
-                    media={"image.png": PNG},
-                )
-                assert stats["image_occurrences"] == 1
-                assert result.count("image.png") == 1
-                parsed = _reference.pandoc_html(result, self.pandoc)
-                assert next(parsed.iter("img")).get("alt") == "Legacy preview"
-
-    def test_packaged_picture_fallback_is_used_for_unsupported_native_drawing(self) -> None:
+@pytest.mark.parametrize("kind", ["complex", "simple"])
+def test_hyperlink_url_containing_toc_is_not_a_toc_field(
+    kind: str, convert: Converter, pandoc: str
+) -> None:
+    target = "https://example.test/TOC"
+    instruction = f' HYPERLINK "{target}" '
+    if kind == "complex":
+        content = boundary_hyperlink_field()
+        code = content.find(f".//{W}instrText")
+        assert code is not None
+        code.text = instruction
+    else:
         content = ET.Element(W + "p")
-        alternate = ET.SubElement(ET.SubElement(content, W + "r"), _ooxml.MC + "AlternateContent")
-        choice = ET.SubElement(alternate, _ooxml.MC + "Choice", {"Requires": "wpg"})
-        ET.SubElement(choice, W + "drawing")
-        fallback = ET.SubElement(alternate, _ooxml.MC + "Fallback")
-        picture = legacy_image().find(f"./{W}r/{W}pict")
-        assert picture is not None
-        fallback.append(picture)
-        result, stats = self.convert(
-            [content],
-            relations=(("image", "image", "media/image.png", "Internal"),),
-            media={"image.png": PNG},
-        )
-        assert stats["image_occurrences"] == 1
-        assert "Legacy preview" in result
+        field = ET.SubElement(content, W + "fldSimple", {W + "instr": instruction})
+        field.append(_ooxml.word_run("Cached label"))
+    result, _stats = convert([content])
+    assert _validation.collect_references(_reference.pandoc_html(result, pandoc)).links == [target]
 
-    def test_legacy_picture_with_a_text_box_keeps_each_once(self) -> None:
-        content = legacy_image()
-        picture = content.find(f"./{W}r/{W}pict")
-        assert picture is not None
-        caption = ET.SubElement(
-            picture, _ooxml.VML + "shape", {"id": "caption", "type": "#_x0000_t202"}
-        )
-        box = ET.SubElement(ET.SubElement(caption, _ooxml.VML + "textbox"), _ooxml.TEXT_BOX_CONTENT)
-        box.append(paragraph("Caption text"))
-        result, stats = self.convert(
-            [content],
-            relations=(("image", "image", "media/image.png", "Internal"),),
-            media={"image.png": PNG},
-        )
-        assert stats["image_occurrences"] == 1
-        assert result.count("image.png") == 1
-        assert result.count("Caption text") == 1
 
-    def test_split_images_remain_relative_to_derived_namespace(self) -> None:
-        self.convert(
-            [paragraph("Chapter.", "Heading1"), paragraph("Deep.", "Heading3"), image()],
-            split_depth=3,
-            relations=(("image", "image", "media/image.png", "Internal"),),
-            media={"image.png": PNG},
-        )
-        child = self.root / "Synthetic Guide" / "01-chapter" / "01-deep.md"
-        assert "../../.images/Synthetic%20Guide/image.png" in child.read_text(encoding="utf-8")
+def test_custom_style_outline_level_is_preserved(convert: Converter) -> None:
+    source = paragraph("Custom heading.")
+    properties = ET.Element(W + "pPr")
+    ET.SubElement(properties, W + "outlineLvl", {W + "val": "4"})
+    source.insert(0, properties)
+    result, _stats = convert([source])
+    assert "##### Custom heading\n" in result
 
-    def test_emf_svg_publication_collision_gets_a_distinct_name(self) -> None:
-        def convert_vectors(
-            drawings: dict[str, tuple[bytes, str]], _work: Path
-        ) -> dict[str, _media.VectorResult]:
-            assert [suffix for _data, suffix in drawings.values()] == [".emf"]
-            return {name: (SVG, []) for name in drawings}
 
-        with patch.object(_media, "_convert_vectors", convert_vectors):
-            result, report, warnings = self.convert_reported(
-                [image("emf"), image("svg")],
-                relations=(
-                    ("emf", "image", "media/image.emf", "Internal"),
-                    ("svg", "image", "media/image.svg", "Internal"),
-                ),
-                media={"image.emf": synthetic_emf(), "image.svg": SVG},
+def test_encrypted_container_is_rejected_without_bypass(
+    source: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source.write_bytes(bytes.fromhex("d0cf11e0a1b11ae1") + b"encrypted office container")
+    run = mock.Mock()
+    monkeypatch.setattr(_reference, "run_command", run)
+    with pytest.raises(_models.ConversionError, match=r"not bypassed"):
+        _pipeline.convert_docx(source)
+    run.assert_not_called()
+
+
+def test_word_editing_protection_and_classification_metadata_remain_in_bundle(
+    source: Path, tmp_path: Path
+) -> None:
+    protection = (
+        b'<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        b'<w:documentProtection w:edit="readOnly" w:enforcement="1"/></w:settings>'
+    )
+    write_docx(source, [paragraph("Protected source")], extras={"word/settings.xml": protection})
+    diagnostics = tmp_path / "diagnostics"
+    _pipeline.convert_docx(source, keep_intermediates=diagnostics)
+    with zipfile.ZipFile(diagnostics / "reference.docx") as archive:
+        assert archive.read("word/settings.xml") == protection
+
+
+def test_one_level_lists_in_table_cells_become_lines(convert: Converter) -> None:
+    result, report, warnings = convert.reported(
+        [
+            table(
+                row(cell("Name"), cell("Steps"), header=True),
+                row(cell("A"), cell(numbered("first"), numbered("second"))),
+                row(cell("B"), cell(numbered("bullet", number="2"))),
+                row(cell("C"), cell("1. typed", numbered("listed"))),
+                columns=2,
             )
-        assert "](.images/Synthetic%20Guide/image.svg)" in result
-        assert "](.images/Synthetic%20Guide/image-2.svg)" in result
-        assert "Image name image.svg is already used; published as image-2.svg" in warnings
-        assert report.status("images") == "applied"
-        assert report.status("checks") == "applied"
+        ],
+        extras={"word/numbering.xml": numbering_xml("decimal", 1, second="bullet")},
+    )
+    assert "| A | 1. first<br>2. second |" in result
+    assert "| B | • bullet |" in result
+    assert "| C | 1. typed<br>3. listed |" in result
+    assert "<table" not in result
+    assert "remains HTML" not in warnings
+    # The final-table check expects the markers before Word's list items only.
+    assert report.status("checks") == "applied"
 
-    def test_media_with_same_basename_in_distinct_package_paths_are_not_flattened(self) -> None:
-        result, _stats = self.convert(
-            [image("one"), image("two")],
-            relations=(
-                ("one", "image", "media/one/image.png", "Internal"),
-                ("two", "image", "media/two/image.png", "Internal"),
-            ),
-            media={"one/image.png": PNG, "two/image.png": PNG},
-        )
-        assert "/one/image.png" in result
-        assert "/two/image.png" in result
 
-    def test_missing_media_is_dropped_and_reported_in_diagnostics(self) -> None:
-        write_docx(
-            self.source,
-            [paragraph("Before"), image(), paragraph("After")],
-            relations=(("image", "image", "media/missing.png", "Internal"),),
-        )
-        diagnostics = self.root / "diagnostics"
-        report = _diagnostics.TransformReport()
-        stderr = io.StringIO()
-        with contextlib.redirect_stderr(stderr):
-            _pipeline.convert_docx(self.source, keep_intermediates=diagnostics, report=report)
-        result = self.source.with_suffix(".md").read_text(encoding="utf-8")
-        assert "Before" in result
-        assert "After" in result
-        assert "![" not in result
-        assert (
-            "Missing Word media part 'word/media/missing.png'; image dropped" in stderr.getvalue()
-        )
-        saved = json.loads((diagnostics / "diagnostics.json").read_text(encoding="utf-8"))
-        assert saved["status"] == "published"
-        assert saved["baseline"] == "MarkItDown"
-        assert saved["transforms"]["images"]["status"] == "not applied"
-        assert saved["transforms"]["images"]["not_applied"] == {
-            "Missing Word media part '...'; image dropped": 1
-        }
-
-    def test_external_images_are_not_fetched_and_are_reported(self) -> None:
-        result, report, warnings = self.convert_reported(
-            [paragraph("Before"), image(), paragraph("After")],
-            relations=(("image", "image", "https://example.test/image.png", "External"),),
-        )
-        assert "After" in result
-        assert "![" not in result
-        assert "example.test" not in result
-        assert "not fetched: 'https://example.test/image.png'; image dropped" in warnings
-        assert report.status("images") == "not applied"
-
-    def test_linked_image_with_an_embedded_copy_uses_the_copy(self) -> None:
-        content = image()
-        blip = next(content.iter(_ooxml.DRAWING + "blip"))
-        blip.set(R + "link", "linked")
-        result, report, _warnings = self.convert_reported(
-            [content],
-            relations=(
-                ("image", "image", "media/image.png", "Internal"),
-                ("linked", "image", "cid:image001.png@01DA1234.5678ABCD", "External"),
-            ),
-            media={"image.png": PNG},
-        )
-        assert "](.images/Synthetic%20Guide/image.png)" in result
-        assert "cid:" not in result
-        assert report.status("images") == "applied"
-        assert report.status("checks") == "applied"
-
-    def test_text_boxes_are_reported_without_stopping_conversion(self) -> None:
-        result, report, warnings = self.convert_reported(
-            [
-                paragraph("Before"),
-                text_box("Boxed drawing text"),
-                text_box("Boxed legacy text", legacy=True),
-                paragraph("After"),
-            ]
-        )
-        assert "Before" in result
-        assert "After" in result
-        assert "Boxed legacy text" in result
-        assert dict(report.records["images"].skipped) == {
-            "DrawingML text box: no embedded image; its text is omitted": 1,
-            "VML text box: no embedded image; its text is kept after its paragraph": 1,
-        }
-        assert "DrawingML text box at paragraph 2: no embedded image" in warnings
-
-    def test_unconverted_vector_image_is_published_as_is(self) -> None:
-        def fail(
-            drawings: dict[str, tuple[bytes, str]], _work: Path
-        ) -> dict[str, _media.VectorResult]:
-            return {
-                name: (f"synthetic {suffix} converter failure", [])
-                for name, (_data, suffix) in drawings.items()
-            }
-
-        with patch.object(_media, "_convert_vectors", fail):
-            result, report, warnings = self.convert_reported(
-                [image("emf")],
-                relations=(("emf", "image", "media/diagram.emf", "Internal"),),
-                media={"diagram.emf": synthetic_emf()},
+def test_indented_and_unnumbered_cell_paragraphs_become_lines(convert: Converter) -> None:
+    indented = paragraph("Indented note")
+    properties = ET.Element(W + "pPr")
+    ET.SubElement(properties, W + "ind", {W + "left": "720"})
+    indented.insert(0, properties)
+    # Word turns off one paragraph's number with numId 0; Pandoc makes it a further
+    # paragraph of the item above.
+    unnumbered = numbered("more about first")
+    numbering = unnumbered.find(f"./{W}pPr/{W}numPr/{W}numId")
+    assert numbering is not None
+    numbering.set(W + "val", "0")
+    result, report, warnings = convert.reported(
+        [
+            table(
+                row(cell("Name"), cell("Notes"), header=True),
+                row(cell("A"), cell(paragraph("Lead"), indented)),
+                row(cell("B"), cell(numbered("first"), unnumbered, numbered("second"))),
+                columns=2,
             )
-        assert "](.images/Synthetic%20Guide/diagram.emf)" in result
-        assert report.status("images") == "applied"
-        assert dict(report.records["image-conversion"].skipped) == {
-            "EMF to SVG conversion failed; published as EMF": 1
-        }
-        assert "diagram.emf: synthetic .emf converter failure" in warnings
+        ],
+        extras={"word/numbering.xml": numbering_xml("decimal", 1)},
+    )
+    assert "| A | Lead<br>Indented note |" in result
+    assert "| B | 1. first<br>more about first<br>2. second |" in result
+    assert "<table" not in result
+    assert "remains HTML" not in warnings
+    assert report.status("checks") == "applied"
 
-    def test_wmf_drawings_are_converted_like_emf(self) -> None:
-        def convert_wmf(
-            drawings: dict[str, tuple[bytes, str]], _work: Path
-        ) -> dict[str, _media.VectorResult]:
-            assert [suffix for _data, suffix in drawings.values()] == [".wmf"]
-            return {name: (SVG, []) for name in drawings}
 
-        with patch.object(_media, "_convert_vectors", convert_wmf):
-            result, report, _warnings = self.convert_reported(
-                [image("wmf")],
-                relations=(("wmf", "image", "media/diagram.wmf", "Internal"),),
-                media={"diagram.wmf": b"synthetic WMF"},
-            )
-        assert "](.images/Synthetic%20Guide/diagram.svg)" in result
-        assert dict(report.records["image-conversion"].applied) == {"WMF to SVG": 1}
-        assert report.status("images") == "applied"
-
-    def test_a_documents_drawings_convert_together_and_report_separately(self) -> None:
-        calls: list[list[str]] = []
-
-        def convert_vectors(
-            drawings: dict[str, tuple[bytes, str]], _work: Path
-        ) -> dict[str, _media.VectorResult]:
-            calls.append(sorted(suffix for _data, suffix in drawings.values()))
-            return {
-                name: (SVG, ["synthetic note"] if suffix == ".wmf" else [])
-                for name, (_data, suffix) in drawings.items()
-            }
-
-        names = ("first", "second", "third")
-        with patch.object(_media, "_convert_vectors", convert_vectors):
-            result, report, warnings = self.convert_reported(
-                [image(name) for name in names],
-                relations=(
-                    ("first", "image", "media/first.emf", "Internal"),
-                    ("second", "image", "media/second.emf", "Internal"),
-                    ("third", "image", "media/third.wmf", "Internal"),
-                ),
-                media={
-                    "first.emf": synthetic_emf(),
-                    "second.emf": synthetic_emf(1),
-                    "third.wmf": b"synthetic WMF",
-                },
-            )
-        assert calls == [[".emf", ".emf", ".wmf"]]
-        for name in names:
-            assert f"](.images/Synthetic%20Guide/{name}.svg)" in result
-        assert dict(report.records["image-conversion"].applied) == {
-            "EMF to SVG": 2,
-            "WMF to SVG": 1,
-        }
-        assert "third.wmf: synthetic note" in warnings
-        assert warnings.count("synthetic note") == 1
-
-    def test_picture_in_a_drawing_group_is_published(self) -> None:
-        result, report, _warnings = self.convert_reported(
-            [paragraph("Before"), grouped_image(), paragraph("After")],
-            relations=(("image", "image", "media/grouped.png", "Internal"),),
-            media={"grouped.png": PNG},
-        )
-        assert ".images/Synthetic%20Guide/grouped.png" in result
-        assert "Grouped diagram" in result
-        assert "After" in result
-        assert report.status("images") == "applied"
-        assert report.status("checks") == "applied"
-
-    def test_dry_run_has_no_final_writes_and_retains_only_requested_bundle(self) -> None:
-        write_docx(self.source, [paragraph("Title.", "Heading1")])
-        output = self.root / "new" / "document.md"
-        diagnostics = self.root / "diagnostics"
-        _pipeline.convert_docx(
-            self.source, output, split_depth=1, dry_run=True, keep_intermediates=diagnostics
-        )
-        assert not output.parent.exists()
-        assert (
-            json.loads((diagnostics / "diagnostics.json").read_text(encoding="utf-8"))["status"]
-            == "dry-run"
-        )
-        assert (diagnostics / "markitdown.md").is_file()
-        assert (diagnostics / "pandoc.html").is_file()
-        assert (diagnostics / "reference.docx").is_file()
-
-    def test_dry_run_without_diagnostics_leaves_directory_listing_unchanged(self) -> None:
-        write_docx(self.source, [paragraph("Title.", "Heading1")])
-        before = set(self.root.iterdir())
-        _pipeline.convert_docx(self.source, dry_run=True)
-        assert set(self.root.iterdir()) == before
-
-    def test_tmpdir_inside_images_is_not_used_as_scratch(self) -> None:
-        write_docx(self.source, [paragraph("Text")])
-        images = self.root / ".images" / self.source.stem
-        images.mkdir(parents=True)
-        original = _pipeline._convert_in_work
-
-        def inspect_work(
-            paths: _models.ConversionPaths,
-            work: Path,
-            *,
-            qualify_duplicates: bool,
-            dry_run: bool,
-            report: _diagnostics.TransformReport | None = None,
-        ) -> dict[str, int]:
-            assert not work.is_relative_to(images)
-            return original(
-                paths, work, qualify_duplicates=qualify_duplicates, dry_run=dry_run, report=report
-            )
-
-        with (
-            patch.object(tempfile, "tempdir", str(images)),
-            patch.object(_pipeline, "_convert_in_work", inspect_work),
-        ):
-            _pipeline.convert_docx(self.source, dry_run=True)
-        assert not any(images.iterdir())
-        assert not self.source.with_suffix(".md").exists()
-
-    def test_postpublication_diagnostic_failure_reports_outputs_are_published(self) -> None:
-        write_docx(self.source, [paragraph("Published content")])
-        original = _diagnostics.write_diagnostics
-        diagnostics = self.root / "diagnostics"
-
-        def fail_final_report(
-            work: Path,
-            paths: _models.ConversionPaths,
-            findings: list[str],
-            stats: dict[str, int],
-            changes: list[_models.HeadingChange],
-            status: str,
-            error: str | None = None,
-            *,
-            source: _models.SourceDocument | None = None,
-            report: _diagnostics.TransformReport | None = None,
-        ) -> None:
-            if status == "published":
-                raise OSError("diagnostic completion failed")
-            original(
-                work, paths, findings, stats, changes, status, error, source=source, report=report
-            )
-
-        with (
-            patch.object(_diagnostics, "write_diagnostics", fail_final_report),
-            pytest.raises(_models.ConversionError, match="Outputs were published"),
-        ):
-            _pipeline.convert_docx(self.source, keep_intermediates=diagnostics)
-        assert self.source.with_suffix(".md").read_text(encoding="utf-8") == "Published content\n"
-        report = json.loads((diagnostics / "diagnostics.json").read_text(encoding="utf-8"))
-        assert "Outputs were published" in report["error"]
-
-    def test_dry_run_with_replacement_permission_preserves_existing_batch(self) -> None:
-        write_docx(self.source, [paragraph("New", "Heading1")])
-        output = self.source.with_suffix(".md")
-        output.write_text("old markdown", encoding="utf-8")
-        images = self.root / ".images" / "Synthetic Guide"
-        images.mkdir(parents=True)
-        (images / "old.png").write_bytes(PNG)
-        pages = self.root / "Synthetic Guide"
-        pages.mkdir()
-        (pages / "old.md").write_text("old page", encoding="utf-8")
-        _pipeline.convert_docx(self.source, split_depth=2, dry_run=True, replace_generated=True)
-        assert output.read_text(encoding="utf-8") == "old markdown"
-        assert (images / "old.png").read_bytes() == PNG
-        assert (pages / "old.md").read_text(encoding="utf-8") == "old page"
-
-    def test_explicit_markdown_replacement_is_normal_without_directory_content(self) -> None:
-        output = self.root / "selected.md"
-        output.write_text("old", encoding="utf-8")
-        result, _stats = self.convert([paragraph("new")], output=output)
-        assert result == "new\n"
-
-    def test_unsafe_destination_is_rejected_before_conversion_or_diagnostics_creation(self) -> None:
-        write_docx(self.source, [paragraph("Text")])
-        output = self.root / "alias.md"
-        os.link(self.source, output)
-        diagnostics = self.root / "diagnostics"
-        with (
-            patch.object(_source, "prepare_source") as prepare,
-            pytest.raises(_models.ConversionError),
-        ):
-            _pipeline.convert_docx(self.source, output, keep_intermediates=diagnostics)
-        prepare.assert_not_called()
-        assert not diagnostics.exists()
-
-    def test_hyperlink_field_tooltips_stay_out_of_links_without_pandoc(self) -> None:
-        # mammoth keeps the \o switch in the link target; the fields become links first.
-        simple = ET.Element(W + "p")
-        field = ET.SubElement(
-            simple,
-            W + "fldSimple",
-            {W + "instr": ' HYPERLINK "https://example.test/item" \\o "Tip" '},
-        )
-        field.append(_ooxml.word_run("Simple label"))
-        complex_field = ET.Element(W + "p")
-        for kind in ("begin", "instruction", "separate", "text", "end"):
-            run = ET.SubElement(complex_field, W + "r")
-            if kind == "instruction":
-                instruction = ET.SubElement(run, W + "instrText")
-                instruction.text = ' HYPERLINK "https://example.test/a" \\o "Tip" '
-            elif kind == "text":
-                ET.SubElement(run, W + "t").text = "Complex label"
-            else:
-                ET.SubElement(run, W + "fldChar", {W + "fldCharType": kind})
-        write_docx(self.source, [simple, complex_field])
-        original = shutil.which
-
-        def without_pandoc(
-            command: str, mode: int = os.F_OK | os.X_OK, path: str | None = None
-        ) -> str | None:
-            return None if command == "pandoc" else original(command, mode, path)
-
-        report = _diagnostics.TransformReport()
-        with (
-            patch.object(shutil, "which", without_pandoc),
-            contextlib.redirect_stderr(io.StringIO()),
-        ):
-            _pipeline.convert_docx(self.source, report=report)
-        assert (
-            self.source.with_suffix(".md").read_text(encoding="utf-8")
-            == "[Simple label](https://example.test/item)\n\n"
-            "[Complex label](https://example.test/a)\n"
-        )
-        assert report.status("cleanup") == "not needed"
-
-    def test_missing_pandoc_publishes_the_markitdown_baseline(self) -> None:
-        write_docx(
-            self.source,
-            [paragraph("Title", "Heading1"), paragraph("Text"), image()],
-            relations=(("image", "image", "media/image.png", "Internal"),),
-            media={"image.png": PNG},
-        )
-        original = shutil.which
-
-        def without_pandoc(
-            command: str, mode: int = os.F_OK | os.X_OK, path: str | None = None
-        ) -> str | None:
-            return None if command == "pandoc" else original(command, mode, path)
-
-        report = _diagnostics.TransformReport()
-        with (
-            patch.object(shutil, "which", without_pandoc),
-            contextlib.redirect_stderr(io.StringIO()),
-        ):
-            stats = _pipeline.convert_docx(self.source, report=report)
-        result = self.source.with_suffix(".md").read_text(encoding="utf-8")
-        assert "# Title" in result
-        assert "Text" in result
-        assert "](.images/Synthetic%20Guide/image.png)" in result
-        assert stats["image_occurrences"] == 1
-        assert report.baseline_images == 1
-        unavailable = "Pandoc is not installed; see md-doc-converter doctor"
-        for name in ("alignment", "images", "tables", "pages", "checks"):
-            assert report.records[name].unavailable == unavailable, name
-        assert report.summary()[:2] == [
-            "docx-to-md: transforms (baseline: MarkItDown; 1 image(s) at MarkItDown positions)",
-            f"  alignment: not applied: {unavailable}",
-        ]
-
-    def test_hidden_text_is_dropped_with_and_without_alignment(self) -> None:
-        def hidden(text: str) -> ET.Element:
-            run = _ooxml.word_run(text)
+def test_sub_sup_mark_and_u_keep_tables_and_links_markdown(convert: Converter) -> None:
+    def run(text: str, name: str = "", value: str = "") -> ET.Element:
+        node = _ooxml.word_run(text)
+        if name:
             properties = ET.Element(W + "rPr")
-            ET.SubElement(properties, W + "vanish")
-            run.insert(0, properties)
-            return run
+            ET.SubElement(properties, W + name, {W + "val": value})
+            node.insert(0, properties)
+        return node
 
-        mixed = paragraph("Shown ")
-        mixed.extend([hidden("SECRET "), _ooxml.word_run("text.")])
-        whole = ET.Element(W + "p")
-        whole.append(hidden("HIDDEN PARAGRAPH"))
-        body = [paragraph("Title", "Heading1"), mixed, whole, paragraph("After")]
-        result, report, _warnings = self.convert_reported(body)
-        assert "Shown text." in result
-        assert "SECRET" not in result
-        assert "HIDDEN" not in result
-        assert "  hidden-text: applied (2)" in report.summary()
-        assert report.status("checks") == "applied"
-        original = shutil.which
+    def runs(*nodes: ET.Element) -> ET.Element:
+        node = ET.Element(W + "p")
+        node.extend(nodes)
+        return node
 
-        def without_pandoc(
-            command: str, mode: int = os.F_OK | os.X_OK, path: str | None = None
-        ) -> str | None:
-            return None if command == "pandoc" else original(command, mode, path)
-
-        write_docx(self.source, body)
-        report = _diagnostics.TransformReport()
-        with (
-            patch.object(shutil, "which", without_pandoc),
-            contextlib.redirect_stderr(io.StringIO()),
-        ):
-            _pipeline.convert_docx(self.source, replace_generated=True, report=report)
-        result = self.source.with_suffix(".md").read_text(encoding="utf-8")
-        assert "After" in result
-        assert "SECRET" not in result
-        assert "HIDDEN" not in result
-        assert "  hidden-text: applied (2)" in report.summary()
-
-    def test_unicode_spaces_become_spaces_except_an_indent(self) -> None:
-        body = [
-            paragraph("Title", "Heading1"),
-            paragraph("Clock 100\u00a0MHz and\u2002bit-bash\u200b."),
-            paragraph("if (a) {"),
-            paragraph("\u00a0 \u00a0 \u00a0 b = 1;\u00a0 // set"),
-            paragraph("}"),
+    link = ET.Element(W + "p")
+    ET.SubElement(link, W + "hyperlink", {R + "id": "site"}).append(run("Spec.pptx", "u", "single"))
+    result, report, warnings = convert.reported(
+        [
             table(
-                row(cell("Name"), cell("Value"), header=True), row(cell("a\u202fb"), cell("\u00a0"))
-            ),
-            # Word alt text, as Office writes it, can hold a zero-width space.
-            image(alt="\u200bDiagram\u00a0one"),
-        ]
-        relations = (("image", "image", "media/image.png", "Internal"),)
-        media = {"image.png": PNG}
-        result, report, warnings = self.convert_reported(body, relations=relations, media=media)
-        assert "Clock 100 MHz and bit-bash." in result
-        # Markdown keeps only no-break spaces at the start of a paragraph.
-        assert "if (a) {\n\n\xa0\xa0\xa0\xa0\xa0\xa0b = 1; // set\n\n}" in result
-        assert "| a b | |" in result
-        assert "![Diagram one](" in result
-        assert result.count("\xa0") == 6
-        assert "  spaces: applied (11)" in report.summary()
-        assert report.status("checks") == "applied", warnings
-        original = shutil.which
-
-        def without_pandoc(
-            command: str, mode: int = os.F_OK | os.X_OK, path: str | None = None
-        ) -> str | None:
-            return None if command == "pandoc" else original(command, mode, path)
-
-        write_docx(self.source, body, relations=relations, media=media)
-        report = _diagnostics.TransformReport()
-        with (
-            patch.object(shutil, "which", without_pandoc),
-            contextlib.redirect_stderr(io.StringIO()),
-        ):
-            _pipeline.convert_docx(self.source, replace_generated=True, report=report)
-        result = self.source.with_suffix(".md").read_text(encoding="utf-8")
-        assert "Clock 100 MHz and bit-bash." in result
-        assert "![Diagram one](" in result
-        assert result.count("\xa0") == 6
-        assert "  spaces: applied (11)" in report.summary()
-
-    def test_header_breaks_become_spaces_and_cells_lose_empty_edge_lines(self) -> None:
-        def broken(first: str, second: str) -> ET.Element:
-            run = _ooxml.word_run(first)
-            ET.SubElement(run, W + "br")
-            ET.SubElement(run, W + "t").text = second
-            return run
-
-        result, report, warnings = self.convert_reported(
-            [
-                paragraph("Title", "Heading1"),
-                table(
-                    row(
-                        cell(paragraph_of(broken("Addr", "[31:24]"))),
-                        cell("Two", "", "paras"),
-                        header=True,
+                row(cell("Value"), cell("Notes"), header=True),
+                row(
+                    cell(runs(run("x"), run("2", "vertAlign", "superscript"))),
+                    cell(
+                        runs(
+                            run("H"),
+                            run("2", "vertAlign", "subscript"),
+                            run("O, "),
+                            run("new", "highlight", "yellow"),
+                            run(" and "),
+                            run("a|b *c*", "u", "single"),
+                        )
                     ),
-                    row(cell(paragraph_of(broken("line1", "line2"))), cell("in", "", "side")),
-                    row(cell("trailing", ""), cell("", "leading")),
-                    row(cell(paragraph_of(broken("end", ""))), cell("x")),
                 ),
-            ]
-        )
-        assert (
-            "| Addr [31:24] | Two paras |\n| --- | --- |\n| line1<br>line2 | in<br><br>side |\n"
-            "| trailing | leading |\n| end | x |\n" in result
-        )
-        assert report.status("checks") == "applied", warnings
-
-    def test_monospace_paragraphs_become_a_fenced_code_block(self) -> None:
-        indented = code_run("wait();")
-        indented.insert(1, ET.Element(W + "tab"))
-        blank = ET.Element(W + "p")
-        mark = ET.SubElement(ET.SubElement(blank, W + "pPr"), W + "rPr")
-        ET.SubElement(mark, W + "rFonts", {W + "ascii": "Consolas"})
-        # A line break that starts the code leaves no empty first line.
-        first = code_run("if (state == \u201cbusy\u201d) {")
-        first.insert(1, ET.Element(W + "br"))
-        body = [
-            paragraph("Title", "Heading1"),
-            paragraph("Before."),
-            paragraph_of(first),
-            paragraph_of(indented),
-            blank,
-            paragraph_of(code_run("} # end \u2013 done")),
-            paragraph_of(code_run("```")),
-            paragraph(),
-            paragraph("After."),
-        ]
-        result, report, warnings = self.convert_reported(body)
-        assert (
-            'Before.\n\n````text\nif (state == "busy") {\n    wait();\n\n'
-            "} # end - done\n```\n````\n\nAfter." in result
-        )
-        assert (
-            "  code: applied (1 code block(s), 3 curly quote(s) and dash(es) straightened)"
-            in report.summary()
-        )
-        assert report.status("checks") == "applied", warnings
-
-    def test_a_one_cell_monospace_table_becomes_a_code_block(self) -> None:
-        listing = cell(
-            paragraph_of(code_run("x = <a> & `b`")), paragraph(), paragraph_of(code_run("  y = 2"))
-        )
-        body = [
-            paragraph("Title", "Heading1"),
-            paragraph("Before."),
-            table(row(listing), columns=1),
-            paragraph("After."),
-            table(row(cell(paragraph_of(code_run("not code"))), cell("Next")), columns=2),
-        ]
-        result, report, warnings = self.convert_reported(body)
-        assert "Before.\n\n```text\nx = <a> & `b`\n\n  y = 2\n```\n\nAfter." in result
-        assert "| `not code` | Next |" in result
-        assert (
-            "  code: applied (1 code block(s), 1 inline code span(s), "
-            "1 one-cell table(s) made code blocks)" in report.summary()
-        )
-        assert report.status("checks") == "applied", warnings
-
-    def test_monospace_text_becomes_inline_code_outside_headings_links_and_fields(self) -> None:
-        bold = code_run("reg[3:0] ")
-        properties = bold.find(W + "rPr")
-        assert properties is not None
-        properties.insert(0, ET.Element(W + "b"))
-        broken = code_run("one")
-        ET.SubElement(broken, W + "br")
-        ET.SubElement(broken, W + "t").text = "two"
-        linked = hyperlink("linked label", relation="web")
-        monospace = code_run("").find(W + "rPr")
-        assert monospace is not None
-        for run in linked.iter(W + "r"):
-            run.insert(0, copy.deepcopy(monospace))
-        field: list[ET.Element] = []
-        for kind in ("begin", "instruction", "separate", "result", "end"):
-            run = code_run("Field Author" if kind == "result" else "")
-            if kind == "instruction":
-                run.remove(run[1])
-                ET.SubElement(run, W + "instrText").text = " AUTHOR "
-            elif kind != "result":
-                run.remove(run[1])
-                ET.SubElement(run, W + "fldChar", {W + "fldCharType": kind})
-            field.append(run)
-        body = [
-            paragraph("Title", "Heading1"),
-            paragraph_of(
-                _ooxml.word_run("Set "),
-                code_run("ctrl_"),
-                bold,
-                _ooxml.word_run("to \u201cidle\u201d."),
+                columns=2,
             ),
-            paragraph_of(_ooxml.word_run("Run "), code_run("`cmd`"), _ooxml.word_run(" now.")),
-            paragraph_of(_ooxml.word_run("Broken "), broken, _ooxml.word_run(" end.")),
-            linked,
-            paragraph_of(_ooxml.word_run("By "), *field),
-            paragraph_of(code_run("Monospace heading"), style="Heading2"),
+            link,
+        ],
+        relations=(("site", "hyperlink", "https://example.test/Spec.pptx", "External"),),
+    )
+    assert r"| x<sup>2</sup> | H<sub>2</sub>O, <mark>new</mark> and <u>a\|b \*c\*</u> |" in result
+    # Links show as underlined, so their text drops Word's underline.
+    assert "[Spec.pptx](https://example.test/Spec.pptx)" in result
+    assert "<table" not in result
+    assert "<a href" not in result
+    assert "remains HTML" not in warnings
+    assert report.status("checks") == "applied"
+
+
+def test_brackets_stay_escaped_only_where_they_could_be_read_differently(
+    convert: Converter,
+) -> None:
+    result, report, _warnings = convert.reported(
+        [
+            paragraph("Bits [3:0] of ctrl[7]; the text [a](b) is not a link."),
+            numbered("[1:0]: low bits"),
             table(
-                row(cell("Field"), cell("Value"), header=True),
-                row(cell("mode"), cell(paragraph_of(code_run("a|b")))),
+                row(cell("Field"), cell("Bits"), header=True),
+                row(cell("mode[1:0]"), cell("7) seven")),
+                columns=2,
             ),
-        ]
-        result, report, warnings = self.convert_reported(
-            body, relations=(("web", "hyperlink", "https://example.test/doc", "External"),)
-        )
-        assert "Set `ctrl_reg[3:0]` to “idle”." in result
-        assert "Run `` `cmd` `` now." in result
-        assert "Broken `one`\n\n`two` end." in result
-        assert "[linked label](https://example.test/doc)" in result
-        assert "By Field Author" in result
-        assert "## Monospace heading" in result
-        assert "| mode | `a\\|b` |" in result
-        assert "  code: applied (5 inline code span(s))" in report.summary()
-        assert report.status("checks") == "applied", warnings
+        ],
+        extras={"word/numbering.xml": numbering_xml("decimal", 1)},
+    )
+    assert r"Bits [3:0] of ctrl[7]; the text \[a\](b) is not a link." in result
+    assert r"1. \[1:0\]: low bits" in result
+    assert "| mode[1:0] | 7) seven |" in result
+    assert report.records["cleanup"].applied["unneeded escape(s) removed"] == 7
 
-    def test_failed_alignment_falls_back_to_the_markitdown_baseline(self) -> None:
-        def fail(*_arguments: object) -> NoReturn:
-            raise _models.ConversionError("synthetic alignment failure")
 
-        with patch.object(_pipeline, "_aligned_markdown", fail):
-            result, report, warnings = self.convert_reported(
-                [paragraph("Title", "Heading1"), image(), paragraph("Text")],
-                relations=(("image", "image", "media/image.png", "Internal"),),
-                media={"image.png": PNG},
-            )
-        assert "Text" in result
-        assert "](.images/Synthetic%20Guide/image.png)" in result
-        assert report.records["alignment"].failure == "synthetic alignment failure"
-        assert report.records["tables"].unavailable == "alignment failed; see alignment"
-        assert report.baseline_images == 1
-        assert report.status("checks") == "applied"
-        assert "alignment: failed and was not applied: synthetic alignment failure" in warnings
+def test_list_items_without_text_are_omitted_keeping_word_numbers(convert: Converter) -> None:
+    result, report, _warnings = convert.reported(
+        [
+            numbered(""),
+            numbered("a"),
+            numbered(""),
+            numbered("b"),
+            numbered(""),
+            paragraph("Gap"),
+            numbered("x", number="2"),
+            numbered("", number="2"),
+            numbered("y", number="2"),
+        ],
+        extras={"word/numbering.xml": numbering_xml("decimal", 1, second="bullet")},
+    )
+    # Word numbers the empty first item 1, so the list starts at 2; the empty item
+    # between two others keeps its place so that "b" stays 4.
+    assert re.search(r"(?m)^2\. a$", result)
+    assert re.search(r"(?m)^3\.$", result)
+    assert re.search(r"(?m)^4\. b$", result)
+    assert not re.search(r"(?m)^(1|5)\.", result)
+    assert re.search(r"(?m)^- x$", result)
+    assert re.search(r"(?m)^- y$", result)
+    assert not re.search(r"(?m)^-$", result)
+    assert report.records["lists"].applied["empty Word list item(s) omitted"] == 3
 
-    def test_a_failing_layer_is_reported_and_the_rest_is_published(self) -> None:
-        def fail(_markdown: str) -> tuple[str, int]:
-            raise RuntimeError("synthetic layer failure")
 
-        with patch.object(_normalization, "normalize_unordered_lists", fail):
-            result, report, _warnings = self.convert_reported([paragraph("Text")])
-        assert result == "Text\n"
-        assert report.status("cleanup") == "not applied"
-        assert report.records["cleanup"].failure == "RuntimeError: synthetic layer failure"
-        assert report.status("checks") == "applied"
+def test_deleted_list_items_and_tables_are_not_written(convert: Converter) -> None:
+    # Track Changes deletions: a list item's text and paragraph mark, and a table's rows.
+    item = numbered("")
+    run, properties = item.find(W + "r"), item.find(W + "pPr")
+    assert run is not None
+    assert properties is not None
+    item.remove(run)
+    ET.SubElement(ET.SubElement(properties, W + "rPr"), W + "del", {W + "id": "1"})
+    deleted = ET.SubElement(ET.SubElement(item, W + "del", {W + "id": "2"}), W + "r")
+    ET.SubElement(deleted, W + "delText").text = "Removed item"
+    rows = []
+    for text in ("Removed cell", "Removed too"):
+        deleted = row(cell(text))
+        properties = ET.Element(W + "trPr")
+        ET.SubElement(properties, W + "del", {W + "id": "3"})
+        deleted.insert(0, properties)
+        rows.append(deleted)
+    result, _stats = convert(
+        [
+            paragraph("Intro"),
+            table(*rows, columns=1),
+            numbered("one"),
+            item,
+            numbered("two"),
+        ],
+        extras={"word/numbering.xml": numbering_xml("decimal", 1)},
+    )
+    assert "<table" not in result
+    assert "Removed" not in result
+    assert "1. one\n\n2. two" in result
 
-    def test_heading_level_seven_is_kept_as_a_paragraph(self) -> None:
-        deep = paragraph("Level seven")
-        properties = ET.Element(W + "pPr")
-        ET.SubElement(properties, W + "outlineLvl", {W + "val": "6"})
-        deep.insert(0, properties)
-        result, report, _warnings = self.convert_reported([paragraph("Title", "Heading1"), deep])
-        assert "Level seven" in result
-        assert "# Level seven" not in result
-        assert dict(report.records["headings"].skipped) == {
-            "Word heading levels 7-9 have no Markdown equivalent; kept as a paragraph": 1
-        }
 
-    def test_unnamed_and_duplicate_bookmarks_are_reported(self) -> None:
-        result, report, _warnings = self.convert_reported(
-            [
-                bookmark("", "Unnamed target"),
-                bookmark("_Twice", "First", "Heading1"),
-                bookmark("_Twice", "Second", "Heading1"),
-                hyperlink("Go", anchor="_Twice"),
-            ]
-        )
-        assert "[Go](#first)" in result
-        assert dict(report.records["bookmarks"].skipped) == {
-            "Word bookmark has no name; dropped": 1,
-            "duplicate Word bookmark name; the later one is dropped": 1,
-        }
+def test_accepted_view_and_package_metadata_are_consistent(source: Path, tmp_path: Path) -> None:
+    content = ET.Element(W + "p")
+    insertion = ET.SubElement(content, W + "ins")
+    insertion.append(_ooxml.word_run("Accepted text"))
+    deletion = ET.SubElement(content, W + "del")
+    deletion.append(_ooxml.word_run("Deleted text"))
+    custom = b"<Properties><Category>Example</Category></Properties>"
+    write_docx(source, [content], extras={"docProps/custom.xml": custom})
+    original = source.read_bytes()
+    diagnostics = tmp_path / "debug"
+    _pipeline.convert_docx(source, keep_intermediates=diagnostics)
+    result = source.with_suffix(".md").read_text(encoding="utf-8")
+    assert "Accepted text" in result
+    assert "Deleted text" not in result
+    assert source.read_bytes() == original
+    with zipfile.ZipFile(diagnostics / "reference.docx") as archive:
+        assert archive.read("docProps/custom.xml") == custom
 
-    def test_split_depths_follow_closed_heading_levels_and_bookmark_links(self) -> None:
-        # Headings 1, 3, and 6 become levels 1, 2, and 3, and each depth splits at them.
-        body = [
-            paragraph("Preamble"),
-            bookmark("_A", "First.", "Heading1"),
-            hyperlink("Deeper", anchor="_B"),
-            bookmark("_B", "Third.", "Heading3"),
-            paragraph("Detail.", "Heading6"),
-            hyperlink("Up", anchor="_A"),
-        ]
-        write_docx(self.source, body)
-        for depth in range(7):
-            with self.subTest(depth=depth):
-                output = self.root / f"depth-{depth}" / "guide.md"
-                stats = _pipeline.convert_docx(self.source, output, split_depth=depth)
-                pages = output.parent / "guide"
-                if depth == 0:
-                    assert (
-                        "# First\n\n[Deeper](#third)\n\n## Third\n\n### Detail\n\n[Up](#first)"
-                        in output.read_text(encoding="utf-8")
-                    )
-                elif depth == 1:
-                    assert "## Third\n\n### Detail\n\n[Up](#first)" in (
-                        pages / "01-first.md"
-                    ).read_text(encoding="utf-8")
-                elif depth == 2:
-                    assert "[Deeper](01-first/01-third.md#third)" in (
-                        pages / "01-first.md"
-                    ).read_text(encoding="utf-8")
-                    assert "# Third\n\n## Detail\n\n[Up](../01-first.md#first)" in (
-                        pages / "01-first" / "01-third.md"
-                    ).read_text(encoding="utf-8")
-                else:
-                    detail = pages / "01-first" / "01-third" / "01-detail.md"
-                    assert "# Detail\n\n[Up](../../01-first.md#first)" in detail.read_text(
-                        encoding="utf-8"
-                    )
-                assert stats["pages"] >= 1
 
-    def test_depth_zero_preserves_previous_page_tree(self) -> None:
-        old = self.root / "Synthetic Guide"
-        old.mkdir()
-        (old / "old.md").write_text("old", encoding="utf-8")
-        self.convert([paragraph("New text")])
-        assert (old / "old.md").read_text(encoding="utf-8") == "old"
+def test_source_local_hyperlink_is_rebased_and_validated(
+    convert: Converter, tmp_path: Path
+) -> None:
+    asset = tmp_path / "Other File.txt"
+    asset.write_text("retained local target", encoding="utf-8")
+    output = tmp_path / "different" / "guide.md"
+    result, _stats = convert(
+        [hyperlink("Local target", relation="local")],
+        output=output,
+        relations=(("local", "hyperlink", "Other%20File.txt", "External"),),
+    )
+    assert "../Other%20File.txt" in result
 
-    def test_duplicate_qualification_is_opt_in(self) -> None:
-        result, stats = self.convert(
-            [
-                bookmark("_A", "Same.", "Heading3"),
-                bookmark("_B", "Same.", "Heading3"),
-                hyperlink("First", anchor="_A"),
-                hyperlink("Second", anchor="_B"),
-            ],
-            qualify=True,
-        )
-        assert "### Same - occurrence 1" in result
-        assert "### Same - occurrence 2" in result
-        assert "<a " not in result
-        assert "[First](#same---occurrence-1)" in result
-        assert "[Second](#same---occurrence-2)" in result
-        assert stats["qualified_headings"] == 2
 
-    def test_generated_toc_results_are_retained(self) -> None:
-        index = ET.Element(W + "p")
-        field = ET.SubElement(index, W + "fldSimple", {W + "instr": 'TOC \\o "1-3" \\h'})
-        field.append(_ooxml.word_run("Cached contents entry"))
-        result, _stats = self.convert(
-            [
-                paragraph("Contents", "Heading1"),
-                index,
-                paragraph("Body", "Heading1"),
-            ],
-            split_depth=1,
-        )
-        assert "Contents" in result
-        contents = self.root / "Synthetic Guide" / "01-contents.md"
-        assert "Cached contents entry" in contents.read_text(encoding="utf-8")
+def test_replaced_page_tree_cannot_supply_stale_link_targets(
+    source: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    output = tmp_path / "guide.md"
+    output.write_text("# Old root\n", encoding="utf-8")
+    old_pages = tmp_path / "guide"
+    old_pages.mkdir()
+    old_page = old_pages / "old.md"
+    old_page.write_text("# Old page\n", encoding="utf-8")
+    images = tmp_path / ".images" / "guide"
+    images.mkdir(parents=True)
+    (images / "old.svg").write_bytes(SVG)
+    write_docx(
+        source,
+        [paragraph("New", "Heading1"), hyperlink("Stale", relation="local")],
+        relations=(("local", "hyperlink", "guide/old.md", "External"),),
+    )
+    publish = mock.Mock(wraps=_publication.publish_outputs)
+    monkeypatch.setattr(_publication, "publish_outputs", publish)
 
-    def test_complex_toc_field_results_and_blank_rows_survive(self) -> None:
-        start = ET.Element(W + "p")
-        run = ET.SubElement(start, W + "r")
-        ET.SubElement(run, W + "fldChar", {W + "fldCharType": "begin"})
-        code_run = ET.SubElement(start, W + "r")
-        ET.SubElement(code_run, W + "instrText").text = ' TOC \\o "1-3" \\h '
-        end_run = ET.SubElement(start, W + "r")
-        ET.SubElement(end_run, W + "fldChar", {W + "fldCharType": "separate"})
-        end = ET.Element(W + "p")
-        ET.SubElement(ET.SubElement(end, W + "r"), W + "fldChar", {W + "fldCharType": "end"})
-        result, _stats = self.convert(
-            [
-                paragraph("Contents", "Heading1"),
-                start,
-                paragraph("Cached field entry"),
-                end,
-                table(row(cell(""), cell(""))),
-            ]
-        )
-        assert "Cached field entry" in result
-        assert len(list(_reference.pandoc_html(result, self.pandoc).iter("tr"))) == 1
+    report = _diagnostics.TransformReport()
+    _pipeline.convert_docx(source, output, split_depth=1, replace_generated=True, report=report)
 
-    def test_toc_page_reference_fields_are_dropped_from_their_links(self) -> None:
-        for simple in (False, True):
-            with self.subTest(simple=simple):
-                entries: list[ET.Element] = []
-                for name, title, page in (("_One", "First ", "1"), ("_Two", "Second ", "2")):
-                    entry = hyperlink(title, anchor=name)
-                    link = entry.find(W + "hyperlink")
-                    assert link is not None
-                    link.extend(page_reference(name, page, simple=simple))
-                    entries.append(entry)
-                result, report, _warnings = self.convert_reported(
-                    [
-                        paragraph("Contents.", "Heading1"),
-                        *entries,
-                        bookmark("_One", "First.", "Heading1"),
-                        bookmark("_Two", "Second.", "Heading3"),
-                    ],
-                    output=self.root / f"toc-fields-{simple}.md",
-                )
+    publish.assert_called_once()
+    assert "a link into the page tree has no prepared page" in report.records["checks"].skipped
+    assert "Link into the replaced page tree has no prepared page" in capsys.readouterr().err
+    assert not old_page.exists()
+    assert (old_pages / "01-new.md").is_file()
 
-                parsed = _reference.pandoc_html(result, self.pandoc)
-                assert [
-                    (node.get("href"), "".join(node.itertext())) for node in parsed.iter("a")
-                ] == [("#first", "First"), ("#second", "Second")]
-                assert (
-                    report.records["fields"].applied["table-of-contents page number(s) dropped"]
-                    == 2
-                )
-                assert "## Second\n" in result
 
-    def test_word_table_of_contents_keeps_entry_numbers_and_links_without_pages(self) -> None:
-        result, report, _warnings = self.convert_reported(
-            [
-                paragraph("Contents"),
-                toc_entry("_Toc1", "1", "Introduction", "3", begin=True),
-                toc_entry("_Toc2", "2", "Setup", "5", end=True),
-                bookmark("_Toc1", "Introduction", "Heading1"),
-                paragraph("Text."),
-                bookmark("_Toc2", "Setup", "Heading1"),
-                paragraph("Steps."),
-            ]
-        )
+def test_prepared_page_replaces_stale_content_for_fragment_validation(
+    source: Path, tmp_path: Path
+) -> None:
+    pages = tmp_path / "guide"
+    pages.mkdir()
+    child = pages / "01-new.md"
+    child.write_text("# Old content\n", encoding="utf-8")
+    outside = tmp_path / "outside.md"
+    outside.write_text("# Outside\n", encoding="utf-8")
+    write_docx(
+        source,
+        [
+            bookmark("_Fresh", "New", "Heading1"),
+            hyperlink("Fresh", relation="fresh"),
+            hyperlink("Outside", relation="outside"),
+        ],
+        relations=(
+            ("fresh", "hyperlink", "guide/01-new.md#new", "External"),
+            ("outside", "hyperlink", "outside.md#outside", "External"),
+        ),
+    )
 
-        assert "[1 Introduction](#introduction)\n\n[2 Setup](#setup)\n" in result
-        assert report.status("links") == "applied"
-        assert report.status("checks") == "applied"
-        assert not report.records["checks"].skipped
+    _pipeline.convert_docx(source, tmp_path / "guide.md", split_depth=1, replace_generated=True)
 
-    def test_literal_word_placeholders_entities_and_tables_keep_their_text(self) -> None:
-        split = paragraph("<sp", bold=True)
-        split.append(_ooxml.word_run("eeds>"))
-        result, _stats = self.convert(
-            [
-                paragraph("<Mode> &copy;.", "Heading3"),
-                paragraph("Choose <speeds> &copy;."),
-                paragraph("> Literal boundary"),
-                split,
-                hyperlink("<destination> &copy;", anchor="_Target"),
-                bookmark("_Target", "Target"),
-                table(
-                    row(cell("Header"), header=True),
-                    row(cell("<width> &copy;")),
-                    columns=1,
-                ),
-                table(row(cell("<height> &copy;", colspan=2))),
-            ]
-        )
+    assert "# New" in child.read_text(encoding="utf-8")
+    assert "_Fresh" not in child.read_text(encoding="utf-8")
+    assert outside.read_text(encoding="utf-8") == "# Outside\n"
 
-        parsed = _reference.pandoc_html(result, self.pandoc)
-        visible = "".join(parsed.itertext())
-        for literal in (
-            "<Mode> &copy;",
-            "Choose <speeds> &copy;.",
-            "> Literal boundary",
-            "<speeds>",
-            "<destination> &copy;",
-            "<width> &copy;",
-            "<height> &copy;",
-        ):
-            assert literal in visible
-        assert not list(parsed.iter("speeds"))
-        assert not list(parsed.iter("blockquote"))
-        assert _validation.collect_references(parsed).links == ["#mode-copy"]
-        # The heading loses its period, not the semicolon of its entity-like text.
-        assert "".join(next(parsed.iter("h3")).itertext()) == "<Mode> &copy;"
 
-    def test_rich_table_heading_is_not_a_split_page_heading(self) -> None:
-        self.convert(
-            [
-                paragraph("Chapter.", "Heading1"),
-                table(row(cell(paragraph("In-cell heading.", "Heading1"))), columns=1),
-            ],
-            split_depth=2,
-        )
-        child = self.root / "Synthetic Guide" / "01-chapter.md"
-        content = child.read_text(encoding="utf-8")
-        assert "<h1>In-cell heading</h1>" in content
-        assert (
-            _validation.collect_references(
-                _reference.pandoc_html(content, self.pandoc)
-            ).headings.count(1)
-            == 1
-        )
+def test_depth_zero_allows_links_to_retained_old_pages(source: Path, tmp_path: Path) -> None:
+    old_pages = tmp_path / "guide"
+    old_pages.mkdir()
+    old_page = old_pages / "old.md"
+    old_page.write_text("# Old\n", encoding="utf-8")
+    write_docx(
+        source,
+        [hyperlink("Retained", relation="old")],
+        relations=(("old", "hyperlink", "guide/old.md#old", "External"),),
+    )
 
-    def test_urls_as_link_text_stay_one_link(self) -> None:
-        # GFM's bare-URL autolinks would nest a link in the link text and break the outer one.
-        url = "https://example.test/a_b_c?x=1&y=2"
-        result, report, _warnings = self.convert_reported(
-            [
-                hyperlink(url, relation="site"),
-                hyperlink("www.example.test/a_b", relation="www"),
-                paragraph("See https://example.test/plain_path for details."),
-            ],
-            relations=(
-                ("site", "hyperlink", url, "External"),
-                ("www", "hyperlink", "https://www.example.test/a_b", "External"),
+    _pipeline.convert_docx(source, tmp_path / "guide.md")
+
+    assert old_page.read_text(encoding="utf-8") == "# Old\n"
+    assert "guide/old.md#old" in (tmp_path / "guide.md").read_text(encoding="utf-8")
+
+
+def test_replaced_image_tree_cannot_supply_stale_link_targets(
+    source: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    output = tmp_path / "guide.md"
+    output.write_text("# Old root\n", encoding="utf-8")
+    images = tmp_path / ".images" / "guide"
+    images.mkdir(parents=True)
+    old_image = images / "old.svg"
+    old_image.write_bytes(SVG)
+    write_docx(
+        source,
+        [hyperlink("Stale asset", relation="old")],
+        relations=(("old", "hyperlink", ".images/guide/old.svg", "External"),),
+    )
+    publish = mock.Mock(wraps=_publication.publish_outputs)
+    monkeypatch.setattr(_publication, "publish_outputs", publish)
+
+    report = _diagnostics.TransformReport()
+    _pipeline.convert_docx(source, output, replace_generated=True, report=report)
+
+    publish.assert_called_once()
+    assert "a linked image file is missing" in report.records["checks"].skipped
+    assert "Missing linked asset in guide.md: .images/guide/old.svg" in capsys.readouterr().err
+    assert not old_image.exists()
+
+
+@pytest.mark.parametrize(
+    ("target", "expected"),
+    [
+        pytest.param(
+            "https://example.test/topic_(detail)",
+            "https://example.test/topic_%28detail%29",
+            id="parentheses",
+        ),
+        pytest.param(
+            "https://example.test/R\u00e9sum\u00e9",
+            "https://example.test/R%C3%A9sum%C3%A9",
+            id="non-ascii",
+        ),
+        pytest.param(
+            "https://example.test/a%2Fb?q=x%26y&percent=%2525",
+            "https://example.test/a%2Fb?q=x%26y&percent=%2525",
+            id="percent-escapes",
+        ),
+        pytest.param(
+            "https://example.test/?q=one&copy;=two&notit=three",
+            "https://example.test/?q=one&copy;=two&notit=three",
+            id="entity-like-query",
+        ),
+        pytest.param(
+            "https://example.test/?literal=&amp;value",
+            "https://example.test/?literal=&amp;value",
+            id="literal-entity",
+        ),
+        pytest.param(
+            "https://[2001:db8::1]/topic_(detail)",
+            "https://[2001:db8::1]/topic_%28detail%29",
+            id="ipv6-host",
+        ),
+    ],
+)
+def test_external_url_escaping_survives_real_conversion_and_tables(
+    target: str, expected: str, convert: Converter, pandoc: str
+) -> None:
+    result, _stats = convert(
+        [
+            hyperlink("Outside", relation="url"),
+            table(
+                row(cell("Link"), header=True),
+                row(cell(hyperlink("Pipe", relation="url"))),
+                columns=1,
             ),
-        )
-        assert "[[" not in result
-        assert "&#92;" not in result
-        links = [
-            (node.get("href"), "".join(node.itertext()))
-            for node in _reference.pandoc_html(result, self.pandoc).iter("a")
-        ]
-        assert links == [
-            (url, url),
-            ("https://www.example.test/a_b", "www.example.test/a_b"),
-            # A bare URL in prose becomes an autolink of its own.
-            ("https://example.test/plain_path", "https://example.test/plain_path"),
-        ]
-        assert "See <https://example.test/plain_path> for details." in result
-        assert report.status("checks") == "applied"
-        assert not report.records["checks"].skipped
+            table(row(cell(hyperlink("HTML", relation="url"), colspan=2))),
+        ],
+        relations=(("url", "hyperlink", target, "External"),),
+    )
+    rendered = _validation.collect_references(_reference.pandoc_html(result, pandoc)).links
+    assert rendered[:2] == [expected, expected]
+    assert rendered[2] == target
 
-    def test_hyperlink_field_preserves_destination_label_and_screen_tip(self) -> None:
-        content = ET.Element(W + "p")
-        field = ET.SubElement(
-            content,
-            W + "fldSimple",
-            {
-                W + "instr": ' HYPERLINK "https://example.test/item" \\o "Say \\"hi\\"" ',
-            },
-        )
-        field.append(_ooxml.word_run("Source label"))
-        result, _stats = self.convert([content])
-        assert result == '[Source label](https://example.test/item "Say \\"hi\\"")\n'
 
-    def test_complex_hyperlink_field_and_tooltip_preserve_link(self) -> None:
-        content = ET.Element(W + "p")
-        for kind in ("begin", "instruction", "separate", "text", "end"):
-            run = ET.SubElement(content, W + "r")
-            if kind == "instruction":
-                ET.SubElement(
-                    run, W + "instrText"
-                ).text = ' HYPERLINK "https://example.test/a" \\o "Tip" '
-            elif kind == "text":
-                ET.SubElement(run, W + "t").text = "Cached label"
-            else:
-                ET.SubElement(run, W + "fldChar", {W + "fldCharType": kind})
-        result, _stats = self.convert([content])
-        assert result == '[Cached label](https://example.test/a "Tip")\n'
+def test_pandoc_generated_docx_preserves_unicode_parenthesized_external_url(
+    source: Path, tmp_path: Path, pandoc: str
+) -> None:
+    target = "https://example.test/R\u00e9sum\u00e9_(detail)"
+    _reference.run_command(
+        [pandoc, "--from=gfm+raw_html", "--to=docx", f"--output={source}"],
+        "Synthetic Markdown-to-Word",
+        input_text=f"# Unicode guide\n\n[External reference]({target})\n",
+    )
+    output = tmp_path / "generated.md"
 
-    def test_field_boundary_run_content_survives_real_conversion(self) -> None:
-        for bold in (False, True):
-            with self.subTest(bold=bold):
-                content = boundary_hyperlink_field()
-                if bold:
-                    for run in (content[0], content[-1]):
-                        properties = ET.Element(W + "rPr")
-                        ET.SubElement(properties, W + "b")
-                        run.insert(0, properties)
-                    content[0].insert(2, ET.Element(W + "tab"))
-                    for run in (content[0], content[-1]):
-                        drawing = image().find(f"./{W}r/{W}drawing")
-                        assert drawing is not None
-                        run.insert(2, drawing)
-                result, _stats = self.convert(
-                    [content],
-                    output=self.root / f"field-{bold}.md",
-                    relations=(("image", "image", "media/image.png", "Internal"),),
-                    media={"image.png": PNG},
-                )
-                parsed = _reference.pandoc_html(result, self.pandoc)
-                visible = "".join(parsed.itertext())
-                assert "Before" in visible
-                assert "Cached label" in visible
-                assert "After" in visible
-                assert _validation.collect_references(parsed).links == [
-                    "https://example.test/plain"
-                ]
-                if bold:
-                    strong = ["".join(node.itertext()) for node in parsed.iter("strong")]
-                    assert any("Before" in text for text in strong)
-                    assert any("After" in text for text in strong)
-                    assert len(_validation.collect_references(parsed).images) == 2
+    result = subprocess.run(
+        [*COMMAND, str(source), "-o", str(output)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
 
-    def test_hyperlink_url_containing_toc_is_not_a_toc_field(self) -> None:
-        target = "https://example.test/TOC"
-        instruction = f' HYPERLINK "{target}" '
-        for kind in ("complex", "simple"):
-            with self.subTest(kind=kind):
-                if kind == "complex":
-                    content = boundary_hyperlink_field()
-                    code = content.find(f".//{W}instrText")
-                    assert code is not None
-                    code.text = instruction
-                else:
-                    content = ET.Element(W + "p")
-                    field = ET.SubElement(content, W + "fldSimple", {W + "instr": instruction})
-                    field.append(_ooxml.word_run("Cached label"))
-                result, _stats = self.convert([content], output=self.root / f"toc-url-{kind}.md")
-                assert _validation.collect_references(
-                    _reference.pandoc_html(result, self.pandoc)
-                ).links == [target]
+    assert result.returncode == 0, result.stderr
+    links = _validation.collect_references(
+        _reference.pandoc_html(output.read_text(encoding="utf-8"), pandoc)
+    ).links
+    assert links == ["https://example.test/R%C3%A9sum%C3%A9_%28detail%29"]
 
-    def test_custom_style_outline_level_is_preserved(self) -> None:
-        source = paragraph("Custom heading.")
-        properties = ET.Element(W + "pPr")
-        ET.SubElement(properties, W + "outlineLvl", {W + "val": "4"})
-        source.insert(0, properties)
-        result, _stats = self.convert([source])
-        assert "##### Custom heading\n" in result
 
-    def test_encrypted_container_is_rejected_without_bypass(self) -> None:
-        self.source.write_bytes(bytes.fromhex("d0cf11e0a1b11ae1") + b"encrypted office container")
-        with (
-            patch.object(_reference, "run_command") as run,
-            pytest.raises(_models.ConversionError, match="not bypassed"),
-        ):
-            _pipeline.convert_docx(self.source)
-        run.assert_not_called()
+def test_broken_local_hyperlink_is_kept_and_reported(convert: Converter) -> None:
+    result, report, warnings = convert.reported(
+        [hyperlink("Missing", relation="local")],
+        relations=(("local", "hyperlink", "missing.txt", "External"),),
+    )
+    assert "[Missing](missing.txt)" in result
+    assert "checks: Broken retained local link in Synthetic Guide.md: missing.txt" in warnings
+    summary = report.summary()
+    assert "  checks: 1 issue(s)" in summary
+    assert "    issue (1): a local link target does not exist" in summary
 
-    def test_word_editing_protection_and_classification_metadata_remain_in_bundle(self) -> None:
-        protection = (
-            b'<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
-            b'<w:documentProtection w:edit="readOnly" w:enforcement="1"/></w:settings>'
-        )
-        write_docx(
-            self.source, [paragraph("Protected source")], extras={"word/settings.xml": protection}
-        )
-        diagnostics = self.root / "diagnostics"
-        _pipeline.convert_docx(self.source, keep_intermediates=diagnostics)
-        with zipfile.ZipFile(diagnostics / "reference.docx") as archive:
-            assert archive.read("word/settings.xml") == protection
 
-    def test_one_level_lists_in_table_cells_become_lines(self) -> None:
-        result, report, warnings = self.convert_reported(
-            [
-                table(
-                    row(cell("Name"), cell("Steps"), header=True),
-                    row(cell("A"), cell(numbered("first"), numbered("second"))),
-                    row(cell("B"), cell(numbered("bullet", number="2"))),
-                    row(cell("C"), cell("1. typed", numbered("listed"))),
-                    columns=2,
-                )
-            ],
-            extras={"word/numbering.xml": numbering_xml("decimal", 1, second="bullet")},
-        )
-        assert "| A | 1. first<br>2. second |" in result
-        assert "| B | • bullet |" in result
-        assert "| C | 1. typed<br>3. listed |" in result
-        assert "<table" not in result
-        assert "remains HTML" not in warnings
-        # The final-table check expects the markers before Word's list items only.
-        assert report.status("checks") == "applied"
-
-    def test_indented_and_unnumbered_cell_paragraphs_become_lines(self) -> None:
-        indented = paragraph("Indented note")
-        properties = ET.Element(W + "pPr")
-        ET.SubElement(properties, W + "ind", {W + "left": "720"})
-        indented.insert(0, properties)
-        # Word turns off one paragraph's number with numId 0; Pandoc makes it a further
-        # paragraph of the item above.
-        unnumbered = numbered("more about first")
-        numbering = unnumbered.find(f"./{W}pPr/{W}numPr/{W}numId")
-        assert numbering is not None
-        numbering.set(W + "val", "0")
-        result, report, warnings = self.convert_reported(
-            [
-                table(
-                    row(cell("Name"), cell("Notes"), header=True),
-                    row(cell("A"), cell(paragraph("Lead"), indented)),
-                    row(cell("B"), cell(numbered("first"), unnumbered, numbered("second"))),
-                    columns=2,
-                )
-            ],
-            extras={"word/numbering.xml": numbering_xml("decimal", 1)},
-        )
-        assert "| A | Lead<br>Indented note |" in result
-        assert "| B | 1. first<br>more about first<br>2. second |" in result
-        assert "<table" not in result
-        assert "remains HTML" not in warnings
-        assert report.status("checks") == "applied"
-
-    def test_sub_sup_mark_and_u_keep_tables_and_links_markdown(self) -> None:
-        def run(text: str, name: str = "", value: str = "") -> ET.Element:
-            node = _ooxml.word_run(text)
-            if name:
-                properties = ET.Element(W + "rPr")
-                ET.SubElement(properties, W + name, {W + "val": value})
-                node.insert(0, properties)
-            return node
-
-        def runs(*nodes: ET.Element) -> ET.Element:
-            node = ET.Element(W + "p")
-            node.extend(nodes)
-            return node
-
-        link = ET.Element(W + "p")
-        ET.SubElement(link, W + "hyperlink", {R + "id": "site"}).append(
-            run("Spec.pptx", "u", "single")
-        )
-        result, report, warnings = self.convert_reported(
-            [
-                table(
-                    row(cell("Value"), cell("Notes"), header=True),
-                    row(
-                        cell(runs(run("x"), run("2", "vertAlign", "superscript"))),
-                        cell(
-                            runs(
-                                run("H"),
-                                run("2", "vertAlign", "subscript"),
-                                run("O, "),
-                                run("new", "highlight", "yellow"),
-                                run(" and "),
-                                run("a|b *c*", "u", "single"),
-                            )
-                        ),
-                    ),
-                    columns=2,
-                ),
-                link,
-            ],
-            relations=(("site", "hyperlink", "https://example.test/Spec.pptx", "External"),),
-        )
-        assert (
-            r"| x<sup>2</sup> | H<sub>2</sub>O, <mark>new</mark> and <u>a\|b \*c\*</u> |" in result
-        )
-        # Links show as underlined, so their text drops Word's underline.
-        assert "[Spec.pptx](https://example.test/Spec.pptx)" in result
-        assert "<table" not in result
-        assert "<a href" not in result
-        assert "remains HTML" not in warnings
-        assert report.status("checks") == "applied"
-
-    def test_brackets_stay_escaped_only_where_they_could_be_read_differently(self) -> None:
-        result, report, _warnings = self.convert_reported(
-            [
-                paragraph("Bits [3:0] of ctrl[7]; the text [a](b) is not a link."),
-                numbered("[1:0]: low bits"),
-                table(
-                    row(cell("Field"), cell("Bits"), header=True),
-                    row(cell("mode[1:0]"), cell("7) seven")),
-                    columns=2,
-                ),
-            ],
-            extras={"word/numbering.xml": numbering_xml("decimal", 1)},
-        )
-        assert r"Bits [3:0] of ctrl[7]; the text \[a\](b) is not a link." in result
-        assert r"1. \[1:0\]: low bits" in result
-        assert "| mode[1:0] | 7) seven |" in result
-        assert report.records["cleanup"].applied["unneeded escape(s) removed"] == 7
-
-    def test_list_items_without_text_are_omitted_keeping_word_numbers(self) -> None:
-        result, report, _warnings = self.convert_reported(
-            [
-                numbered(""),
-                numbered("a"),
-                numbered(""),
-                numbered("b"),
-                numbered(""),
-                paragraph("Gap"),
-                numbered("x", number="2"),
-                numbered("", number="2"),
-                numbered("y", number="2"),
-            ],
-            extras={"word/numbering.xml": numbering_xml("decimal", 1, second="bullet")},
-        )
-        # Word numbers the empty first item 1, so the list starts at 2; the empty item
-        # between two others keeps its place so that "b" stays 4.
-        assert re.search(r"(?m)^2\. a$", result)
-        assert re.search(r"(?m)^3\.$", result)
-        assert re.search(r"(?m)^4\. b$", result)
-        assert not re.search(r"(?m)^(1|5)\.", result)
-        assert re.search(r"(?m)^- x$", result)
-        assert re.search(r"(?m)^- y$", result)
-        assert not re.search(r"(?m)^-$", result)
-        assert report.records["lists"].applied["empty Word list item(s) omitted"] == 3
-
-    def test_deleted_list_items_and_tables_are_not_written(self) -> None:
-        # Track Changes deletions: a list item's text and paragraph mark, and a table's rows.
-        item = numbered("")
-        run, properties = item.find(W + "r"), item.find(W + "pPr")
-        assert run is not None
-        assert properties is not None
-        item.remove(run)
-        ET.SubElement(ET.SubElement(properties, W + "rPr"), W + "del", {W + "id": "1"})
-        deleted = ET.SubElement(ET.SubElement(item, W + "del", {W + "id": "2"}), W + "r")
-        ET.SubElement(deleted, W + "delText").text = "Removed item"
-        rows = []
-        for text in ("Removed cell", "Removed too"):
-            deleted = row(cell(text))
-            properties = ET.Element(W + "trPr")
-            ET.SubElement(properties, W + "del", {W + "id": "3"})
-            deleted.insert(0, properties)
-            rows.append(deleted)
-        result, _stats = self.convert(
-            [
-                paragraph("Intro"),
-                table(*rows, columns=1),
-                numbered("one"),
-                item,
-                numbered("two"),
-            ],
-            extras={"word/numbering.xml": numbering_xml("decimal", 1)},
-        )
-        assert "<table" not in result
-        assert "Removed" not in result
-        assert "1. one\n\n2. two" in result
-
-    def test_accepted_view_and_package_metadata_are_consistent(self) -> None:
-        content = ET.Element(W + "p")
-        insertion = ET.SubElement(content, W + "ins")
-        insertion.append(_ooxml.word_run("Accepted text"))
-        deletion = ET.SubElement(content, W + "del")
-        deletion.append(_ooxml.word_run("Deleted text"))
-        custom = b"<Properties><Category>Example</Category></Properties>"
-        write_docx(self.source, [content], extras={"docProps/custom.xml": custom})
-        original = self.source.read_bytes()
-        diagnostics = self.root / "debug"
-        _pipeline.convert_docx(self.source, keep_intermediates=diagnostics)
-        result = self.source.with_suffix(".md").read_text(encoding="utf-8")
-        assert "Accepted text" in result
-        assert "Deleted text" not in result
-        assert self.source.read_bytes() == original
-        with zipfile.ZipFile(diagnostics / "reference.docx") as archive:
-            assert archive.read("docProps/custom.xml") == custom
-
-    def test_source_local_hyperlink_is_rebased_and_validated(self) -> None:
-        asset = self.root / "Other File.txt"
-        asset.write_text("retained local target", encoding="utf-8")
-        output = self.root / "different" / "guide.md"
-        result, _stats = self.convert(
-            [hyperlink("Local target", relation="local")],
-            output=output,
-            relations=(("local", "hyperlink", "Other%20File.txt", "External"),),
-        )
-        assert "../Other%20File.txt" in result
-
-    def test_replaced_page_tree_cannot_supply_stale_link_targets(self) -> None:
-        output = self.root / "guide.md"
-        output.write_text("# Old root\n", encoding="utf-8")
-        old_pages = self.root / "guide"
-        old_pages.mkdir()
-        old_page = old_pages / "old.md"
-        old_page.write_text("# Old page\n", encoding="utf-8")
-        images = self.root / ".images" / "guide"
-        images.mkdir(parents=True)
-        (images / "old.svg").write_bytes(SVG)
-        write_docx(
-            self.source,
-            [paragraph("New", "Heading1"), hyperlink("Stale", relation="local")],
-            relations=(("local", "hyperlink", "guide/old.md", "External"),),
-        )
-
-        with (
-            patch.object(
-                _publication, "publish_outputs", wraps=_publication.publish_outputs
-            ) as publish,
-            contextlib.redirect_stderr(io.StringIO()) as stderr,
-        ):
-            report = _diagnostics.TransformReport()
-            _pipeline.convert_docx(
-                self.source, output, split_depth=1, replace_generated=True, report=report
-            )
-
-        publish.assert_called_once()
-        assert "a link into the page tree has no prepared page" in report.records["checks"].skipped
-        assert "Link into the replaced page tree has no prepared page" in stderr.getvalue()
-        assert not old_page.exists()
-        assert (old_pages / "01-new.md").is_file()
-
-    def test_prepared_page_replaces_stale_content_for_fragment_validation(self) -> None:
-        pages = self.root / "guide"
-        pages.mkdir()
-        child = pages / "01-new.md"
-        child.write_text("# Old content\n", encoding="utf-8")
-        outside = self.root / "outside.md"
-        outside.write_text("# Outside\n", encoding="utf-8")
-        write_docx(
-            self.source,
-            [
-                bookmark("_Fresh", "New", "Heading1"),
-                hyperlink("Fresh", relation="fresh"),
-                hyperlink("Outside", relation="outside"),
-            ],
-            relations=(
-                ("fresh", "hyperlink", "guide/01-new.md#new", "External"),
-                ("outside", "hyperlink", "outside.md#outside", "External"),
-            ),
-        )
-
-        _pipeline.convert_docx(
-            self.source, self.root / "guide.md", split_depth=1, replace_generated=True
-        )
-
-        assert "# New" in child.read_text(encoding="utf-8")
-        assert "_Fresh" not in child.read_text(encoding="utf-8")
-        assert outside.read_text(encoding="utf-8") == "# Outside\n"
-
-    def test_depth_zero_allows_links_to_retained_old_pages(self) -> None:
-        old_pages = self.root / "guide"
-        old_pages.mkdir()
-        old_page = old_pages / "old.md"
-        old_page.write_text("# Old\n", encoding="utf-8")
-        write_docx(
-            self.source,
-            [hyperlink("Retained", relation="old")],
-            relations=(("old", "hyperlink", "guide/old.md#old", "External"),),
-        )
-
-        _pipeline.convert_docx(self.source, self.root / "guide.md")
-
-        assert old_page.read_text(encoding="utf-8") == "# Old\n"
-        assert "guide/old.md#old" in (self.root / "guide.md").read_text(encoding="utf-8")
-
-    def test_replaced_image_tree_cannot_supply_stale_link_targets(self) -> None:
-        output = self.root / "guide.md"
-        output.write_text("# Old root\n", encoding="utf-8")
-        images = self.root / ".images" / "guide"
-        images.mkdir(parents=True)
-        old_image = images / "old.svg"
-        old_image.write_bytes(SVG)
-        write_docx(
-            self.source,
-            [hyperlink("Stale asset", relation="old")],
-            relations=(("old", "hyperlink", ".images/guide/old.svg", "External"),),
-        )
-
-        with (
-            patch.object(
-                _publication, "publish_outputs", wraps=_publication.publish_outputs
-            ) as publish,
-            contextlib.redirect_stderr(io.StringIO()) as stderr,
-        ):
-            report = _diagnostics.TransformReport()
-            _pipeline.convert_docx(self.source, output, replace_generated=True, report=report)
-
-        publish.assert_called_once()
-        assert "a linked image file is missing" in report.records["checks"].skipped
-        assert "Missing linked asset in guide.md: .images/guide/old.svg" in stderr.getvalue()
-        assert not old_image.exists()
-
-    def test_external_url_escaping_survives_real_conversion_and_tables(self) -> None:
-        for index, (target, expected) in enumerate(
-            (
-                ("https://example.test/topic_(detail)", "https://example.test/topic_%28detail%29"),
-                ("https://example.test/R\u00e9sum\u00e9", "https://example.test/R%C3%A9sum%C3%A9"),
-                (
-                    "https://example.test/a%2Fb?q=x%26y&percent=%2525",
-                    "https://example.test/a%2Fb?q=x%26y&percent=%2525",
-                ),
-                (
-                    "https://example.test/?q=one&copy;=two&notit=three",
-                    "https://example.test/?q=one&copy;=two&notit=three",
-                ),
-                (
-                    "https://example.test/?literal=&amp;value",
-                    "https://example.test/?literal=&amp;value",
-                ),
-                (
-                    "https://[2001:db8::1]/topic_(detail)",
-                    "https://[2001:db8::1]/topic_%28detail%29",
-                ),
-            )
-        ):
-            with self.subTest(target=target):
-                result, _stats = self.convert(
-                    [
-                        hyperlink("Outside", relation="url"),
-                        table(
-                            row(cell("Link"), header=True),
-                            row(cell(hyperlink("Pipe", relation="url"))),
-                            columns=1,
-                        ),
-                        table(row(cell(hyperlink("HTML", relation="url"), colspan=2))),
-                    ],
-                    output=self.root / f"url-{index}.md",
-                    relations=(("url", "hyperlink", target, "External"),),
-                )
-                rendered = _validation.collect_references(
-                    _reference.pandoc_html(result, self.pandoc)
-                ).links
-                assert rendered[:2] == [expected, expected]
-                assert rendered[2] == target
-
-    def test_pandoc_generated_docx_preserves_unicode_parenthesized_external_url(self) -> None:
-        target = "https://example.test/R\u00e9sum\u00e9_(detail)"
-        _reference.run_command(
-            [self.pandoc, "--from=gfm+raw_html", "--to=docx", f"--output={self.source}"],
-            "Synthetic Markdown-to-Word",
-            input_text=f"# Unicode guide\n\n[External reference]({target})\n",
-        )
-        output = self.root / "generated.md"
-
-        result = subprocess.run(
-            [*COMMAND, str(self.source), "-o", str(output)],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-
-        assert result.returncode == 0, result.stderr
-        links = _validation.collect_references(
-            _reference.pandoc_html(output.read_text(encoding="utf-8"), self.pandoc)
-        ).links
-        assert links == ["https://example.test/R%C3%A9sum%C3%A9_%28detail%29"]
-
-    def test_broken_local_hyperlink_is_kept_and_reported(self) -> None:
-        result, report, warnings = self.convert_reported(
-            [hyperlink("Missing", relation="local")],
-            relations=(("local", "hyperlink", "missing.txt", "External"),),
-        )
-        assert "[Missing](missing.txt)" in result
-        assert "checks: Broken retained local link in Synthetic Guide.md: missing.txt" in warnings
-        summary = report.summary()
-        assert "  checks: 1 issue(s)" in summary
-        assert "    issue (1): a local link target does not exist" in summary
-
-    def test_malformed_uri_is_kept_and_reported(self) -> None:
-        write_docx(
-            self.source,
-            [hyperlink("Broken", relation="broken")],
-            relations=(("broken", "hyperlink", "https://[bad", "External"),),
-        )
-        diagnostics = self.root / "diagnostics"
-        report = _diagnostics.TransformReport()
-        stderr = io.StringIO()
-        with contextlib.redirect_stderr(stderr):
-            _pipeline.convert_docx(self.source, keep_intermediates=diagnostics, report=report)
-        assert "Broken" in self.source.with_suffix(".md").read_text(encoding="utf-8")
-        assert "Invalid retained URI" in stderr.getvalue()
-        saved = json.loads((diagnostics / "diagnostics.json").read_text(encoding="utf-8"))
-        assert saved["status"] == "published"
+def test_malformed_uri_is_kept_and_reported(
+    source: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_docx(
+        source,
+        [hyperlink("Broken", relation="broken")],
+        relations=(("broken", "hyperlink", "https://[bad", "External"),),
+    )
+    diagnostics = tmp_path / "diagnostics"
+    report = _diagnostics.TransformReport()
+    _pipeline.convert_docx(source, keep_intermediates=diagnostics, report=report)
+    assert "Broken" in source.with_suffix(".md").read_text(encoding="utf-8")
+    assert "Invalid retained URI" in capsys.readouterr().err
+    saved = json.loads((diagnostics / "diagnostics.json").read_text(encoding="utf-8"))
+    assert saved["status"] == "published"

@@ -15,7 +15,7 @@ src/md_doc_converter/
     package.json, package-lock.json   # pinned npm packages installed by setup
   assets/                   # stylesheets, HTML fragments, Pandoc/Mermaid config, Lua filters
 tests/
-  conftest.py               # the suites' policies (tests/support/suites.py)
+  conftest.py               # the suites' policies (tests/support/suites.py), shared fixtures
   support/                  # synthetic document builders, fake native tools, suite policies
   unit/                     # mirrors runtime responsibilities
   integration/              # command-line, conversion and publication workflows
@@ -86,9 +86,10 @@ The core suite needs Git and the pinned Pandoc 3.12.1, because some converter
 tests compare exact Pandoc output; a run stops with a hint to run
 `make setup-pandoc` when that Pandoc is missing. The core suite does not
 need Node.js, the rest of the toolchain, browsers or LibreOffice: command-line
-and pipeline tests use disposable fake `pandoc`, `node` and `npm` executables
-and a fake toolchain, and EMF conversion logic is covered with mocked native
-tools. Converter fixtures are synthetic documents built by `tests/support`.
+and pipeline tests use disposable fake `pandoc`, `node`, `npm` and `mmdc`
+executables and a fake toolchain, and EMF conversion logic is covered with
+mocked native tools. Converter fixtures are synthetic documents built by
+`tests/support`.
 
 The render suite exercises real EMF-to-SVG conversion (one LibreOffice run for
 a document's drawings, and the PDF fallback), a synthetic
@@ -105,6 +106,13 @@ to test the oldest, 3.11:
 ```sh
 UV_PYTHON=3.11 UV_PROJECT_ENVIRONMENT=.venv-3.11 make test
 ```
+
+Tests are plain pytest functions. A test asks for what it needs as fixtures:
+pytest's own, such as `tmp_path`, `monkeypatch` and `capsys`; the shared ones in
+`tests/conftest.py`, `pandoc` (the pinned Pandoc) and `fake_tools` (writes fake
+executables, which `tests/support/fake_tool.py` implements, installs a fake
+toolchain and reads the calls they recorded); and its module's own. Independent
+cases are `pytest.mark.parametrize` cases with readable ids.
 
 `make coverage` measures the core suite's line and branch coverage, including
 the command-line processes that tests start, and lists the lines it misses. No

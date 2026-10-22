@@ -1,217 +1,235 @@
-"""Synthetic DOCX regression coverage."""
+"""Destination safety: derived paths, aliases of the source, symlinks, and protected trees."""
 
 from __future__ import annotations
 
 import os
-import tempfile
-import unittest
 from pathlib import Path
 
 import pytest
-from typing_extensions import override
 
 from md_doc_converter.converters.docx import models as _models
 from md_doc_converter.converters.docx import publication as _publication
 
 
-class PathSafetyTests(unittest.TestCase):
-    @override
-    def setUp(self) -> None:
-        self.temporary = tempfile.TemporaryDirectory(prefix="docx-path-test-")
-        self.addCleanup(self.temporary.cleanup)
-        self.root = Path(self.temporary.name)
-        self.source = self.root / "input.docx"
-        self.source.write_bytes(b"source")
+@pytest.fixture
+def source(tmp_path: Path) -> Path:
+    path = tmp_path / "input.docx"
+    path.write_bytes(b"source")
+    return path
 
-    def test_default_output_is_beside_provided_symlink(self) -> None:
-        alias = self.root / "aliases" / "Requested Name.docx"
-        alias.parent.mkdir()
-        alias.symlink_to(self.source)
-        paths = _publication.validate_paths(alias, None)
-        assert paths.source == self.source
-        assert paths.output == alias.with_suffix(".md")
-        assert paths.images == alias.parent / ".images" / "Requested Name"
 
-    def test_explicit_output_and_safe_symlink_parent(self) -> None:
-        directory = self.root / "real"
-        directory.mkdir()
-        alias = self.root / "alias"
-        alias.symlink_to(directory, target_is_directory=True)
-        paths = _publication.validate_paths(self.source, alias / "Other.Name.md")
-        assert paths.output == directory / "Other.Name.md"
-        assert paths.images == directory / ".images" / "Other.Name"
+def test_default_output_is_beside_provided_symlink(source: Path, tmp_path: Path) -> None:
+    alias = tmp_path / "aliases" / "Requested Name.docx"
+    alias.parent.mkdir()
+    alias.symlink_to(source)
+    paths = _publication.validate_paths(alias, None)
+    assert paths.source == source
+    assert paths.output == alias.with_suffix(".md")
+    assert paths.images == alias.parent / ".images" / "Requested Name"
 
-    def test_existing_derived_markdown_needs_permission_even_when_empty(self) -> None:
-        self.source.with_suffix(".md").touch()
-        with pytest.raises(_models.ConversionError, match="Derived Markdown already exists"):
-            _publication.validate_paths(self.source, None)
-        _publication.validate_paths(self.source, None, replace_generated=True)
-        _publication.validate_paths(self.source, self.source.with_suffix(".md"))
 
-    def test_nonempty_images_and_pages_require_replace_flag(self) -> None:
-        for target, depth in ((self.root / ".images" / "output", 0), (self.root / "output", 1)):
-            with self.subTest(target=target):
-                target.mkdir(parents=True)
-                (target / "old").write_text("old", encoding="utf-8")
-                with pytest.raises(_models.ConversionError, match="requires --replace-generated"):
-                    _publication.validate_paths(
-                        self.source, self.root / "output.md", split_depth=depth
-                    )
-                _publication.validate_paths(
-                    self.source, self.root / "output.md", split_depth=depth, replace_generated=True
-                )
-                (target / "old").unlink()
+def test_explicit_output_and_safe_symlink_parent(source: Path, tmp_path: Path) -> None:
+    directory = tmp_path / "real"
+    directory.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(directory, target_is_directory=True)
+    paths = _publication.validate_paths(source, alias / "Other.Name.md")
+    assert paths.output == directory / "Other.Name.md"
+    assert paths.images == directory / ".images" / "Other.Name"
 
-    def test_depth_zero_does_not_claim_old_page_tree(self) -> None:
-        old = self.root / "input"
-        old.mkdir()
-        (old / "old.md").write_text("old", encoding="utf-8")
-        _publication.validate_paths(self.source, None)
-        assert (old / "old.md").read_text(encoding="utf-8") == "old"
 
-    def test_hardlinked_markdown_source_alias_is_rejected(self) -> None:
-        output = self.root / "alias.md"
-        os.link(self.source, output)
-        with pytest.raises(_models.ConversionError, match="aliases the source"):
-            _publication.validate_paths(self.source, output, replace_generated=True)
+def test_existing_derived_markdown_needs_permission_even_when_empty(source: Path) -> None:
+    source.with_suffix(".md").touch()
+    with pytest.raises(_models.ConversionError, match="Derived Markdown already exists"):
+        _publication.validate_paths(source, None)
+    _publication.validate_paths(source, None, replace_generated=True)
+    _publication.validate_paths(source, source.with_suffix(".md"))
 
-    def test_output_symlink_is_never_replaced(self) -> None:
-        output = self.root / "alias.md"
-        output.symlink_to(self.source)
-        with pytest.raises(_models.ConversionError, match="destination symlink"):
-            _publication.validate_paths(self.source, output, replace_generated=True)
 
-    def test_dangling_output_symlink_is_rejected(self) -> None:
-        output = self.root / "alias.md"
-        output.symlink_to(self.root / "missing")
-        with pytest.raises(_models.ConversionError, match="destination symlink"):
-            _publication.validate_paths(self.source, output)
+@pytest.mark.parametrize(
+    ("target", "split_depth"),
+    [pytest.param(".images/output", 0, id="images"), pytest.param("output", 1, id="pages")],
+)
+def test_nonempty_images_and_pages_require_replace_flag(
+    target: str, split_depth: int, source: Path, tmp_path: Path
+) -> None:
+    directory = tmp_path / target
+    directory.mkdir(parents=True)
+    (directory / "old").write_text("old", encoding="utf-8")
+    with pytest.raises(_models.ConversionError, match="requires --replace-generated"):
+        _publication.validate_paths(source, tmp_path / "output.md", split_depth=split_depth)
+    _publication.validate_paths(
+        source, tmp_path / "output.md", split_depth=split_depth, replace_generated=True
+    )
 
-    def test_image_parent_symlink_cannot_escape_containment(self) -> None:
-        (self.root / ".images").symlink_to(self.root, target_is_directory=True)
-        with pytest.raises(_models.ConversionError, match="must not be a symlink"):
-            _publication.validate_paths(self.source, None, replace_generated=True)
 
-    def test_output_types_are_checked_before_mutation(self) -> None:
-        output = self.root / "output.md"
-        output.mkdir()
-        with pytest.raises(_models.ConversionError, match="not a regular file"):
-            _publication.validate_paths(self.source, output)
+def test_depth_zero_does_not_claim_old_page_tree(source: Path, tmp_path: Path) -> None:
+    old = tmp_path / "input"
+    old.mkdir()
+    (old / "old.md").write_text("old", encoding="utf-8")
+    _publication.validate_paths(source, None)
+    assert (old / "old.md").read_text(encoding="utf-8") == "old"
 
-    def test_incompatible_parent_is_rejected(self) -> None:
-        parent = self.root / "file"
-        parent.write_text("file", encoding="utf-8")
-        with pytest.raises(_models.ConversionError, match="not a directory"):
-            _publication.validate_paths(self.source, parent / "output.md")
 
-    def test_source_inside_selected_page_tree_is_rejected(self) -> None:
-        directory = self.root / "selected"
-        directory.mkdir()
-        source = directory / "source.docx"
-        source.write_bytes(b"source")
-        with pytest.raises(_models.ConversionError, match="contains the source"):
-            _publication.validate_paths(
-                source, self.root / "selected.md", split_depth=1, replace_generated=True
-            )
+def test_hardlinked_markdown_source_alias_is_rejected(source: Path, tmp_path: Path) -> None:
+    output = tmp_path / "alias.md"
+    os.link(source, output)
+    with pytest.raises(_models.ConversionError, match="aliases the source"):
+        _publication.validate_paths(source, output, replace_generated=True)
 
-    def test_source_alias_entry_inside_selected_tree_is_rejected(self) -> None:
-        directory = self.root / "selected"
-        directory.mkdir()
-        source = directory / "alias.docx"
-        source.symlink_to(self.source)
-        with pytest.raises(_models.ConversionError, match="contains the source"):
-            _publication.validate_paths(
-                source, self.root / "selected.md", split_depth=1, replace_generated=True
-            )
 
-    def test_hardlink_alias_inside_generated_tree_is_rejected(self) -> None:
-        directory = self.root / ".images" / "output"
-        directory.mkdir(parents=True)
-        os.link(self.source, directory / "source.bin")
-        with pytest.raises(_models.ConversionError, match="contains a source alias"):
-            _publication.validate_paths(
-                self.source, self.root / "output.md", replace_generated=True
-            )
+def test_output_symlink_is_never_replaced(source: Path, tmp_path: Path) -> None:
+    output = tmp_path / "alias.md"
+    output.symlink_to(source)
+    with pytest.raises(_models.ConversionError, match="destination symlink"):
+        _publication.validate_paths(source, output, replace_generated=True)
 
-    def test_child_symlink_inside_generated_tree_is_rejected(self) -> None:
-        directory = self.root / ".images" / "output"
-        directory.mkdir(parents=True)
-        (directory / "link").symlink_to(self.root)
-        with pytest.raises(_models.ConversionError, match="Unsafe symlink"):
-            _publication.validate_paths(
-                self.source, self.root / "output.md", replace_generated=True
-            )
 
-    def test_repository_root_is_protected_as_page_tree(self) -> None:
-        directory = self.root / "repository"
-        (directory / ".git").mkdir(parents=True)
-        with pytest.raises(
-            _models.ConversionError, match="protected filesystem, home, or repository root"
-        ):
-            _publication.validate_paths(
-                self.source, self.root / "repository.md", split_depth=1, replace_generated=True
-            )
+def test_dangling_output_symlink_is_rejected(source: Path, tmp_path: Path) -> None:
+    output = tmp_path / "alias.md"
+    output.symlink_to(tmp_path / "missing")
+    with pytest.raises(_models.ConversionError, match="destination symlink"):
+        _publication.validate_paths(source, output)
 
-    def test_repository_nested_inside_generated_directory_is_protected(self) -> None:
-        (self.root / ".images" / "output" / "nested" / ".git").mkdir(parents=True)
-        with pytest.raises(_models.ConversionError, match="protected repository"):
-            _publication.validate_paths(
-                self.source, self.root / "output.md", replace_generated=True
-            )
 
-    def test_image_leaf_and_page_leaf_symlinks_are_rejected(self) -> None:
-        images = self.root / ".images" / "output"
-        images.parent.mkdir()
-        images.symlink_to(self.root / "elsewhere", target_is_directory=True)
-        with pytest.raises(_models.ConversionError, match="destination symlink"):
-            _publication.validate_paths(
-                self.source, self.root / "output.md", replace_generated=True
-            )
-        images.unlink()
-        (self.root / "output").symlink_to(self.root / "elsewhere", target_is_directory=True)
-        with pytest.raises(_models.ConversionError, match="destination symlink"):
-            _publication.validate_paths(
-                self.source, self.root / "output.md", split_depth=1, replace_generated=True
-            )
+def test_image_parent_symlink_cannot_escape_containment(source: Path, tmp_path: Path) -> None:
+    (tmp_path / ".images").symlink_to(tmp_path, target_is_directory=True)
+    with pytest.raises(_models.ConversionError, match="must not be a symlink"):
+        _publication.validate_paths(source, None, replace_generated=True)
 
-    def test_incompatible_image_parent_is_rejected(self) -> None:
-        (self.root / ".images").write_bytes(b"not a directory")
-        with pytest.raises(_models.ConversionError, match="not a directory"):
-            _publication.validate_paths(self.source, self.root / "output.md")
 
-    def test_diagnostics_cannot_be_source_hardlink(self) -> None:
-        diagnostic = self.root / "debug"
-        os.link(self.source, diagnostic)
-        with pytest.raises(_models.ConversionError, match="not a directory"):
-            _publication.validate_paths(self.source, None, keep_intermediates=diagnostic)
+def test_output_types_are_checked_before_mutation(source: Path, tmp_path: Path) -> None:
+    output = tmp_path / "output.md"
+    output.mkdir()
+    with pytest.raises(_models.ConversionError, match="not a regular file"):
+        _publication.validate_paths(source, output)
 
-    def test_diagnostics_reject_all_destination_overlaps(self) -> None:
-        output = self.root / "output.md"
-        for directory in (
-            self.root,
-            output,
-            self.root / ".images",
-            self.root / ".images" / "output" / "debug",
-            self.root / "output" / "debug",
-        ):
-            with (
-                self.subTest(directory=directory),
-                pytest.raises(_models.ConversionError, match="Diagnostic directory overlaps"),
-            ):
-                _publication.validate_paths(self.source, output, keep_intermediates=directory)
 
-    def test_diagnostic_directory_must_be_new_or_empty(self) -> None:
-        directory = self.root / "debug"
-        directory.mkdir()
-        _publication.validate_paths(self.source, None, keep_intermediates=directory)
-        (directory / "mine").touch()
-        with pytest.raises(_models.ConversionError, match="not empty"):
-            _publication.validate_paths(self.source, None, keep_intermediates=directory)
+def test_incompatible_parent_is_rejected(source: Path, tmp_path: Path) -> None:
+    parent = tmp_path / "file"
+    parent.write_text("file", encoding="utf-8")
+    with pytest.raises(_models.ConversionError, match="not a directory"):
+        _publication.validate_paths(source, parent / "output.md")
 
-    def test_diagnostic_symlink_is_rejected(self) -> None:
-        target = self.root / "empty"
-        target.mkdir()
-        link = self.root / "debug"
-        link.symlink_to(target, target_is_directory=True)
-        with pytest.raises(_models.ConversionError, match="destination symlink"):
-            _publication.validate_paths(self.source, None, keep_intermediates=link)
+
+def test_source_inside_selected_page_tree_is_rejected(tmp_path: Path) -> None:
+    directory = tmp_path / "selected"
+    directory.mkdir()
+    source = directory / "source.docx"
+    source.write_bytes(b"source")
+    with pytest.raises(_models.ConversionError, match="contains the source"):
+        _publication.validate_paths(
+            source, tmp_path / "selected.md", split_depth=1, replace_generated=True
+        )
+
+
+def test_source_alias_entry_inside_selected_tree_is_rejected(source: Path, tmp_path: Path) -> None:
+    directory = tmp_path / "selected"
+    directory.mkdir()
+    alias = directory / "alias.docx"
+    alias.symlink_to(source)
+    with pytest.raises(_models.ConversionError, match="contains the source"):
+        _publication.validate_paths(
+            alias, tmp_path / "selected.md", split_depth=1, replace_generated=True
+        )
+
+
+def test_hardlink_alias_inside_generated_tree_is_rejected(source: Path, tmp_path: Path) -> None:
+    directory = tmp_path / ".images" / "output"
+    directory.mkdir(parents=True)
+    os.link(source, directory / "source.bin")
+    with pytest.raises(_models.ConversionError, match="contains a source alias"):
+        _publication.validate_paths(source, tmp_path / "output.md", replace_generated=True)
+
+
+def test_child_symlink_inside_generated_tree_is_rejected(source: Path, tmp_path: Path) -> None:
+    directory = tmp_path / ".images" / "output"
+    directory.mkdir(parents=True)
+    (directory / "link").symlink_to(tmp_path)
+    with pytest.raises(_models.ConversionError, match="Unsafe symlink"):
+        _publication.validate_paths(source, tmp_path / "output.md", replace_generated=True)
+
+
+def test_repository_root_is_protected_as_page_tree(source: Path, tmp_path: Path) -> None:
+    directory = tmp_path / "repository"
+    (directory / ".git").mkdir(parents=True)
+    with pytest.raises(
+        _models.ConversionError, match="protected filesystem, home, or repository root"
+    ):
+        _publication.validate_paths(
+            source, tmp_path / "repository.md", split_depth=1, replace_generated=True
+        )
+
+
+def test_repository_nested_inside_generated_directory_is_protected(
+    source: Path, tmp_path: Path
+) -> None:
+    (tmp_path / ".images" / "output" / "nested" / ".git").mkdir(parents=True)
+    with pytest.raises(_models.ConversionError, match="protected repository"):
+        _publication.validate_paths(source, tmp_path / "output.md", replace_generated=True)
+
+
+@pytest.mark.parametrize(
+    ("leaf", "split_depth"),
+    [pytest.param(".images/output", 0, id="images"), pytest.param("output", 1, id="pages")],
+)
+def test_image_leaf_and_page_leaf_symlinks_are_rejected(
+    leaf: str, split_depth: int, source: Path, tmp_path: Path
+) -> None:
+    link = tmp_path / leaf
+    link.parent.mkdir(exist_ok=True)
+    link.symlink_to(tmp_path / "elsewhere", target_is_directory=True)
+    with pytest.raises(_models.ConversionError, match="destination symlink"):
+        _publication.validate_paths(
+            source, tmp_path / "output.md", split_depth=split_depth, replace_generated=True
+        )
+
+
+def test_incompatible_image_parent_is_rejected(source: Path, tmp_path: Path) -> None:
+    (tmp_path / ".images").write_bytes(b"not a directory")
+    with pytest.raises(_models.ConversionError, match="not a directory"):
+        _publication.validate_paths(source, tmp_path / "output.md")
+
+
+def test_diagnostics_cannot_be_source_hardlink(source: Path, tmp_path: Path) -> None:
+    diagnostic = tmp_path / "debug"
+    os.link(source, diagnostic)
+    with pytest.raises(_models.ConversionError, match="not a directory"):
+        _publication.validate_paths(source, None, keep_intermediates=diagnostic)
+
+
+@pytest.mark.parametrize(
+    "directory",
+    [
+        pytest.param(".", id="output-folder"),
+        pytest.param("output.md", id="markdown"),
+        pytest.param(".images", id="image-parent"),
+        pytest.param(".images/output/debug", id="inside-images"),
+        pytest.param("output/debug", id="inside-pages"),
+    ],
+)
+def test_diagnostics_reject_all_destination_overlaps(
+    directory: str, source: Path, tmp_path: Path
+) -> None:
+    with pytest.raises(_models.ConversionError, match="Diagnostic directory overlaps"):
+        _publication.validate_paths(
+            source, tmp_path / "output.md", keep_intermediates=tmp_path / directory
+        )
+
+
+def test_diagnostic_directory_must_be_new_or_empty(source: Path, tmp_path: Path) -> None:
+    directory = tmp_path / "debug"
+    directory.mkdir()
+    _publication.validate_paths(source, None, keep_intermediates=directory)
+    (directory / "mine").touch()
+    with pytest.raises(_models.ConversionError, match="not empty"):
+        _publication.validate_paths(source, None, keep_intermediates=directory)
+
+
+def test_diagnostic_symlink_is_rejected(source: Path, tmp_path: Path) -> None:
+    target = tmp_path / "empty"
+    target.mkdir()
+    link = tmp_path / "debug"
+    link.symlink_to(target, target_is_directory=True)
+    with pytest.raises(_models.ConversionError, match="destination symlink"):
+        _publication.validate_paths(source, None, keep_intermediates=link)
