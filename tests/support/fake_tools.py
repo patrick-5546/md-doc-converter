@@ -2,7 +2,8 @@
 
 The fakes record each call in a JSON-lines log. The fake Pandoc answers the
 preprocessor's ``--to=json`` parses with headings only, so test inputs should be
-plain Markdown without links or reference definitions.
+plain Markdown without links or reference definitions. The fake mmdc writes each
+diagram's text as its SVG and fails on diagrams that contain ``FAIL``.
 """
 
 from __future__ import annotations
@@ -25,9 +26,8 @@ BROWSER_PATH = f"{BROWSER}/{BROWSER_BUILD}/{BROWSER}-linux64/{BROWSER}"
 RECORDED_VARIABLES = (
     "PATH",
     "PUPPETEER_CACHE_DIR",
-    "MERMAID_FILTER_CMD_MMDC",
-    "MERMAID_FILTER_FORMAT",
-    "MERMAID_FILTER_MERMAID_CONFIG",
+    "MD_DOC_CONVERTER_MMDC",
+    "MD_DOC_CONVERTER_MERMAID_CONFIG",
 )
 
 FAKE_TOOL = """#!{python}
@@ -60,6 +60,7 @@ if tool == "pandoc" and "--to=json" in arguments:
     sys.exit(0)
 if os.environ.get("FAKE_TOOL_FAIL") == tool:
     sys.exit(3)
+status = 0
 record = {{
     "tool": tool,
     "path": sys.argv[0],
@@ -76,13 +77,32 @@ if tool == "pandoc":
     )
 elif tool == "node":
     Path(arguments[arguments.index("-o") + 1]).write_bytes(b"%PDF-fake")
+elif tool == "mmdc":
+    def option(name):
+        return arguments[arguments.index(name) + 1]
+    source = Path(option("--input")).read_text()
+    output = Path(option("--output"))
+    if "--artefacts" in arguments:
+        diagrams = re.findall(r"^```mermaid\\n(.*?)\\n```$", source, re.S | re.M)
+        images = [
+            Path(option("--artefacts")) / (output.stem + "-" + str(number) + ".svg")
+            for number in range(1, len(diagrams) + 1)
+        ]
+    else:
+        diagrams, images = [source], [output]
+    record["diagrams"] = diagrams
+    if any("FAIL" in diagram for diagram in diagrams):
+        sys.stderr.write("Error: Parse error on line 2\\n    at parse (file:///mermaid.mjs:1:1)\\n")
+        status = 1
+    else:
+        for diagram, image in zip(diagrams, images):
+            image.write_text("<svg>" + diagram + "</svg>")
 elif tool == "npm":
     modules = Path.cwd() / "node_modules"
-    for name in ("mermaid-filter", "mmdc"):
-        executable = modules / ".bin" / name
-        executable.parent.mkdir(parents=True, exist_ok=True)
-        executable.write_text("#!/bin/sh\\n")
-        executable.chmod(0o755)
+    executable = modules / ".bin" / "mmdc"
+    executable.parent.mkdir(parents=True, exist_ok=True)
+    executable.write_text("#!/bin/sh\\n")
+    executable.chmod(0o755)
     # The fake Puppeteer CLI is this script under another name.
     shutil.copy(sys.argv[0], modules / ".bin" / "puppeteer")
     (modules / "pagedjs-cli").mkdir(exist_ok=True)
@@ -94,6 +114,7 @@ elif tool == "puppeteer":
     browser.chmod(0o755)
 with log.open("a") as stream:
     stream.write(json.dumps(record) + "\\n")
+sys.exit(status)
 """
 
 
@@ -123,11 +144,10 @@ def write_fake_tools(
 def install_fake_toolchain(root: Path, log: Path) -> Toolchain:
     """Create a complete, current toolchain, with the pinned Pandoc, whose executables are fakes."""
     tools = Toolchain(root)
-    for name in ("mermaid-filter", "mmdc"):
-        executable = tools.node_executable(name)
-        executable.parent.mkdir(parents=True, exist_ok=True)
-        executable.write_text("#!/bin/sh\n")
-        executable.chmod(0o755)
+    executable = tools.node_executable("mmdc")
+    executable.parent.mkdir(parents=True)
+    executable.write_text("#!/bin/sh\n")
+    executable.chmod(0o755)
     (tools.node_modules / "pagedjs-cli").mkdir()
     (tools.node_modules / "pagedjs-cli" / "package.json").write_text("{}")
     browser = tools.puppeteer_cache / BROWSER_PATH

@@ -51,7 +51,7 @@ html,
   height: auto;
 }
 
-/* Mermaid diagrams (tagged via MERMAID_FILTER_IMAGE_CLASS): shrink each inline
+/* Mermaid diagrams (tagged by mermaid.lua): shrink each inline
    SVG to 75% of its natural size, then cap at page width. `zoom` scales the
    intrinsic size first; the max-width percentage clamps anything still wider
    than the page, so an oversized diagram fills the page rather than 75% of it.

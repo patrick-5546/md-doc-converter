@@ -17,7 +17,7 @@ and PDF.
 
 - Linux x86_64.
 - Python 3.11 to 3.14. uv installs one if needed.
-- [Node.js](https://nodejs.org/) 22.12 or newer, with npm, for rendering.
+- [Node.js](https://nodejs.org/) 22.13 or newer, with npm, for rendering.
 - Optional: LibreOffice (`libreoffice` or `soffice`) and Poppler
   (`pdftocairo`) to convert EMF and WMF drawings in Word documents to SVG, and
   Git to skip Git-ignored files when converting or rendering a folder.
@@ -127,8 +127,9 @@ A folder input is combined into one document in name order, or in the order an
 Azure DevOps Wiki `.order` file gives. Rendering writes only the requested file
 and replaces an existing one only after it succeeds. Prepared Markdown and
 other intermediates stay private unless `--keep-intermediates DIR` asks to keep
-them. See [Rendering](docs/rendering.md) for output naming, folder input, the
-page header and footer, extra stylesheets, the PDF time limit and table styling.
+them. See [Rendering](docs/rendering.md) for output naming, folder input,
+Mermaid diagrams, the page header and footer, extra stylesheets, the PDF time
+limit and table styling.
 
 ## Settings
 

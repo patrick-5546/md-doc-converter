@@ -21,7 +21,8 @@ HOME_VARIABLE = "MD_DOC_CONVERTER_HOME"
 MANIFEST_DIR = Path(__file__).resolve().parent
 MANIFESTS = ("package.json", "package-lock.json")
 STAMP_NAME = ".md-doc-converter-stamp"
-NODE_MINIMUM = (22, 12, 0)
+# mermaid-cli 12 needs Node.js 22.13.
+NODE_MINIMUM = (22, 13, 0)
 # Converted Markdown depends on the Pandoc version; the tests expect this one.
 PANDOC_VERSION = "3.12.1"
 PANDOC_KATEX_VERSION = "0.1.11"
@@ -128,11 +129,7 @@ def render_environment(tools: Toolchain, base: Mapping[str, str] | None = None) 
         search.append(environment["PATH"])
     environment["PATH"] = os.pathsep.join(search)
     environment["PUPPETEER_CACHE_DIR"] = str(tools.puppeteer_cache)
-    environment["MERMAID_FILTER_CMD_MMDC"] = str(tools.node_executable("mmdc"))
-    environment.setdefault("MERMAID_FILTER_FORMAT", "svg")
-    environment["MERMAID_FILTER_MERMAID_CONFIG"] = str(asset_path("mermaid-config.json"))
-    # SCALE only affects PNG output; SVGs are scaled with CSS `zoom` on the images tagged
-    # with IMAGE_CLASS (see assets/style-overrides.css).
-    environment["MERMAID_FILTER_SCALE"] = "0.75"
-    environment["MERMAID_FILTER_IMAGE_CLASS"] = "mermaid-diagram"
+    # For assets/mermaid.lua.
+    environment["MD_DOC_CONVERTER_MMDC"] = str(tools.node_executable("mmdc"))
+    environment["MD_DOC_CONVERTER_MERMAID_CONFIG"] = str(asset_path("mermaid-config.json"))
     return environment

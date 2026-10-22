@@ -73,6 +73,7 @@ class PackageLayoutTest(unittest.TestCase):
         assets = (
             "pandoc-defaults.yaml",
             "mermaid-config.json",
+            "mermaid.lua",
             "style-overrides.css",
             "markdown-body-open.html",
             "markdown-body-close.html",

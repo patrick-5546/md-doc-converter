@@ -75,7 +75,7 @@ class HomeTest(unittest.TestCase):
 class EnvironmentTest(TemporaryTest):
     def test_render_environment_puts_the_toolchain_first(self) -> None:
         tools = Toolchain(Path("/renderer"))
-        base = {"PATH": "/usr/bin", "MERMAID_FILTER_FORMAT": "png", "OTHER": "kept"}
+        base = {"PATH": "/usr/bin", "OTHER": "kept"}
         environment = render_environment(tools, base)
         self.assertEqual(
             environment["PATH"].split(os.pathsep),
@@ -83,15 +83,13 @@ class EnvironmentTest(TemporaryTest):
         )
         self.assertEqual(environment["PUPPETEER_CACHE_DIR"], "/renderer/puppeteer")
         self.assertEqual(
-            environment["MERMAID_FILTER_CMD_MMDC"], "/renderer/node/node_modules/.bin/mmdc"
+            environment["MD_DOC_CONVERTER_MMDC"], "/renderer/node/node_modules/.bin/mmdc"
         )
         self.assertEqual(
-            environment["MERMAID_FILTER_MERMAID_CONFIG"], str(asset_path("mermaid-config.json"))
+            environment["MD_DOC_CONVERTER_MERMAID_CONFIG"], str(asset_path("mermaid-config.json"))
         )
-        self.assertEqual(environment["MERMAID_FILTER_FORMAT"], "png")
         self.assertEqual(environment["OTHER"], "kept")
         self.assertEqual(base["PATH"], "/usr/bin")
-        self.assertEqual(render_environment(tools, {})["MERMAID_FILTER_FORMAT"], "svg")
 
     def test_stamp_tracks_the_bundled_manifests(self) -> None:
         tools = Toolchain(self.root / "home")
@@ -131,7 +129,7 @@ class ChecksTest(TemporaryTest):
             self.assertEqual(checks.main([]), 1)
         report = output.getvalue()
         self.assertIn("-> Run `md-doc-converter setup`, or `setup --no-render`", report)
-        self.assertIn("Install Node.js 22.12 or newer", report)
+        self.assertIn("Install Node.js 22.13 or newer", report)
         self.assertIn("-> Run `md-doc-converter setup`\n", report)
         self.assertIn("Not ready to render", report)
 
@@ -143,7 +141,7 @@ class ChecksTest(TemporaryTest):
             node = checks.check_node()
             pandoc = checks.check_pandoc()
         self.assertEqual(node.status, "error")
-        self.assertIn("20.11.1 is older than 22.12", node.detail)
+        self.assertIn("20.11.1 is older than 22.13", node.detail)
         self.assertEqual(pandoc.status, "warn")
         self.assertIn(
             f"3.1.9 ({self.bin / 'pandoc'}); md-doc-converter is tested with", pandoc.detail

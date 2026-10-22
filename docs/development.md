@@ -38,7 +38,7 @@ independently.
 ## Environment
 
 Development needs Linux x86_64, [uv](https://docs.astral.sh/uv/) and Git, plus
-Node.js 22.12 or newer for the render suite, and LibreOffice and Poppler
+Node.js 22.13 or newer for the render suite, and LibreOffice and Poppler
 (`pdftocairo`) for its EMF tests. uv installs Python (version from
 `.python-version`) and the locked dependencies in `uv.lock`, including
 [Poe the Poet](https://poethepoet.natn.io/), which runs the tasks defined in

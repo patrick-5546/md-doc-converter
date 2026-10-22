@@ -101,6 +101,30 @@ lines with `<br>`, or make the table HTML. An escaped pipe in a table cell's cod
 span, `` `a\|b` ``, renders as the pipe GFM shows, not with the backslash
 Pandoc's Markdown reader keeps.
 
+## Mermaid diagrams
+
+Each `mermaid` code block becomes an image of its diagram, drawn by
+[mermaid-cli](https://github.com/mermaid-js/mermaid-cli) 12 in one run for the
+whole render and embedded in the HTML. Diagrams use Mermaid's defaults, such as
+the ELK layout for flowcharts and state, class and ER diagrams. A diagram can
+choose others in its front matter, for example the dagre layout of earlier
+Mermaid versions:
+
+````markdown
+```mermaid
+---
+config:
+  layout: dagre
+---
+flowchart LR
+  Request --> Response
+```
+````
+
+Diagrams are shown at 75% of their natural size, and no wider than the page. A
+diagram that Mermaid cannot draw stops the render with Mermaid's message and
+the diagram's position, such as `Mermaid diagram 2 of 3 (flowchart LR)`.
+
 ## Page header and footer
 
 PDF pages show page numbers, centered at the bottom as `Page N of M`. Header and

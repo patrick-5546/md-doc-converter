@@ -23,13 +23,15 @@ from md_doc_converter.toolchain.environment import (
 )
 
 PANDOC_FIX = "Run `md-doc-converter setup`, or `setup --no-render` for conversion only"
+NODE_REQUIRED = ".".join(str(part) for part in NODE_MINIMUM[:2])
 NODE_FIX = (
-    "Install Node.js 22.12 or newer with npm, from your distribution, nvm or https://nodejs.org/"
+    f"Install Node.js {NODE_REQUIRED} or newer with npm, from your distribution, nvm or "
+    "https://nodejs.org/"
 )
 SETUP_FIX = "Run `md-doc-converter setup`"
 REINSTALL_FIX = "Run `md-doc-converter setup --force`"
-# Executables that Pandoc runs as filters or that mermaid-filter calls.
-FILTER_EXECUTABLES = ("mermaid-filter", "mmdc")
+# Executables that the Pandoc filters run.
+FILTER_EXECUTABLES = ("mmdc",)
 PDF_PACKAGE = "pagedjs-cli"
 
 
@@ -108,7 +110,8 @@ def check_node() -> Check:
     if version is None:
         return Check("node", "error", f"{node} did not report a version", NODE_FIX)
     if version < NODE_MINIMUM:
-        return Check("node", "error", f"{_text(version)} is older than 22.12 ({node})", NODE_FIX)
+        detail = f"{_text(version)} is older than {NODE_REQUIRED} ({node})"
+        return Check("node", "error", detail, NODE_FIX)
     return Check("node", "ok", f"{_text(version)} ({node})")
 
 
