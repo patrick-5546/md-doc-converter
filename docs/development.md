@@ -37,59 +37,64 @@ independently.
 
 ## Environment
 
-Development needs Linux x86_64, [pixi](https://pixi.sh) and Git. pixi provides
-Pandoc 3.12.1, Node.js 24, Poppler (`pdftocairo`) and uv from conda-forge; uv
-installs Python (version from `.python-version`) and the locked dependencies in
-`uv.lock`. Inside pixi, `MD_DOC_CONVERTER_HOME` points at `.toolchain/` in the
-checkout, so the renderer toolchain stays out of your home directory.
+Development needs Linux x86_64, [uv](https://docs.astral.sh/uv/) and Git, plus
+Node.js 22.12 or newer for the render suite, and LibreOffice and Poppler
+(`pdftocairo`) for its EMF tests. uv installs Python (version from
+`.python-version`) and the locked dependencies in `uv.lock`, including
+[Poe the Poet](https://poethepoet.natn.io/), which runs the tasks defined in
+`pyproject.toml`. The tasks set `MD_DOC_CONVERTER_HOME` to `.toolchain/` in the
+checkout unless it is already set, so the toolchain that the tests use stays out
+of your home directory.
 
 ```sh
-pixi run sync      # uv sync --locked
-pixi run lint      # Ruff format check, Ruff, ty and Pyrefly
-pixi run test      # core suite
+uv run poe lint    # Ruff format check, Ruff, ty and Pyrefly
+uv run poe test    # core suite; installs the pinned Pandoc first
+uv run poe         # lists the tasks
 ```
 
 | Task | Purpose |
 | --- | --- |
-| `sync` | Create or update `.venv` from `uv.lock` |
-| `setup` | Install the renderer toolchain into `.toolchain/` |
+| `setup` | Install the toolchain into `.toolchain/`; needs Node.js |
+| `setup-pandoc` | Install only the pinned Pandoc into `.toolchain/` |
 | `doctor` | Check the prerequisites |
 | `format` | Format Python with Ruff |
-| `lint` | `lint-ruff`, `lint-ty` and `lint-pyrefly` |
-| `test` | Core suite: unit and integration tests |
+| `lint` | Ruff format check, Ruff, ty and Pyrefly |
+| `test` | Core suite: unit and integration tests; runs `setup-pandoc` first |
 | `test-render` | Real rendering suite; runs `setup` first |
-| `test-all` | Both suites |
+| `test-all` | Both suites; runs `setup` first |
 | `build` | Build the wheel and sdist into `dist/` |
 | `lock-npm` | Refresh `package-lock.json` after editing the bundled `package.json` |
 
-Without pixi, put Pandoc 3.12.1 on `PATH` and use uv directly, for example
-`uv run python -m tests core`.
+`uv run` creates or updates `.venv` from `uv.lock` before running a task.
 
 ## Test suites
 
 Both suites are discovered explicitly through `python -m tests core|render|all`.
 Missing prerequisites, empty discovery and skipped tests fail rather than
-reducing coverage.
+reducing coverage. Like the tasks, the test runner uses `.toolchain/` unless
+`MD_DOC_CONVERTER_HOME` is set, and puts its `bin/` first on `PATH`, as the
+command does.
 
-The core suite needs Git and Pandoc. It does not need Node.js, the renderer
-toolchain, browsers or LibreOffice: command-line and pipeline tests use
-disposable fake `pandoc`, `node` and `npm` executables and a fake toolchain, and
-EMF conversion logic is covered with mocked native tools. Converter fixtures are
-synthetic documents built by `tests/support`.
+The core suite needs Git and the pinned Pandoc 3.12.1, because some converter
+tests compare exact Pandoc output; the runner stops with a hint to run
+`uv run poe setup-pandoc` when that Pandoc is missing. The core suite does not
+need Node.js, the rest of the toolchain, browsers or LibreOffice: command-line
+and pipeline tests use disposable fake `pandoc`, `node` and `npm` executables
+and a fake toolchain, and EMF conversion logic is covered with mocked native
+tools. Converter fixtures are synthetic documents built by `tests/support`.
 
 The render suite exercises real EMF-to-SVG conversion (including its PDF
 fallback), a synthetic Word-to-Markdown-to-HTML/PDF workflow, a reference-linked
 folder with images, Mermaid and math, and the PDF time limit. It needs the
-installed toolchain, `pdftocairo` and LibreOffice (`libreoffice` or `soffice`)
-on `PATH`.
+installed toolchain, Node.js, `pdftocairo` and LibreOffice (`libreoffice` or
+`soffice`) on `PATH`.
 
-Some converter tests compare exact Pandoc output and expect Pandoc 3.12.1,
-the version that `setup` installs and pixi provides. The converter writes code fences itself, because Pandoc's GFM
-writer drops labels, such as `text`, that are not among its highlighting
-languages (since Pandoc 3.10.1). Python 3.10 is the oldest supported version:
+The converter writes code fences itself, because Pandoc's GFM writer drops
+labels, such as `text`, that are not among its highlighting languages (since
+Pandoc 3.10.1). Python 3.10 is the oldest supported version:
 
 ```sh
-UV_PYTHON=3.10 UV_PROJECT_ENVIRONMENT=.venv-3.10 pixi run test
+UV_PYTHON=3.10 UV_PROJECT_ENVIRONMENT=.venv-3.10 uv run poe test
 ```
 
 ## Updating dependencies
@@ -97,7 +102,7 @@ UV_PYTHON=3.10 UV_PROJECT_ENVIRONMENT=.venv-3.10 pixi run test
 - **Python:** edit `pyproject.toml`, then run `uv lock`. MarkItDown stays pinned
   to one version because Word alignment depends on its exact output.
 - **npm packages:** edit `src/md_doc_converter/toolchain/package.json`, then run
-  `pixi run lock-npm`. The next `setup` reinstalls the packages because the
+  `uv run poe lock-npm`. The next `setup` reinstalls the packages because the
   manifests' digest changes. A test checks that every locked package resolves
   from `registry.npmjs.org`.
 - **pandoc-katex:** update `PANDOC_KATEX_VERSION` in
@@ -105,24 +110,24 @@ UV_PYTHON=3.10 UV_PROJECT_ENVIRONMENT=.venv-3.10 pixi run test
   `toolchain/install.py` (the `sha256sum` of the release's
   `x86_64-unknown-linux-musl` archive), and the KaTeX stylesheet version in
   `assets/pandoc-defaults.yaml` (`pandoc-katex --katex-version`).
-- **Pandoc:** update `PANDOC_VERSION` in `toolchain/environment.py`, the
+- **Pandoc:** update `PANDOC_VERSION` in `toolchain/environment.py` and the
   `PANDOC` checksum in `toolchain/install.py` (the `sha256sum` of the release's
-  `linux-amd64` archive) and the pin in `pixi.toml`, then update tests that
-  compare exact Pandoc output.
+  `linux-amd64` archive), then update tests that compare exact Pandoc output.
 
 ## Continuous integration
 
 `.github/workflows/ci.yml` runs on pushes and pull requests:
 
-- `lint-and-core`: lint, then the core suite on Python 3.10 and 3.13;
-- `render`: installs LibreOffice, runs `setup` (cached by the npm lockfile and
-  the pandoc-katex pin) and the render suite;
+- `lint-and-core`: lint, then the core suite on Python 3.10 and 3.13, with the
+  pinned Pandoc cached by `toolchain/install.py`;
+- `render`: installs Node.js 24, LibreOffice and Poppler, runs `setup` (cached
+  by the npm manifests and the toolchain code) and the render suite;
 - `package`: builds the wheel and sdist, checks the wheel's contents, installs
   it with `uv tool install` and runs the installed command.
 
 ## Building
 
-`pixi run build` (or `uv build`) writes the wheel and sdist to `dist/`. The
+`uv run poe build` (or `uv build`) writes the wheel and sdist to `dist/`. The
 wheel contains only the `md_doc_converter` package with its assets, PDF printer
 and npm manifests. Check an installed build outside the checkout:
 

@@ -23,6 +23,7 @@ md-doc-converter = "md_doc_converter.__main__:main"
 
 [dependency-groups]
 dev = [
+    "poethepoet>=0.49.0",
     "pyrefly>=1.1.1",
     "ruff>=0.15.20",
     "ty>=0.0.56",
@@ -31,6 +32,56 @@ dev = [
 [build-system]
 requires = ["uv_build>=0.13.4,<0.14.0"]
 build-backend = "uv_build"
+
+# Development tasks: `uv run poe <task>`; `uv run poe` lists them.
+[tool.poe.env]
+# Keep the toolchain that `setup` installs inside the checkout, unless already set.
+MD_DOC_CONVERTER_HOME.default = "${POE_ROOT}/.toolchain"
+
+[tool.poe.tasks.setup]
+help = "Install the toolchain into .toolchain/ (rendering needs Node.js)"
+cmd = "md-doc-converter setup"
+
+[tool.poe.tasks.setup-pandoc]
+help = "Install only the pinned Pandoc into .toolchain/"
+cmd = "md-doc-converter setup --no-render"
+
+[tool.poe.tasks.doctor]
+help = "Check the prerequisites"
+cmd = "md-doc-converter doctor"
+
+[tool.poe.tasks.format]
+help = "Format Python with Ruff"
+cmd = "ruff format src tests"
+
+[tool.poe.tasks.lint]
+help = "Ruff format check, Ruff, ty and Pyrefly"
+sequence = ["ruff format --check src tests", "ruff check src tests", "ty check src tests", "pyrefly check"]
+default_item_type = "cmd"
+
+[tool.poe.tasks.test]
+help = "Core suite: unit and integration tests, with the pinned Pandoc"
+cmd = "python -m tests core"
+deps = ["setup-pandoc"]
+
+[tool.poe.tasks.test-render]
+help = "Real rendering suite; also needs Node.js, LibreOffice and Poppler"
+cmd = "python -m tests render"
+deps = ["setup"]
+
+[tool.poe.tasks.test-all]
+help = "Both suites"
+cmd = "python -m tests all"
+deps = ["setup"]
+
+[tool.poe.tasks.build]
+help = "Build the wheel and sdist into dist/"
+cmd = "uv build"
+
+[tool.poe.tasks.lock-npm]
+help = "Refresh package-lock.json after editing the bundled package.json"
+cmd = "npm install --package-lock-only --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org/"
+cwd = "src/md_doc_converter/toolchain"
 
 [tool.pyrefly]
 preset = "strict"

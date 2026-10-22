@@ -200,5 +200,5 @@ browser that opens the HTML, fetches.
 
 ## Development
 
-See [Development](docs/development.md) for the layout, the pixi and uv
+See [Development](docs/development.md) for the layout, the uv and Poe the Poet
 workflow, the test suites and continuous integration.

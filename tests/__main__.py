@@ -3,12 +3,22 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import sys
 import unittest
 
-from md_doc_converter.toolchain.checks import check_browser, check_packages, check_pandoc_katex
-from md_doc_converter.toolchain.environment import toolchain
+from md_doc_converter.toolchain.checks import (
+    check_browser,
+    check_packages,
+    check_pandoc,
+    check_pandoc_katex,
+)
+from md_doc_converter.toolchain.environment import (
+    PANDOC_VERSION,
+    prefer_installed_tools,
+    toolchain,
+)
 from tests.support.project import PROJECT_ROOT
 
 SUITES = {
@@ -18,12 +28,23 @@ SUITES = {
 }
 
 
+SETUP_PANDOC = "run `uv run poe setup-pandoc`"
+
+
+def use_project_toolchain() -> None:
+    """Use the checkout's toolchain, as the poe tasks do, with its pinned Pandoc first on PATH."""
+    os.environ.setdefault("MD_DOC_CONVERTER_HOME", str(PROJECT_ROOT / ".toolchain"))
+    prefer_installed_tools()
+
+
 def missing_dependencies(selection: str) -> list[str]:
-    required = ["git", "pandoc"]
+    missing = [] if shutil.which("git") else ["git"]
+    # Converter tests compare exact Pandoc output, so they need the pinned version.
+    pandoc = check_pandoc()
+    if pandoc.status != "ok":
+        missing.append(f"pandoc {PANDOC_VERSION}: {pandoc.detail} ({SETUP_PANDOC})")
     if selection in {"render", "all"}:
-        required.extend(("node", "pdftocairo"))
-    missing = [tool for tool in required if shutil.which(tool) is None]
-    if selection in {"render", "all"}:
+        missing.extend(tool for tool in ("node", "pdftocairo") if shutil.which(tool) is None)
         if not (shutil.which("libreoffice") or shutil.which("soffice")):
             missing.append("libreoffice/soffice (EMF regression coverage)")
         tools = toolchain()
@@ -73,4 +94,5 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    use_project_toolchain()
     raise SystemExit(main())

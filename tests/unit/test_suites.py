@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import contextlib
 import io
+import os
 import unittest
 from unittest import mock
 
 from md_doc_converter.toolchain.checks import Check
+from md_doc_converter.toolchain.environment import PANDOC_VERSION
 from tests import __main__ as suites
+from tests.support.project import PROJECT_ROOT
 
 TOOLCHAIN_CHECKS = ("check_packages", "check_browser", "check_pandoc_katex")
 
@@ -23,30 +26,70 @@ def toolchain_checks(status: str = "ok") -> contextlib.ExitStack:
     return stack
 
 
+def pandoc_check(
+    status: str = "ok", detail: str = "detail"
+) -> contextlib.AbstractContextManager[object]:
+    return mock.patch.object(
+        suites, "check_pandoc", return_value=Check("pandoc", status, detail, "Run setup")
+    )
+
+
 class TestSuiteSelection(unittest.TestCase):
     def test_core_does_not_require_render_dependencies(self) -> None:
-        available = {"git", "pandoc"}
-
         def which(name: str) -> str | None:
-            self.assertIn(name, available, f"Unexpected render dependency probe: {name}")
+            self.assertEqual(name, "git", f"Unexpected render dependency probe: {name}")
             return f"/bin/{name}"
 
         with (
             mock.patch.object(suites.shutil, "which", side_effect=which),
+            pandoc_check(),
             mock.patch.object(suites, "toolchain", side_effect=AssertionError("render toolchain")),
         ):
             self.assertEqual(suites.missing_dependencies("core"), [])
 
     def test_core_reports_required_native_dependencies(self) -> None:
-        with mock.patch.object(suites.shutil, "which", return_value=None):
-            self.assertEqual(suites.missing_dependencies("core"), ["git", "pandoc"])
+        with (
+            mock.patch.object(suites.shutil, "which", return_value=None),
+            pandoc_check("error", "not installed"),
+        ):
+            self.assertEqual(
+                suites.missing_dependencies("core"),
+                [
+                    "git",
+                    f"pandoc {PANDOC_VERSION}: not installed (run `uv run poe setup-pandoc`)",
+                ],
+            )
+
+    def test_core_requires_the_pinned_pandoc(self) -> None:
+        with (
+            mock.patch.object(suites.shutil, "which", return_value="/bin/git"),
+            pandoc_check("warn", "3.1.9 (/usr/bin/pandoc)"),
+        ):
+            missing = suites.missing_dependencies("core")
+        expected = f"pandoc {PANDOC_VERSION}: 3.1.9 (/usr/bin/pandoc) ({suites.SETUP_PANDOC})"
+        self.assertEqual(missing, [expected])
+
+    def test_tests_use_the_checkout_toolchain_unless_another_is_set(self) -> None:
+        for home, expected in ((None, PROJECT_ROOT / ".toolchain"), ("/elsewhere", "/elsewhere")):
+            environment = {"PATH": "/usr/bin"}
+            if home is not None:
+                environment["MD_DOC_CONVERTER_HOME"] = home
+            with (
+                self.subTest(home=home),
+                mock.patch.dict(os.environ, environment, clear=True),
+                mock.patch.object(suites, "prefer_installed_tools") as prefer,
+            ):
+                suites.use_project_toolchain()
+                self.assertEqual(os.environ["MD_DOC_CONVERTER_HOME"], str(expected))
+            prefer.assert_called_once_with()
 
     def test_render_and_all_require_native_conversion_tools(self) -> None:
-        available = {name: f"/bin/{name}" for name in ("git", "pandoc", "node")}
+        available = {name: f"/bin/{name}" for name in ("git", "node")}
         for selection in ("render", "all"):
             with (
                 self.subTest(selection=selection),
                 mock.patch.object(suites.shutil, "which", side_effect=available.get),
+                pandoc_check(),
                 toolchain_checks(),
             ):
                 self.assertEqual(
@@ -56,12 +99,11 @@ class TestSuiteSelection(unittest.TestCase):
 
     def test_render_accepts_both_office_executable_names(self) -> None:
         for office in ("libreoffice", "soffice"):
-            available = {
-                name: f"/bin/{name}" for name in ("git", "pandoc", "node", "pdftocairo", office)
-            }
+            available = {name: f"/bin/{name}" for name in ("git", "node", "pdftocairo", office)}
             with (
                 self.subTest(office=office),
                 mock.patch.object(suites.shutil, "which", side_effect=available.get),
+                pandoc_check(),
                 toolchain_checks(),
             ):
                 self.assertEqual(suites.missing_dependencies("render"), [])
@@ -69,6 +111,7 @@ class TestSuiteSelection(unittest.TestCase):
     def test_render_reports_each_missing_toolchain_part(self) -> None:
         with (
             mock.patch.object(suites.shutil, "which", return_value="/bin/tool"),
+            pandoc_check(),
             toolchain_checks("error"),
         ):
             missing = suites.missing_dependencies("render")

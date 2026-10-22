@@ -37,9 +37,7 @@ class PackageLayoutTest(unittest.TestCase):
             for name in result.stdout.splitlines()
             if Path(name).parent == Path(".") and not name.startswith(".")
         }
-        self.assertEqual(
-            files, {"README.md", "pyproject.toml", "uv.lock", "pixi.toml", "pixi.lock"}
-        )
+        self.assertEqual(files, {"README.md", "pyproject.toml", "uv.lock"})
 
     def test_all_cli_help_is_available_without_site_packages_or_external_tools(self) -> None:
         cases: tuple[list[str], ...] = (
