@@ -6,6 +6,9 @@ build/
 dist/
 *.egg-info/
 .ruff_cache/
+.pytest_cache/
+.coverage
+.coverage.*
 
 # The project-local toolchain (MD_DOC_CONVERTER_HOME in make and the tests)
 .toolchain/

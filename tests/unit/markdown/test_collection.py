@@ -58,7 +58,7 @@ class DirectoryOrderTest(unittest.TestCase):
                 with mock.patch.object(preprocess.os, "listdir", side_effect=listed_last):
                     titles = collected_titles(docs)
 
-                self.assertEqual(titles, ["Topic", "Child", "A", "Z"])
+                assert titles == ["Topic", "Child", "A", "Z"]
 
     def test_order_keeps_a_directory_listed_before_the_first_file(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -72,7 +72,7 @@ class DirectoryOrderTest(unittest.TestCase):
                 },
             )
 
-            self.assertEqual(collected_titles(docs), ["Sub page", "A"])
+            assert collected_titles(docs) == ["Sub page", "A"]
 
     def test_unordered_directory_leads_with_its_first_file(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -86,7 +86,7 @@ class DirectoryOrderTest(unittest.TestCase):
                 },
             )
 
-            self.assertEqual(collected_titles(docs), ["Readme", "Nested", "Last"])
+            assert collected_titles(docs) == ["Readme", "Nested", "Last"]
 
 
 if __name__ == "__main__":

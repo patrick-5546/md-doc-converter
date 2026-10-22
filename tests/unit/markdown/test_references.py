@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -14,6 +15,7 @@ from pathlib import Path
 from unittest import mock
 from urllib.parse import quote, unquote, urlsplit
 
+import pytest
 from typing_extensions import override
 
 from md_doc_converter.markdown import preprocess
@@ -112,23 +114,20 @@ class ReferenceLinksTest(unittest.TestCase):
             with contextlib.redirect_stderr(stderr):
                 result = preprocess.collect_directory(str(docs), stats)
             output = rendered(result)
-            self.assertEqual(len(output.links), 8)
-            self.assertTrue(all(link[0] == "#same-1" for link in output.links))
-            self.assertEqual(
-                [link[1] for link in output.links],
-                ["Inline"] + ["Reference title"] * 4 + ["Local title"] * 3,
-            )
-            self.assertEqual(output.links[4][2], "formatted label")
-            self.assertEqual(len(output.images), 3)
-            self.assertTrue(
-                all(unquote(image[0]) == str(docs / "pic.png") for image in output.images)
-            )
-            self.assertTrue(all(image[1] == "Picture" for image in output.images))
-            self.assertIn("[unbound]", "".join(output.text))
-            self.assertIn("undefined reference link '[absent]'", stderr.getvalue())
-            self.assertNotIn("broken anchor", stderr.getvalue())
+            assert len(output.links) == 8
+            assert all(link[0] == "#same-1" for link in output.links)
+            assert [link[1] for link in output.links] == ["Inline"] + ["Reference title"] * 4 + [
+                "Local title"
+            ] * 3
+            assert output.links[4][2] == "formatted label"
+            assert len(output.images) == 3
+            assert all(unquote(image[0]) == str(docs / "pic.png") for image in output.images)
+            assert all(image[1] == "Picture" for image in output.images)
+            assert "[unbound]" in "".join(output.text)
+            assert "undefined reference link '[absent]'" in stderr.getvalue()
+            assert "broken anchor" not in stderr.getvalue()
             for path, text in sources.items():
-                self.assertEqual(path.read_text(encoding="utf-8"), text)
+                assert path.read_text(encoding="utf-8") == text
 
     def test_multiline_casefolded_definitions_titles_and_encoded_image_paths(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -158,26 +157,21 @@ class ReferenceLinksTest(unittest.TestCase):
             with contextlib.redirect_stderr(stderr):
                 result = preprocess.preprocess(source, source_path=str(root / "input.md"))
             output = rendered(result)
-            self.assertEqual(
-                output.links[:3],
-                [
-                    ("#r%C3%A9sum%C3%A9", "Anchor title", "full"),
-                    ("#r%C3%A9sum%C3%A9", "Anchor title", "multi line"),
-                    ("#r%C3%A9sum%C3%A9", "Anchor title", "multi line"),
-                ],
-            )
-            self.assertEqual(output.links[3][1], 'Title "quoted"')
-            self.assertEqual(
-                unquote(urlsplit(output.links[3][0]).path), str(root / "other page(1).md")
-            )
-            self.assertEqual(len(output.images), 2)
+            assert output.links[:3] == [
+                ("#r%C3%A9sum%C3%A9", "Anchor title", "full"),
+                ("#r%C3%A9sum%C3%A9", "Anchor title", "multi line"),
+                ("#r%C3%A9sum%C3%A9", "Anchor title", "multi line"),
+            ]
+            assert output.links[3][1] == 'Title "quoted"'
+            assert unquote(urlsplit(output.links[3][0]).path) == str(root / "other page(1).md")
+            assert len(output.images) == 2
             for image, title in output.images:
                 url = urlsplit(image)
-                self.assertEqual(unquote(url.path), str(picture))
-                self.assertEqual(url.query, "version=1&mode=2")
-                self.assertEqual(url.fragment, "part")
-                self.assertEqual(title, "Image title")
-            self.assertEqual(stderr.getvalue(), "")
+                assert unquote(url.path) == str(picture)
+                assert url.query == "version=1&mode=2"
+                assert url.fragment == "part"
+                assert title == "Image title"
+            assert stderr.getvalue() == ""
 
     def test_repeated_reference_image_labels_are_scoped_to_their_source(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -194,7 +188,7 @@ class ReferenceLinksTest(unittest.TestCase):
                 )
             with contextlib.redirect_stderr(io.StringIO()):
                 result = preprocess.collect_directory(str(docs), defaultdict(Counter))
-            self.assertEqual([unquote(path) for path, _title in rendered(result).images], expected)
+            assert [unquote(path) for path, _title in rendered(result).images] == expected
 
     def test_escaped_reference_labels_and_literal_brackets(self) -> None:
         source = (
@@ -207,8 +201,8 @@ class ReferenceLinksTest(unittest.TestCase):
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
             result = preprocess.preprocess(source, source_path="/docs/input.md")
-        self.assertEqual(rendered(result).links, [("#page", "Escaped label", "escaped label")])
-        self.assertEqual(stderr.getvalue(), "")
+        assert rendered(result).links == [("#page", "Escaped label", "escaped label")]
+        assert stderr.getvalue() == ""
 
     def test_reference_labels_ending_in_an_escaped_backslash_remain_file_scoped(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -224,7 +218,7 @@ class ReferenceLinksTest(unittest.TestCase):
                 )
             with contextlib.redirect_stderr(io.StringIO()):
                 result = preprocess.collect_directory(str(root), defaultdict(Counter))
-            self.assertEqual(rendered(result).links, [("#a", "", "local"), ("#b", "", "local")])
+            assert rendered(result).links == [("#a", "", "local"), ("#b", "", "local")]
 
     def test_normalization_preserves_parsed_content_including_entity_like_urls(self) -> None:
         source = """% Document title
@@ -276,7 +270,7 @@ A footnote[^note].
     ```
 """
         result = MarkdownDocument(source).render(normalize_references=True)
-        self.assertEqual(json.loads(pandoc(source, "json")), json.loads(pandoc(result, "json")))
+        assert json.loads(pandoc(source, "json")) == json.loads(pandoc(result, "json"))
 
     def test_directory_normalization_keeps_distinct_footnote_bodies(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -294,9 +288,9 @@ A footnote[^note].
                 result = preprocess.collect_directory(str(root), defaultdict(Counter))
             text = "".join(rendered(result).text)
             for name in ("First", "Second"):
-                self.assertEqual(text.count(f"{name} unique footnote."), 1)
-                self.assertEqual(text.count(f"{name} second paragraph."), 1)
-            self.assertNotIn("Duplicate", stderr.getvalue())
+                assert text.count(f"{name} unique footnote.") == 1
+                assert text.count(f"{name} second paragraph.") == 1
+            assert "Duplicate" not in stderr.getvalue()
 
     def test_structural_html_targets_are_rewritten_but_literal_code_is_not(self) -> None:
         source = """# Page
@@ -317,11 +311,11 @@ A footnote[^note].
         with contextlib.redirect_stderr(io.StringIO()):
             result = preprocess.preprocess(source, source_path="/docs/input.md")
         output = rendered(result)
-        self.assertEqual(output.links, [("/docs/real.md", "", "HTML link")])
-        self.assertEqual(output.images, [("/docs/pic.png", "Title")])
-        self.assertIn("href='leave.md'", result)
-        self.assertIn('`<a href="literal.md">literal</a>`', result)
-        self.assertIn('<a href="literal.md">literal</a>', "".join(output.text))
+        assert output.links == [("/docs/real.md", "", "HTML link")]
+        assert output.images == [("/docs/pic.png", "Title")]
+        assert "href='leave.md'" in result
+        assert '`<a href="literal.md">literal</a>`' in result
+        assert '<a href="literal.md">literal</a>' in "".join(output.text)
 
     def test_missing_reference_targets_warn_without_guessing_or_losing_titles(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -338,16 +332,13 @@ A footnote[^note].
             with contextlib.redirect_stderr(stderr):
                 result = preprocess.collect_directory(str(docs), defaultdict(Counter))
             output = rendered(result)
-            self.assertEqual(
-                output.links,
-                [
-                    (str(docs / "b.md") + "#absent", "Missing", "missing"),
-                    (str(docs / "b.md") + "?version=1#b", "Query", "query"),
-                    ("https://example.test/b.md#b", "Remote", "remote"),
-                ],
-            )
-            self.assertIn("heading not found in target file", stderr.getvalue())
-            self.assertIn("query parameters", stderr.getvalue())
+            assert output.links == [
+                (str(docs / "b.md") + "#absent", "Missing", "missing"),
+                (str(docs / "b.md") + "?version=1#b", "Query", "query"),
+                ("https://example.test/b.md#b", "Remote", "remote"),
+            ]
+            assert "heading not found in target file" in stderr.getvalue()
+            assert "query parameters" in stderr.getvalue()
 
     def test_single_file_warnings_cover_reference_links_and_images(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -361,9 +352,9 @@ A footnote[^note].
             stderr = io.StringIO()
             with contextlib.redirect_stderr(stderr):
                 preprocess.preprocess(source, str(root / "input.md"), single_file=True)
-            self.assertIn("will not resolve in single-file output", stderr.getvalue())
-            self.assertIn("missing image 'absent.png'", stderr.getvalue())
-            self.assertIn("placeholder image with no data", stderr.getvalue())
+            assert "will not resolve in single-file output" in stderr.getvalue()
+            assert "missing image 'absent.png'" in stderr.getvalue()
+            assert "placeholder image with no data" in stderr.getvalue()
 
     def test_undefined_reference_check_takes_escapes_as_escapes(self) -> None:
         # Unescaped brackets with many escapes after them once took exponential time.
@@ -372,10 +363,10 @@ A footnote[^note].
         started = time.monotonic()
         with contextlib.redirect_stderr(stderr):
             result = preprocess.warn_undefined_references(source, "page.md", Counter())
-        self.assertLess(time.monotonic() - started, 5)
-        self.assertEqual(result, source)
-        self.assertEqual(stderr.getvalue().count("WARNING: undefined reference"), 1)
-        self.assertIn("'[d]'", stderr.getvalue())
+        assert time.monotonic() - started < 5
+        assert result == source
+        assert stderr.getvalue().count("WARNING: undefined reference") == 1
+        assert "'[d]'" in stderr.getvalue()
 
 
 class BitRangeDefinitionsTest(unittest.TestCase):
@@ -386,13 +377,10 @@ class BitRangeDefinitionsTest(unittest.TestCase):
             "<pre>[3:0]: literal</pre>\n\nInline <span>[2:0]: text</span> and `<td>[4:0]: code`\n"
         )
         stats: Counter[str] = Counter()
-        self.assertEqual(
-            preprocess.escape_bit_ranges(source, None, stats),
-            source.replace("<td>[1:0]", r"<td>\[1:0\]")
-            .replace("<p>[10:2]", r"<p>\[10:2\]")
-            .replace("> [11]:", r"> \[11\]:"),
-        )
-        self.assertEqual(stats["bit-range definitions defused"], 3)
+        assert preprocess.escape_bit_ranges(source, None, stats) == source.replace(
+            "<td>[1:0]", r"<td>\[1:0\]"
+        ).replace("<p>[10:2]", r"<p>\[10:2\]").replace("> [11]:", r"> \[11\]:")
+        assert stats["bit-range definitions defused"] == 3
 
     @unittest.skipUnless(PANDOC, "pandoc not installed")
     def test_html_table_cells_with_bit_ranges_keep_their_text(self) -> None:
@@ -401,8 +389,8 @@ class BitRangeDefinitionsTest(unittest.TestCase):
             "</tr>\n</table>\n"
         )
         html = pandoc(preprocess.preprocess(source))
-        self.assertRegex(html, r"<td>\s*\[1:0\]: Mode selector\s*</td>")
-        self.assertRegex(html, r"<td>\s*\[1:0\]: QOS_SEL\s*</td>")
+        assert re.search(r"<td>\s*\[1:0\]: Mode selector\s*</td>", html)
+        assert re.search(r"<td>\s*\[1:0\]: QOS_SEL\s*</td>", html)
 
 
 class TableAlignmentTest(unittest.TestCase):
@@ -417,13 +405,14 @@ class TableAlignmentTest(unittest.TestCase):
         document = MarkdownDocument(source)
         document.transform_targets(lambda target, _image: "images/" + target)
         markdown = document.render()
-        self.assertIn("images/picture.png", markdown)
+        assert "images/picture.png" in markdown
         blocks = json.loads(pandoc(markdown, "json"))["blocks"]
         table = next(block for block in blocks if block["t"] == "Table")
-        self.assertEqual(
-            [spec[0]["t"] for spec in table["c"][2]],
-            ["AlignDefault", "AlignCenter", "AlignDefault"],
-        )
+        assert [spec[0]["t"] for spec in table["c"][2]] == [
+            "AlignDefault",
+            "AlignCenter",
+            "AlignDefault",
+        ]
 
 
 class TableCellBlockHtmlTest(unittest.TestCase):
@@ -439,15 +428,11 @@ class TableCellBlockHtmlTest(unittest.TestCase):
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
             result = preprocess.warn_block_html_in_table_cells(source, "page.md", Counter())
-        self.assertEqual(result, source)
+        assert result == source
         warnings = stderr.getvalue().splitlines()
-        self.assertEqual(len(warnings), 2)
-        self.assertIn(
-            "HTML <ul>, <li>, <p> in a Markdown table cell in page.md (line 9;", warnings[0]
-        )
-        self.assertIn(
-            "HTML <blockquote> in a Markdown table cell in page.md (line 21;", warnings[1]
-        )
+        assert len(warnings) == 2
+        assert "HTML <ul>, <li>, <p> in a Markdown table cell in page.md (line 9;" in warnings[0]
+        assert "HTML <blockquote> in a Markdown table cell in page.md (line 21;" in warnings[1]
 
     @unittest.skipUnless(PANDOC, "pandoc not installed")
     def test_md_to_html_reports_the_cell_whose_rest_it_drops(self) -> None:
@@ -455,17 +440,17 @@ class TableCellBlockHtmlTest(unittest.TestCase):
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
             prepared = preprocess.preprocess(source, "page.md")
-        self.assertIn("in page.md (line 7;", stderr.getvalue())
+        assert "in page.md (line 7;" in stderr.getvalue()
         rendered = pandoc(prepared)
-        self.assertIn("kept", rendered)
-        self.assertNotIn("dropped", rendered)
+        assert "kept" in rendered
+        assert "dropped" not in rendered
 
 
 class MarkdownFailureTest(unittest.TestCase):
     def test_missing_pandoc_is_an_explicit_error(self) -> None:
         with (
             mock.patch("subprocess.run", side_effect=FileNotFoundError("missing executable")),
-            self.assertRaisesRegex(MarkdownError, "failed to run.*missing executable"),
+            pytest.raises(MarkdownError, match=r"failed to run.*missing executable"),
         ):
             MarkdownDocument("[text][ref]")
 
@@ -475,7 +460,7 @@ class MarkdownFailureTest(unittest.TestCase):
                 completed = subprocess.CompletedProcess(["pandoc"], code, stdout, stderr)
                 with (
                     mock.patch("subprocess.run", return_value=completed),
-                    self.assertRaises(MarkdownError),
+                    pytest.raises(MarkdownError),
                 ):
                     MarkdownDocument("[text][ref]")
 
@@ -485,7 +470,7 @@ class MarkdownFailureTest(unittest.TestCase):
         completed = subprocess.CompletedProcess(["pandoc"], 1, "", "writer failure")
         with (
             mock.patch("subprocess.run", return_value=completed),
-            self.assertRaisesRegex(MarkdownError, "writer failure"),
+            pytest.raises(MarkdownError, match="writer failure"),
         ):
             document.render(normalize_references=True)
 

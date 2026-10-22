@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -59,54 +60,55 @@ class CommandLineTest(unittest.TestCase):
             check=False,
         )
         if check:
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            assert result.returncode == 0, result.stdout + result.stderr
         return result
 
     def calls(self, tool: str) -> list[dict[str, object]]:
         return [call for call in read_log(self.log) if call["tool"] == tool]
 
     def test_version_and_help(self) -> None:
-        self.assertRegex(self.run_cli("--version").stdout, r"^md-doc-converter \d+\.\d+\.\d+")
-        self.assertIn("md-to-pdf", self.run_cli().stdout)
+        assert re.search(r"^md-doc-converter \d+\.\d+\.\d+", self.run_cli("--version").stdout)
+        assert "md-to-pdf" in self.run_cli().stdout
         result = self.run_cli("not-a-command", check=False)
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("invalid choice", result.stderr)
+        assert result.returncode == 2
+        assert "invalid choice" in result.stderr
 
     def test_render_defaults_next_to_files_and_inside_folders(self) -> None:
         result = self.run_cli("md-to-html", "docs/input.md")
         html = self.docs / "input.html"
-        self.assertIn(f"-> {html}", result.stdout)
-        self.assertIn("# Example", html.read_text())
+        assert f"-> {html}" in result.stdout
+        assert "# Example" in html.read_text()
         self.run_cli("md-to-pdf", "docs")
-        self.assertEqual((self.docs / "docs.pdf").read_bytes(), b"%PDF-fake")
+        assert (self.docs / "docs.pdf").read_bytes() == b"%PDF-fake"
         (self.docs / "docs.pdf").unlink()
         self.run_cli("md-to-pdf", ".", cwd=self.docs)
-        self.assertEqual((self.docs / "docs.pdf").read_bytes(), b"%PDF-fake")
-        self.assertEqual(
-            sorted(path.name for path in self.docs.iterdir()),
-            ["docs.pdf", "input.html", "input.md"],
-        )
-        self.assertEqual(sorted(path.name for path in self.workspace.iterdir()), ["docs"])
+        assert (self.docs / "docs.pdf").read_bytes() == b"%PDF-fake"
+        assert sorted(path.name for path in self.docs.iterdir()) == [
+            "docs.pdf",
+            "input.html",
+            "input.md",
+        ]
+        assert sorted(path.name for path in self.workspace.iterdir()) == ["docs"]
         for call in self.calls("pandoc") + self.calls("node"):
             scratch = Path(str(call["cwd"]))
-            self.assertFalse(scratch.exists())
-            self.assertFalse(scratch.is_relative_to(self.workspace))
+            assert not scratch.exists()
+            assert not scratch.is_relative_to(self.workspace)
         printer = self.calls("node")[0]["arguments"]
         assert isinstance(printer, list)
-        self.assertEqual(printer[printer.index("--node-modules") + 1], str(self.tools.node_modules))
+        assert printer[printer.index("--node-modules") + 1] == str(self.tools.node_modules)
         environment = self.calls("pandoc")[0]["environment"]
         assert isinstance(environment, dict)
-        self.assertEqual(environment["PUPPETEER_CACHE_DIR"], str(self.tools.puppeteer_cache))
-        self.assertTrue(str(environment["PATH"]).startswith(str(self.tools.node_bin)))
+        assert environment["PUPPETEER_CACHE_DIR"] == str(self.tools.puppeteer_cache)
+        assert str(environment["PATH"]).startswith(str(self.tools.node_bin))
         arguments = self.calls("pandoc")[0]["arguments"]
         assert isinstance(arguments, list)
-        self.assertEqual(
-            arguments[arguments.index("--css") + 1],
-            f"https://cdn.jsdelivr.net/npm/katex@{KATEX_VERSION}/dist/katex.min.css",
+        assert (
+            arguments[arguments.index("--css") + 1]
+            == f"https://cdn.jsdelivr.net/npm/katex@{KATEX_VERSION}/dist/katex.min.css"
         )
-        self.assertEqual(environment["MD_DOC_CONVERTER_NODE_MODULES"], str(self.tools.node_modules))
+        assert environment["MD_DOC_CONVERTER_NODE_MODULES"] == str(self.tools.node_modules)
         # The fake PATH also has a pandoc; the toolchain's pinned one comes first.
-        self.assertEqual({call["path"] for call in self.calls("pandoc")}, {str(self.tools.pandoc)})
+        assert {call["path"] for call in self.calls("pandoc")} == {str(self.tools.pandoc)}
 
     def test_paths_preserve_spaces_quotes_and_apostrophes(self) -> None:
         source = self.docs / 'input file\'s "review".md'
@@ -119,16 +121,16 @@ class CommandLineTest(unittest.TestCase):
         ):
             with self.subTest(output=output):
                 self.run_cli("md-to-pdf", str(source.relative_to(self.workspace)), "-o", output)
-                self.assertEqual(expected.read_bytes(), b"%PDF-fake")
+                assert expected.read_bytes() == b"%PDF-fake"
         self.run_cli("md-to-html", str(source))
-        self.assertTrue(source.with_suffix(".html").is_file())
+        assert source.with_suffix(".html").is_file()
 
     def test_wrong_output_suffix_is_rejected_before_rendering(self) -> None:
         result = self.run_cli("md-to-pdf", "docs/input.md", "-o", "out.html", check=False)
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("Output must end in .pdf", result.stderr)
-        self.assertEqual(read_log(self.log), [])
-        self.assertFalse((self.workspace / "out.html").exists())
+        assert result.returncode == 1
+        assert "Output must end in .pdf" in result.stderr
+        assert read_log(self.log) == []
+        assert not (self.workspace / "out.html").exists()
 
     def test_header_and_footer_flags_override_the_environment(self) -> None:
         environment = {
@@ -147,12 +149,12 @@ class CommandLineTest(unittest.TestCase):
             environment=environment,
         )
         first, second = (str(call["styles"]) for call in self.calls("pandoc"))
-        self.assertIn('content: "Environment header"', first)
-        self.assertIn('content: "Environment footer"', first)
-        self.assertIn(f"content: {css_string(header)}", second)
-        self.assertNotIn("Environment", second)
-        self.assertEqual(second.count("</style>"), 1)
-        self.assertIn("Review", (self.docs / "input.html").read_text())
+        assert 'content: "Environment header"' in first
+        assert 'content: "Environment footer"' in first
+        assert f"content: {css_string(header)}" in second
+        assert "Environment" not in second
+        assert second.count("</style>") == 1
+        assert "Review" in (self.docs / "input.html").read_text()
 
     def test_pdf_timeout_flag_environment_and_default(self) -> None:
         def timeout(*arguments: str, environment: dict[str, str] | None = None) -> str:
@@ -161,11 +163,11 @@ class CommandLineTest(unittest.TestCase):
             assert isinstance(command, list)
             return str(command[command.index("--timeout-seconds") + 1])
 
-        self.assertEqual(timeout(), "600")
-        self.assertEqual(timeout(environment={"MD_DOC_CONVERTER_PDF_TIMEOUT": "0"}), "0")
-        self.assertEqual(
-            timeout("--pdf-timeout", "30", environment={"MD_DOC_CONVERTER_PDF_TIMEOUT": "0"}),
-            "30",
+        assert timeout() == "600"
+        assert timeout(environment={"MD_DOC_CONVERTER_PDF_TIMEOUT": "0"}) == "0"
+        assert (
+            timeout("--pdf-timeout", "30", environment={"MD_DOC_CONVERTER_PDF_TIMEOUT": "0"})
+            == "30"
         )
         result = self.run_cli(
             "md-to-pdf",
@@ -173,10 +175,8 @@ class CommandLineTest(unittest.TestCase):
             environment={"MD_DOC_CONVERTER_PDF_TIMEOUT": "soon"},
             check=False,
         )
-        self.assertEqual(result.returncode, 1)
-        self.assertIn(
-            "--pdf-timeout (MD_DOC_CONVERTER_PDF_TIMEOUT) must be whole seconds", result.stderr
-        )
+        assert result.returncode == 1
+        assert "--pdf-timeout (MD_DOC_CONVERTER_PDF_TIMEOUT) must be whole seconds" in result.stderr
 
     def test_missing_toolchain_fails_without_rendering(self) -> None:
         result = self.run_cli(
@@ -185,12 +185,12 @@ class CommandLineTest(unittest.TestCase):
             environment={"MD_DOC_CONVERTER_HOME": str(self.root / "not installed")},
             check=False,
         )
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("rendering prerequisites are missing", result.stderr)
-        self.assertIn("md-doc-converter setup", result.stderr)
-        self.assertIn("md-doc-converter doctor", result.stderr)
-        self.assertEqual(read_log(self.log), [])
-        self.assertFalse((self.docs / "input.pdf").exists())
+        assert result.returncode == 1
+        assert "rendering prerequisites are missing" in result.stderr
+        assert "md-doc-converter setup" in result.stderr
+        assert "md-doc-converter doctor" in result.stderr
+        assert read_log(self.log) == []
+        assert not (self.docs / "input.pdf").exists()
 
     def test_failed_render_keeps_the_previous_file_and_requested_intermediates(self) -> None:
         previous = self.docs / "input.pdf"
@@ -204,32 +204,30 @@ class CommandLineTest(unittest.TestCase):
             environment={"FAKE_TOOL_FAIL": "node"},
             check=False,
         )
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("node failed with exit status 3", result.stderr)
-        self.assertEqual(previous.read_bytes(), b"previous")
-        self.assertEqual(
-            sorted(path.name for path in self.docs.iterdir()), ["input.md", "input.pdf"]
-        )
-        self.assertEqual((kept / "markdown" / "input.md").read_text(), "# Example\n")
-        self.assertTrue((kept / "page-styles.html").is_file())
-        self.assertTrue((kept / "render" / "input.html").is_file())
+        assert result.returncode == 1
+        assert "node failed with exit status 3" in result.stderr
+        assert previous.read_bytes() == b"previous"
+        assert sorted(path.name for path in self.docs.iterdir()) == ["input.md", "input.pdf"]
+        assert (kept / "markdown" / "input.md").read_text() == "# Example\n"
+        assert (kept / "page-styles.html").is_file()
+        assert (kept / "render" / "input.html").is_file()
 
     def test_gitignore_filtering_is_automatic_inside_git_work_trees(self) -> None:
         (self.docs / "ignored.md").write_text("# Ignored\n")
         (self.workspace / ".gitignore").write_text("ignored.md\n")
         subprocess.run(["git", "init", "--quiet"], cwd=self.workspace, check=True)
         self.run_cli("md-to-html", "docs")
-        self.assertNotIn("Ignored", str(self.calls("pandoc")[-1]["input"]))
+        assert "Ignored" not in str(self.calls("pandoc")[-1]["input"])
         self.run_cli("md-to-html", "docs", "--no-respect-gitignore")
-        self.assertIn("Ignored", str(self.calls("pandoc")[-1]["input"]))
+        assert "Ignored" in str(self.calls("pandoc")[-1]["input"])
 
         outside = self.root / "outside"
         outside.mkdir()
         (outside / "page.md").write_text("# Page\n")
         quiet = self.run_cli("md-to-html", str(outside))
-        self.assertNotIn("WARNING", quiet.stderr)
+        assert "WARNING" not in quiet.stderr
         explicit = self.run_cli("md-to-html", str(outside), "--respect-gitignore")
-        self.assertIn("--respect-gitignore had no effect", explicit.stderr)
+        assert "--respect-gitignore had no effect" in explicit.stderr
 
     def test_csv_to_md_resolves_output_paths_from_the_working_directory(self) -> None:
         source = self.docs / 'signal table\'s "review".csv'
@@ -247,18 +245,18 @@ class CommandLineTest(unittest.TestCase):
                     arguments += ["-o", output]
                 self.run_cli(*arguments)
                 converted = expected_directory / f"{source.stem}.md"
-                self.assertIn("| signal | one |", converted.read_text())
-                self.assertIn("md-doc-converter (csv-to-md)", converted.read_text())
+                assert "| signal | one |" in converted.read_text()
+                assert "md-doc-converter (csv-to-md)" in converted.read_text()
                 converted.unlink()
 
     def test_doctor_and_setup_report_through_the_command_line(self) -> None:
         ready = self.run_cli("doctor")
-        self.assertIn("Ready:", ready.stdout)
-        self.assertIn(f"{PANDOC_VERSION} ({self.tools.pandoc})", ready.stdout)
+        assert "Ready:" in ready.stdout
+        assert f"{PANDOC_VERSION} ({self.tools.pandoc})" in ready.stdout
         empty = {"MD_DOC_CONVERTER_HOME": str(self.root / "empty")}
         missing = self.run_cli("doctor", environment=empty, check=False)
-        self.assertEqual(missing.returncode, 1)
-        self.assertIn("-> Run `md-doc-converter setup`", missing.stdout)
+        assert missing.returncode == 1
+        assert "-> Run `md-doc-converter setup`" in missing.stdout
 
         downloads = self.root / "downloads"
         downloads.mkdir()
@@ -266,11 +264,11 @@ class CommandLineTest(unittest.TestCase):
         result = self.run_cli(
             "setup", "--downloads", str(downloads), environment=empty, check=False
         )
-        self.assertEqual(result.returncode, 1)
-        self.assertIn(f"{PANDOC.file} has SHA-256", result.stderr)
-        self.assertIn(f"pandoc: using {downloads / PANDOC.file}", result.stdout)
-        self.assertEqual(self.calls("npm"), [])
-        self.assertEqual(list((self.root / "empty" / "bin").iterdir()), [])
+        assert result.returncode == 1
+        assert f"{PANDOC.file} has SHA-256" in result.stderr
+        assert f"pandoc: using {downloads / PANDOC.file}" in result.stdout
+        assert self.calls("npm") == []
+        assert list((self.root / "empty" / "bin").iterdir()) == []
 
 
 if __name__ == "__main__":

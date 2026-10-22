@@ -25,7 +25,8 @@ def images(document: object) -> list[dict[str, object]]:
         if isinstance(node, dict):
             if node.get("t") == "Image":
                 [identifier, classes, _], _, [source, _] = node["c"]
-                assert isinstance(source, str) and source.startswith(DATA_URI), source
+                assert isinstance(source, str)
+                assert source.startswith(DATA_URI), source
                 svg = base64.b64decode(source.removeprefix(DATA_URI)).decode()
                 found.append({"id": identifier, "classes": classes, "svg": svg})
             for value in node.values():
@@ -80,67 +81,60 @@ class MermaidFilterTest(unittest.TestCase):
             "```python\nprint('kept')\n```\n\n"
             "- item\n\n  ```{.mermaid #sequence}\n  sequenceDiagram\n    A->>B: Hi\n  ```\n"
         )
-        self.assertEqual(result.returncode, 0, result.stderr)
+        assert result.returncode == 0, result.stderr
         document = json.loads(result.stdout)
-        self.assertEqual(
-            images(document),
-            [
-                {
-                    "id": "",
-                    "classes": ["mermaid-diagram"],
-                    "svg": "<svg>flowchart LR\n  A --> B</svg>",
-                },
-                {
-                    "id": "sequence",
-                    "classes": ["mermaid-diagram"],
-                    "svg": "<svg>sequenceDiagram\n  A->>B: Hi</svg>",
-                },
-            ],
-        )
-        self.assertEqual(document["blocks"][1]["t"], "CodeBlock")
+        assert images(document) == [
+            {"id": "", "classes": ["mermaid-diagram"], "svg": "<svg>flowchart LR\n  A --> B</svg>"},
+            {
+                "id": "sequence",
+                "classes": ["mermaid-diagram"],
+                "svg": "<svg>sequenceDiagram\n  A->>B: Hi</svg>",
+            },
+        ]
+        assert document["blocks"][1]["t"] == "CodeBlock"
         [call] = self.mmdc_calls()
-        self.assertEqual(call[call.index("--configFile") + 1], "/config/mermaid.json")
-        self.assertIn("--quiet", call)
-        self.assertIn("--artefacts", call)
+        assert call[call.index("--configFile") + 1] == "/config/mermaid.json"
+        assert "--quiet" in call
+        assert "--artefacts" in call
 
     def test_documents_without_diagrams_need_no_mmdc(self) -> None:
         result = self.convert("```python\nprint('kept')\n```\n", mmdc=self.root / "missing")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(images(json.loads(result.stdout)), [])
-        self.assertEqual(self.mmdc_calls(), [])
+        assert result.returncode == 0, result.stderr
+        assert images(json.loads(result.stdout)) == []
+        assert self.mmdc_calls() == []
 
     def test_missing_mmdc_names_setup(self) -> None:
         result = self.convert("```mermaid\nflowchart LR\n```\n", mmdc=self.root / "missing")
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("mermaid-cli (mmdc) is not installed", result.stderr)
-        self.assertIn("md-doc-converter setup", result.stderr)
+        assert result.returncode != 0
+        assert "mermaid-cli (mmdc) is not installed" in result.stderr
+        assert "md-doc-converter setup" in result.stderr
 
     def test_a_failing_diagram_is_named_with_the_mermaid_message(self) -> None:
         result = self.convert(
             "```mermaid\nflowchart LR\n  A --> B\n```\n\n"
             "```mermaid\n---\ntitle: Broken\n---\ngraph TD\n  FAIL\n```\n"
         )
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Mermaid diagram 2 of 2 (graph TD) could not be rendered:", result.stderr)
-        self.assertIn("Error: Parse error on line 2", result.stderr)
-        self.assertNotIn("file:///mermaid.mjs", result.stderr)
+        assert result.returncode != 0
+        assert "Mermaid diagram 2 of 2 (graph TD) could not be rendered:" in result.stderr
+        assert "Error: Parse error on line 2" in result.stderr
+        assert "file:///mermaid.mjs" not in result.stderr
         calls = self.mmdc_calls()
-        self.assertEqual(len(calls), 3)
-        self.assertIn("--artefacts", calls[0])
-        self.assertTrue(all("--artefacts" not in call for call in calls[1:]))
+        assert len(calls) == 3
+        assert "--artefacts" in calls[0]
+        assert all("--artefacts" not in call for call in calls[1:])
 
     def test_a_diagram_with_a_fence_line_renders_on_its_own(self) -> None:
         result = self.convert(
             "````mermaid\nflowchart LR\n```\n````\n\n```mermaid\nflowchart TD\n```\n"
         )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(
-            [image["svg"] for image in images(json.loads(result.stdout))],
-            ["<svg>flowchart LR\n```</svg>", "<svg>flowchart TD</svg>"],
-        )
+        assert result.returncode == 0, result.stderr
+        assert [image["svg"] for image in images(json.loads(result.stdout))] == [
+            "<svg>flowchart LR\n```</svg>",
+            "<svg>flowchart TD</svg>",
+        ]
         batch, alone = self.mmdc_calls()
-        self.assertIn("--artefacts", batch)
-        self.assertNotIn("--artefacts", alone)
+        assert "--artefacts" in batch
+        assert "--artefacts" not in alone
 
 
 if __name__ == "__main__":

@@ -7,6 +7,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
 from md_doc_converter import pandoc
 from md_doc_converter.converters.docx import navigation, reference
 from md_doc_converter.converters.docx.models import ConversionError
@@ -17,18 +19,18 @@ class ParsedMarkdownTest(unittest.TestCase):
         completed = subprocess.CompletedProcess(["pandoc"], 0, '{"blocks":[]}', "")
         with mock.patch("subprocess.run", return_value=completed) as run:
             parsed = pandoc.parse_markdown("# Heading", reader="gfm+raw_html")
-        self.assertEqual(parsed.markdown, "# Heading")
-        self.assertEqual(parsed.reader, "gfm+raw_html")
-        self.assertEqual(parsed.blocks, [])
+        assert parsed.markdown == "# Heading"
+        assert parsed.reader == "gfm+raw_html"
+        assert parsed.blocks == []
         run.assert_called_once()
-        self.assertEqual(run.call_args.args[0], ["pandoc", "--from=gfm+raw_html", "--to=json"])
+        assert run.call_args.args[0] == ["pandoc", "--from=gfm+raw_html", "--to=json"]
 
     def test_ast_reuse_rejects_changed_content_or_reader(self) -> None:
         parsed = pandoc.ParsedMarkdown("# Original", "gfm+raw_html", {"blocks": []})
         for text, reader in (("# Changed", parsed.reader), (parsed.markdown, "markdown")):
             with (
                 self.subTest(text=text, reader=reader),
-                self.assertRaisesRegex(pandoc.PandocError, "different content or reader"),
+                pytest.raises(pandoc.PandocError, match="different content or reader"),
             ):
                 parsed.copy_ast(text, reader)
 
@@ -38,18 +40,18 @@ class ParsedMarkdownTest(unittest.TestCase):
         blocks = copied["blocks"]
         assert isinstance(blocks, list)
         blocks.clear()
-        self.assertEqual(len(parsed.blocks), 1)
+        assert len(parsed.blocks) == 1
 
     def test_invalid_json_or_root_is_an_explicit_error(self) -> None:
         for payload in ("not JSON", "[]", "{}", '{"blocks":{}}'):
-            with self.subTest(payload=payload), self.assertRaises(pandoc.PandocError):
+            with self.subTest(payload=payload), pytest.raises(pandoc.PandocError):
                 pandoc.decode_document(payload)
 
     def test_docx_rewriter_rejects_a_stale_parse_before_running_tools(self) -> None:
         parsed = pandoc.ParsedMarkdown("# Original", "gfm+raw_html", {"blocks": []})
         with (
             mock.patch("subprocess.run") as run,
-            self.assertRaisesRegex(ConversionError, "different content or reader"),
+            pytest.raises(ConversionError, match="different content or reader"),
         ):
             navigation.rewrite_page_references(
                 "# Changed", Path("out.md"), Path("/docs/out.md"), {}, "pandoc", parsed=parsed
@@ -63,8 +65,8 @@ class ParsedMarkdownTest(unittest.TestCase):
         with mock.patch("subprocess.run", wraps=original_run) as run:
             pages = navigation.split_markdown_pages(source, Path("/docs/out.md"), 0, None, "pandoc")
         reads = [call for call in run.call_args_list if "--to=json" in call.args[0]]
-        self.assertEqual(len(reads), 1)
-        self.assertIn("[Self](#top)", pages[Path("out.md")])
+        assert len(reads) == 1
+        assert "[Self](#top)" in pages[Path("out.md")]
 
     @unittest.skipUnless(shutil.which("pandoc"), "pandoc not installed")
     def test_rewriting_does_not_mutate_the_parse_used_for_heading_identity(self) -> None:
@@ -81,8 +83,8 @@ class ParsedMarkdownTest(unittest.TestCase):
             "pandoc",
             parsed=parsed,
         )
-        self.assertIn("(second.md#top)", result)
-        self.assertEqual(json.dumps(parsed.ast), before)
+        assert "(second.md#top)" in result
+        assert json.dumps(parsed.ast) == before
 
 
 class BareAddressTest(unittest.TestCase):
@@ -99,17 +101,15 @@ class BareAddressTest(unittest.TestCase):
         result = navigation.rewrite_page_references(
             source, Path("page.md"), Path("/docs/page.md"), {}, "pandoc", linked=linked
         )
-        self.assertEqual(linked, [5])
-        self.assertIn("# About <https://a.example>\n", result)
-        self.assertIn(
-            "Mail <me@b.example>, see <https://c.example/x_(y)>. or <d@e.example>.", result
-        )
+        assert linked == [5]
+        assert "# About <https://a.example>\n" in result
+        assert "Mail <me@b.example>, see <https://c.example/x_(y)>. or <d@e.example>." in result
         # Text between inline HTML tags is still Markdown prose.
-        self.assertIn("<span><https://raw.example></span>", result)
+        assert "<span><https://raw.example></span>" in result
         for unchanged in (
             "<https://linked.example>",
             "`https://code.example`",
             "![https://alt.example](pic.png)",
             "    https://indented.example",
         ):
-            self.assertIn(unchanged, result)
+            assert unchanged in result

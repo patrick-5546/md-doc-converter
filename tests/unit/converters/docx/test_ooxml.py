@@ -6,6 +6,8 @@ import unittest
 from collections import Counter
 from xml.etree import ElementTree as ET
 
+import pytest
+
 from md_doc_converter.converters.docx import ooxml as _ooxml
 from md_doc_converter.converters.docx.models import ConversionError
 from tests.support.docx import (
@@ -44,14 +46,14 @@ class HyperlinkFieldTests(unittest.TestCase):
                     content, ET.Element(_ooxml.PACKAGE_REL + "Relationships")
                 )
 
-                self.assertEqual((problems, dropped), ([], 1))
-                self.assertEqual(_ooxml.word_text(content), "Entry suffix")
-                self.assertEqual(link.get(W + "anchor"), "_Entry")
-                self.assertEqual(len(list(content.iter(W + "hyperlink"))), 1)
-                self.assertFalse(list(content.iter(W + "tab")))
-                self.assertFalse(list(content.iter(W + "fldChar")))
-                self.assertFalse(list(content.iter(W + "fldSimple")))
-                self.assertFalse(list(content.iter(W + "instrText")))
+                assert (problems, dropped) == ([], 1)
+                assert _ooxml.word_text(content) == "Entry suffix"
+                assert link.get(W + "anchor") == "_Entry"
+                assert len(list(content.iter(W + "hyperlink"))) == 1
+                assert not list(content.iter(W + "tab"))
+                assert not list(content.iter(W + "fldChar"))
+                assert not list(content.iter(W + "fldSimple"))
+                assert not list(content.iter(W + "instrText"))
 
     def test_page_leader_trimming_keeps_the_entry_number_tab(self) -> None:
         content = toc_entry("_Toc1", "1", "Introduction", "3", begin=True, end=True)
@@ -62,16 +64,18 @@ class HyperlinkFieldTests(unittest.TestCase):
             content, ET.Element(_ooxml.PACKAGE_REL + "Relationships")
         )
 
-        self.assertEqual(dropped, 1)
-        self.assertEqual(
-            [node.tag for run in link for node in run if node.tag != W + "rPr"],
-            [W + "t", W + "tab", W + "t"],
-        )
-        self.assertEqual(_ooxml.word_text(link), "1Introduction")
-        self.assertEqual(
-            [node.get(W + "fldCharType") for node in content.iter(W + "fldChar")],
-            ["begin", "separate", "end"],
-        )
+        assert dropped == 1
+        assert [node.tag for run in link for node in run if node.tag != W + "rPr"] == [
+            W + "t",
+            W + "tab",
+            W + "t",
+        ]
+        assert _ooxml.word_text(link) == "1Introduction"
+        assert [node.get(W + "fldCharType") for node in content.iter(W + "fldChar")] == [
+            "begin",
+            "separate",
+            "end",
+        ]
 
     def test_different_or_external_page_reference_is_not_flattened(self) -> None:
         for simple in (False, True):
@@ -94,10 +98,8 @@ class HyperlinkFieldTests(unittest.TestCase):
 
                     _ooxml.normalize_hyperlink_fields(content, relationships)
 
-                    self.assertTrue(
-                        list(content.iter(W + ("fldSimple" if simple else "instrText")))
-                    )
-                    self.assertEqual(_ooxml.word_text(content), "Entry 1")
+                    assert list(content.iter(W + ("fldSimple" if simple else "instrText")))
+                    assert _ooxml.word_text(content) == "Entry 1"
 
     def test_local_relationship_page_reference_keeps_the_outer_relationship(self) -> None:
         content = hyperlink("Entry ", relation="local")
@@ -113,9 +115,9 @@ class HyperlinkFieldTests(unittest.TestCase):
 
         _ooxml.normalize_hyperlink_fields(content, relationships)
 
-        self.assertEqual(link.get(R + "id"), "local")
-        self.assertFalse(list(content.iter(W + "fldChar")))
-        self.assertEqual(_ooxml.word_text(content), "Entry")
+        assert link.get(R + "id") == "local"
+        assert not list(content.iter(W + "fldChar"))
+        assert _ooxml.word_text(content) == "Entry"
 
     def test_standalone_page_reference_is_not_removed(self) -> None:
         content = ET.Element(W + "p")
@@ -123,8 +125,8 @@ class HyperlinkFieldTests(unittest.TestCase):
 
         _ooxml.normalize_hyperlink_fields(content, ET.Element(_ooxml.PACKAGE_REL + "Relationships"))
 
-        self.assertTrue(list(content.iter(W + "instrText")))
-        self.assertEqual(_ooxml.word_text(content), "1")
+        assert list(content.iter(W + "instrText"))
+        assert _ooxml.word_text(content) == "1"
 
     def test_boundary_runs_preserve_text_formatting_and_nontext_children(self) -> None:
         content = boundary_hyperlink_field()
@@ -140,25 +142,19 @@ class HyperlinkFieldTests(unittest.TestCase):
 
         _ooxml.normalize_hyperlink_fields(content, relationships)
 
-        self.assertEqual(_ooxml.word_text(content), "Before Cached label After")
-        self.assertEqual(len(content.findall(W + "hyperlink")), 1)
-        self.assertFalse(list(content.iter(W + "fldChar")))
-        self.assertFalse(list(content.iter(W + "instrText")))
-        self.assertEqual(
-            [
-                child.tag
-                for run in content.findall(W + "r")
-                for child in run
-                if child.tag != W + "rPr"
-            ],
-            [W + "t", W + "tab", W + "br", W + "t"],
-        )
+        assert _ooxml.word_text(content) == "Before Cached label After"
+        assert len(content.findall(W + "hyperlink")) == 1
+        assert not list(content.iter(W + "fldChar"))
+        assert not list(content.iter(W + "instrText"))
+        assert [
+            child.tag for run in content.findall(W + "r") for child in run if child.tag != W + "rPr"
+        ] == [W + "t", W + "tab", W + "br", W + "t"]
         for run in content.findall(W + "r"):
             identifier = run.get(W + "rsidR")
             expected = "b" if identifier == "00000001" else "i"
-            self.assertIn(identifier, {"00000001", "00000002"})
-            self.assertIsNotNone(run.find(f"./{W}rPr/{W}{expected}"))
-        self.assertEqual(relationships[0].get("Target"), "https://example.test/plain")
+            assert identifier in {"00000001", "00000002"}
+            assert run.find(f"./{W}rPr/{W}{expected}") is not None
+        assert relationships[0].get("Target") == "https://example.test/plain"
 
     def test_single_run_field_preserves_prefix_suffix_and_cached_content(self) -> None:
         content = boundary_hyperlink_field()
@@ -171,14 +167,13 @@ class HyperlinkFieldTests(unittest.TestCase):
 
         _ooxml.normalize_hyperlink_fields(content, ET.Element(_ooxml.PACKAGE_REL + "Relationships"))
 
-        self.assertEqual(_ooxml.word_text(content), "Before Cached label After")
+        assert _ooxml.word_text(content) == "Before Cached label After"
         link = content.find(W + "hyperlink")
-        self.assertIsNotNone(link)
         assert link is not None
-        self.assertEqual(_ooxml.word_text(link), "Cached label")
+        assert _ooxml.word_text(link) == "Cached label"
         for run in content.iter(W + "r"):
-            self.assertEqual(run.get(W + "rsidR"), "12345678")
-            self.assertIsNotNone(run.find(f"./{W}rPr/{W}b"))
+            assert run.get(W + "rsidR") == "12345678"
+            assert run.find(f"./{W}rPr/{W}b") is not None
 
     def test_adjacent_fields_share_a_run_without_losing_intervening_text(self) -> None:
         content = ET.Element(W + "p")
@@ -194,15 +189,15 @@ class HyperlinkFieldTests(unittest.TestCase):
 
         _ooxml.normalize_hyperlink_fields(content, relationships)
 
-        self.assertEqual(_ooxml.word_text(content), "Before Cached label After" * 2)
-        self.assertEqual(
-            [_ooxml.word_text(link) for link in content.findall(W + "hyperlink")],
-            ["Cached label", "Cached label"],
-        )
-        self.assertEqual(
-            [relation.get("Target") for relation in relationships],
-            ["https://example.test/0", "https://example.test/1"],
-        )
+        assert _ooxml.word_text(content) == "Before Cached label After" * 2
+        assert [_ooxml.word_text(link) for link in content.findall(W + "hyperlink")] == [
+            "Cached label",
+            "Cached label",
+        ]
+        assert [relation.get("Target") for relation in relationships] == [
+            "https://example.test/0",
+            "https://example.test/1",
+        ]
 
     def test_unrelated_field_retains_its_run_children(self) -> None:
         content = boundary_hyperlink_field()
@@ -214,8 +209,8 @@ class HyperlinkFieldTests(unittest.TestCase):
 
         _ooxml.normalize_hyperlink_fields(content, relationships)
 
-        self.assertEqual([ET.tostring(node) for run in content for node in run], before)
-        self.assertFalse(list(relationships))
+        assert [ET.tostring(node) for run in content for node in run] == before
+        assert not list(relationships)
 
 
 def _numbering(*definitions: str) -> ET.Element:
@@ -256,14 +251,14 @@ class CrossReferenceTests(unittest.TestCase):
 
                 missing = _ooxml.unlink_missing_references(content, {"_Known"})
 
-                self.assertEqual(missing, ["_Missing"])
-                self.assertEqual(_ooxml.word_text(content), "345")
+                assert missing == ["_Missing"]
+                assert _ooxml.word_text(content) == "345"
                 instructions = [
                     *(node.text or "" for node in content.iter(W + "instrText")),
                     *(node.get(W + "instr", "") for node in content.iter(W + "fldSimple")),
                 ]
-                self.assertEqual(len(instructions), 2)
-                self.assertFalse([text for text in instructions if "_Missing" in text])
+                assert len(instructions) == 2
+                assert not [text for text in instructions if "_Missing" in text]
 
     def test_reference_kinds_and_nested_simple_fields(self) -> None:
         for instruction in (" REF _Gone \\h ", " NOTEREF _Gone \\f \\h ", ' ref "_Gone" \\h '):
@@ -273,11 +268,9 @@ class CrossReferenceTests(unittest.TestCase):
                 inner = ET.SubElement(outer, W + "fldSimple", {W + "instr": instruction})
                 inner.append(_ooxml.word_run("Table 1"))
 
-                self.assertEqual(
-                    _ooxml.unlink_missing_references(content, set()), ["_Gone", "_Gone"]
-                )
-                self.assertFalse(list(content.iter(W + "fldSimple")))
-                self.assertEqual(_ooxml.word_text(content), "Table 1")
+                assert _ooxml.unlink_missing_references(content, set()) == ["_Gone", "_Gone"]
+                assert not list(content.iter(W + "fldSimple"))
+                assert _ooxml.word_text(content) == "Table 1"
 
 
 class SimpleFieldTests(unittest.TestCase):
@@ -290,10 +283,10 @@ class SimpleFieldTests(unittest.TestCase):
         outer.append(_ooxml.word_run("-1"))
         content.append(_ooxml.word_run(": Registers"))
 
-        self.assertEqual(_ooxml.expand_simple_fields(content), 2)
+        assert _ooxml.expand_simple_fields(content) == 2
 
-        self.assertFalse(list(content.iter(W + "fldSimple")))
-        self.assertEqual(_ooxml.word_text(content), "Table 2-1: Registers")
+        assert not list(content.iter(W + "fldSimple"))
+        assert _ooxml.word_text(content) == "Table 2-1: Registers"
         labels: list[str] = []
         for run in content:
             marker = run.find(W + "fldChar")
@@ -301,38 +294,35 @@ class SimpleFieldTests(unittest.TestCase):
             if marker is not None:
                 labels.append(marker.get(W + "fldCharType", ""))
             elif code is not None:
-                self.assertEqual(code.get(_ooxml.XML_SPACE), "preserve")
+                assert code.get(_ooxml.XML_SPACE) == "preserve"
                 labels.append(f"code:{code.text}")
             else:
                 labels.append(_ooxml.word_text(run))
-        self.assertEqual(
-            labels,
-            [
-                "Table ",
-                "begin",
-                "code: SEQ Table \\s 1 ",
-                "separate",
-                "begin",
-                "code: STYLEREF 1 \\s ",
-                "separate",
-                "2",
-                "end",
-                "-1",
-                "end",
-                ": Registers",
-            ],
-        )
+        assert labels == [
+            "Table ",
+            "begin",
+            "code: SEQ Table \\s 1 ",
+            "separate",
+            "begin",
+            "code: STYLEREF 1 \\s ",
+            "separate",
+            "2",
+            "end",
+            "-1",
+            "end",
+            ": Registers",
+        ]
         data = content.find(f"{W}r/{W}fldChar/{W}fldData")
         assert data is not None
-        self.assertEqual(data.text, "AAAA")
+        assert data.text == "AAAA"
 
     def test_content_without_simple_fields_is_unchanged(self) -> None:
         content = paragraph("Plain")
         content.extend(page_reference("_Known", "4"))
         before = ET.tostring(content)
 
-        self.assertEqual(_ooxml.expand_simple_fields(content), 0)
-        self.assertEqual(ET.tostring(content), before)
+        assert _ooxml.expand_simple_fields(content) == 0
+        assert ET.tostring(content) == before
 
 
 _FIELD_MARKS = {"{": "begin", "|": "separate", "}": "end"}
@@ -385,31 +375,25 @@ class FieldRepairTests(unittest.TestCase):
 
         counts = _ooxml.repair_fields(body)
 
-        self.assertEqual(
-            counts,
-            Counter(
-                {
-                    "field(s) unwrapped": 3,
-                    "stray field mark(s) removed": 2,
-                    "field(s) in an instruction removed": 1,
-                }
-            ),
+        assert counts == Counter(
+            {
+                "field(s) unwrapped": 3,
+                "stray field mark(s) removed": 2,
+                "field(s) in an instruction removed": 1,
+            }
         )
-        self.assertEqual(
-            [_parts(line) for line in body],
-            [
-                ["A ", "x"],
-                ["{", "@ IF ", '@ = 1 "y" ', "|", "y", "}"],
-                ["B"],
-                ["Entry"],
-                ["Entry 2"],
-                [],
-                ["{", '@ HYPERLINK "https://example.test" ', "|", "Site"],
-                ["Site 2", "}"],
-                ["C ", "3"],
-            ],
-        )
-        self.assertFalse([run for line in body for run in line if not len(run)])
+        assert [_parts(line) for line in body] == [
+            ["A ", "x"],
+            ["{", "@ IF ", '@ = 1 "y" ', "|", "y", "}"],
+            ["B"],
+            ["Entry"],
+            ["Entry 2"],
+            [],
+            ["{", '@ HYPERLINK "https://example.test" ', "|", "Site"],
+            ["Site 2", "}"],
+            ["C ", "3"],
+        ]
+        assert not [run for line in body for run in line if not len(run)]
 
     def test_well_formed_and_deleted_fields_are_unchanged(self) -> None:
         content = _line("Table ", "{", "@ SEQ Table ", "|", "{", "@ STYLEREF 1 ", "|", "2", "}")
@@ -421,8 +405,8 @@ class FieldRepairTests(unittest.TestCase):
         ET.SubElement(alternative, _ooxml.MC + "Fallback").extend(_line("Fallback"))
         before = ET.tostring(content)
 
-        self.assertEqual(_ooxml.repair_fields(content), Counter())
-        self.assertEqual(ET.tostring(content), before)
+        assert _ooxml.repair_fields(content) == Counter()
+        assert ET.tostring(content) == before
 
 
 class ListNumberingTests(unittest.TestCase):
@@ -438,9 +422,9 @@ class ListNumberingTests(unittest.TestCase):
             "Nested": word_style("Nested", "numbering", number="2"),
         }
 
-        self.assertTrue(_ooxml.link_numbering_styles(numbering, styles))
-        self.assertEqual(_targets(numbering), {"1": "1", "2": "1", "3": "1"})
-        self.assertEqual(_ooxml.numbered_lists(numbering), {"1", "2", "3"})
+        assert _ooxml.link_numbering_styles(numbering, styles)
+        assert _targets(numbering) == {"1": "1", "2": "1", "3": "1"}
+        assert _ooxml.numbered_lists(numbering) == {"1", "2", "3"}
 
     def test_missing_or_cyclic_list_style_links_are_left_unnumbered(self) -> None:
         numbering = _numbering(
@@ -451,9 +435,9 @@ class ListNumberingTests(unittest.TestCase):
         )
         styles = {"Loop": word_style("Loop", "numbering", number="3")}
 
-        self.assertFalse(_ooxml.link_numbering_styles(numbering, styles))
-        self.assertEqual(_targets(numbering), {"1": "1", "2": "2", "3": "3"})
-        self.assertEqual(_ooxml.numbered_lists(numbering), {"1"})
+        assert not _ooxml.link_numbering_styles(numbering, styles)
+        assert _targets(numbering) == {"1": "1", "2": "2", "3": "3"}
+        assert _ooxml.numbered_lists(numbering) == {"1"}
 
     def test_numbered_lists_need_levels(self) -> None:
         numbering = _numbering(
@@ -463,7 +447,7 @@ class ListNumberingTests(unittest.TestCase):
             _instance("3", "9", '<w:lvlOverride w:ilvl="0"><w:lvl w:ilvl="0"/></w:lvlOverride>'),
         )
 
-        self.assertEqual(_ooxml.numbered_lists(numbering), {"3"})
+        assert _ooxml.numbered_lists(numbering) == {"3"}
 
     def test_list_items_need_a_defined_nonzero_list(self) -> None:
         styles = {
@@ -479,8 +463,8 @@ class ListNumberingTests(unittest.TestCase):
         }
         for name, (node, expected) in cases.items():
             with self.subTest(name):
-                self.assertIs(_ooxml.is_list_item(node, styles, {"0", "1"}), expected)
-        with self.assertRaises(ConversionError):
+                assert _ooxml.is_list_item(node, styles, {"0", "1"}) is expected
+        with pytest.raises(ConversionError):
             _ooxml.is_list_item(numbered("Item", number="x"), styles, {"1"})
 
     def test_numbering_references_include_removed_and_undefined_lists(self) -> None:
@@ -497,7 +481,7 @@ class ListNumberingTests(unittest.TestCase):
         }
         for name, (node, expected) in cases.items():
             with self.subTest(name):
-                self.assertEqual(_ooxml.numbering_reference(node, styles), expected)
+                assert _ooxml.numbering_reference(node, styles) == expected
 
     def test_pandoc_headings_are_named_heading_n_in_the_style_chain(self) -> None:
         def style(identity: str, name: str, based_on: str | None = None) -> ET.Element:
@@ -527,14 +511,14 @@ class ListNumberingTests(unittest.TestCase):
         }
         for name, (identity, expected) in cases.items():
             with self.subTest(name):
-                self.assertIs(_ooxml.pandoc_heading(paragraph("Text", identity), styles), expected)
+                assert _ooxml.pandoc_heading(paragraph("Text", identity), styles) is expected
         unnamed = styles.pop("Unnamed")
         label = unnamed.find(W + "name")
         assert label is not None
         unnamed.remove(label)
         styles["heading 2"] = unnamed
-        self.assertTrue(_ooxml.pandoc_heading(paragraph("Text", "heading 2"), styles))
-        self.assertFalse(_ooxml.pandoc_heading(paragraph("Text"), styles))
+        assert _ooxml.pandoc_heading(paragraph("Text", "heading 2"), styles)
+        assert not _ooxml.pandoc_heading(paragraph("Text"), styles)
 
 
 class SymbolFontTests(unittest.TestCase):
@@ -567,13 +551,13 @@ class SymbolFontTests(unittest.TestCase):
         )
 
         # Every character of a symbol-font run is a symbol, including the space.
-        self.assertEqual(_ooxml.map_symbol_fonts(content), (6, 1))
+        assert _ooxml.map_symbol_fonts(content) == (6, 1)
 
-        self.assertEqual(_ooxml.word_text(content), "\u2713\u2713\u03b1\u2192 plain üü\u2713\u00ff")
+        assert _ooxml.word_text(content) == "✓✓α→ plain üü✓ÿ"
         fonts = [node.attrib for node in content.iter(W + "rFonts")]
-        self.assertEqual(fonts[:3], [{}, {}, {}])
-        self.assertEqual(fonts[3], {W + "ascii": "Calibri", W + "hAnsi": "Calibri"})
-        self.assertEqual(len(list(content.iter(W + "sym"))), 1)
+        assert fonts[:3] == [{}, {}, {}]
+        assert fonts[3] == {W + "ascii": "Calibri", W + "hAnsi": "Calibri"}
+        assert len(list(content.iter(W + "sym"))) == 1
 
 
 def _deleted_mark(node: ET.Element) -> ET.Element:
@@ -621,31 +605,31 @@ class AcceptViewTests(unittest.TestCase):
         body = _accepted(
             _deleted_mark(paragraph("Kept ")), paragraph("text", "Heading2"), paragraph("After")
         )
-        self.assertEqual(_paragraph_texts(body), ["Kept text", "After"])
+        assert _paragraph_texts(body) == ["Kept text", "After"]
         # Word keeps the properties of the paragraph whose mark remains.
         style = body[0].find(f"./{W}pPr/{W}pStyle")
         assert style is not None
-        self.assertEqual(style.get(W + "val"), "Heading2")
+        assert style.get(W + "val") == "Heading2"
 
     def test_consecutive_deleted_marks_join_into_one_paragraph(self) -> None:
         body = _accepted(
             _deleted_mark(paragraph("A")), _deleted_mark(paragraph("B")), paragraph("C")
         )
-        self.assertEqual(_paragraph_texts(body), ["ABC"])
+        assert _paragraph_texts(body) == ["ABC"]
 
     def test_a_deleted_list_item_leaves_no_empty_item(self) -> None:
         body = _accepted(numbered("one"), _deleted_item(), numbered("two"))
-        self.assertEqual(_paragraph_texts(body), ["one", "two"])
+        assert _paragraph_texts(body) == ["one", "two"]
         numbers = [_ooxml.numbering_reference(node, {}) for node in body]
-        self.assertEqual(numbers, ["1", "1"])
+        assert numbers == ["1", "1"]
 
     def test_an_empty_item_with_nothing_to_join_loses_its_numbering(self) -> None:
         body = _accepted(numbered("one"), _deleted_item(), table(row(cell("x")), columns=1))
-        self.assertEqual(_paragraph_texts(body), ["one", ""])
-        self.assertEqual(_ooxml.numbering_reference(body[1], {}), "0")
+        assert _paragraph_texts(body) == ["one", ""]
+        assert _ooxml.numbering_reference(body[1], {}) == "0"
         # Text with nothing to join keeps its numbering.
         body = _accepted(_deleted_mark(numbered("kept")), table(row(cell("x")), columns=1))
-        self.assertEqual(_ooxml.numbering_reference(body[0], {}), "1")
+        assert _ooxml.numbering_reference(body[0], {}) == "1"
 
     def test_tables_whose_rows_were_all_deleted_are_removed(self) -> None:
         nested = cell(table(_deleted_row("inner"), columns=1))
@@ -659,13 +643,13 @@ class AcceptViewTests(unittest.TestCase):
         )
         tables = [node for node in body if node.tag == W + "tbl"]
         # A table without rows in Word stays as it was.
-        self.assertEqual([len(node.findall(W + "tr")) for node in tables], [1, 1, 0])
-        self.assertEqual(_ooxml.word_text(tables[0]), "kept")
+        assert [len(node.findall(W + "tr")) for node in tables] == [1, 1, 0]
+        assert _ooxml.word_text(tables[0]) == "kept"
         # A cell keeps a paragraph when its only table goes.
         inner = tables[1].find(f"./{W}tr/{W}tc")
         assert inner is not None
-        self.assertIsNone(inner.find(W + "tbl"))
-        self.assertIsNotNone(inner.find(W + "p"))
+        assert inner.find(W + "tbl") is None
+        assert inner.find(W + "p") is not None
 
 
 def _run(text: str, *, hidden: str | None = None, style: str | None = None) -> ET.Element:
@@ -722,13 +706,15 @@ class HiddenTextTests(unittest.TestCase):
                 _styled("Instructions", _run("shown again", hidden="0")),
             ]
         )
-        self.assertEqual(_ooxml.drop_hidden_text(body, _hiding_styles()), 4)
-        self.assertEqual(
-            [_ooxml.word_text(node) for node in body],
-            ["Shown  kept", " overridden", "", "shown again"],
-        )
+        assert _ooxml.drop_hidden_text(body, _hiding_styles()) == 4
+        assert [_ooxml.word_text(node) for node in body] == [
+            "Shown  kept",
+            " overridden",
+            "",
+            "shown again",
+        ]
         # A run left with nothing but its properties is removed.
-        self.assertEqual(len(body[0].findall(W + "r")), 2)
+        assert len(body[0].findall(W + "r")) == 2
 
     def test_document_defaults_apply_and_field_characters_stay(self) -> None:
         field = ET.Element(W + "r")
@@ -738,9 +724,9 @@ class HiddenTextTests(unittest.TestCase):
         body.extend(
             [_styled(None, _run("hidden"), _run("visible", hidden="0")), _styled(None, field)]
         )
-        self.assertEqual(_ooxml.drop_hidden_text(body, _hiding_styles(by_default=True)), 1)
-        self.assertEqual(_ooxml.word_text(body), "visible")
-        self.assertIsNotNone(next(body.iter(W + "fldChar"), None))
+        assert _ooxml.drop_hidden_text(body, _hiding_styles(by_default=True)) == 1
+        assert _ooxml.word_text(body) == "visible"
+        assert next(body.iter(W + "fldChar"), None) is not None
 
 
 class HeadingPunctuationTests(unittest.TestCase):
@@ -759,8 +745,8 @@ class HeadingPunctuationTests(unittest.TestCase):
                 node = ET.Element(W + "p")
                 node.extend(_ooxml.word_run(part) for part in parts)
                 changed = _ooxml.trim_trailing_punctuation(node)
-                self.assertEqual(_ooxml.word_text(node), expected)
-                self.assertEqual(changed, expected != "".join(parts))
+                assert _ooxml.word_text(node) == expected
+                assert changed == (expected != "".join(parts))
 
 
 def _fonts(**attributes: str) -> ET.Element:
@@ -799,12 +785,12 @@ class CodeTextTests(unittest.TestCase):
         }
         for name, (own, paragraph_node, expected) in cases.items():
             with self.subTest(name):
-                self.assertEqual(properties.monospace(own, paragraph_node), expected)
+                assert properties.monospace(own, paragraph_node) == expected
         defaults = ET.Element(W + "styles")
         ET.SubElement(ET.SubElement(defaults, W + "docDefaults"), W + "rPrDefault").append(
             _fonts(ascii="Lucida Console")
         )
-        self.assertTrue(_ooxml.RunProperties(defaults).monospace(None, plain))
+        assert _ooxml.RunProperties(defaults).monospace(None, plain)
 
     def test_code_text_keeps_layout_and_loses_word_typography(self) -> None:
         run = _ooxml.word_run("if (a == \u201cb\u201d) {")
@@ -813,8 +799,8 @@ class CodeTextTests(unittest.TestCase):
         ET.SubElement(run, W + "t").text = "x\u2013\u2014y\u2026"
         ET.SubElement(run, W + "noBreakHyphen")
         text = _ooxml.code_text(_styled(None, run))
-        self.assertEqual(text, "if (a == \u201cb\u201d) {\n    x\u2013\u2014y\u2026-")
-        self.assertEqual(_ooxml.straighten_code(text), ('if (a == "b") {\n    x---y...-', 5))
+        assert text == "if (a == “b”) {\n    x–—y…-"
+        assert _ooxml.straighten_code(text) == ('if (a == "b") {\n    x---y...-', 5)
 
 
 class UnicodeSpaceTests(unittest.TestCase):
@@ -831,12 +817,12 @@ class UnicodeSpaceTests(unittest.TestCase):
         instruction = ET.SubElement(ET.SubElement(body, W + "r"), W + "instrText")
         instruction.text = "\u00a0PAGE"
         body.append(_styled(None, _run("100\u00a0MHz"), _run("\u00a0\u2002end\u200b.")))
-        self.assertEqual(_ooxml.plain_spaces(body, ET.Element(W + "styles")), 4)
-        self.assertEqual(_ooxml.word_text(body), "100 MHz  end.")
+        assert _ooxml.plain_spaces(body, ET.Element(W + "styles")) == 4
+        assert _ooxml.word_text(body) == "100 MHz  end."
         edge = body[1][1].find(W + "t")
         assert edge is not None
-        self.assertEqual(edge.get(_ooxml.XML_SPACE), "preserve")
-        self.assertEqual(instruction.text, "\u00a0PAGE")
+        assert edge.get(_ooxml.XML_SPACE) == "preserve"
+        assert instruction.text == "\xa0PAGE"
 
     def test_spaces_that_indent_a_line_become_no_break_spaces(self) -> None:
         tabbed = _styled(None, _run(""))
@@ -858,24 +844,21 @@ class UnicodeSpaceTests(unittest.TestCase):
             broken,
             _styled(None, _run("\u00a0\u00a0")),
         )
-        self.assertEqual(
-            texts,
-            [
-                "\u00a0\u00a0\u00a0nested {",
-                "\u00a0\u00a0en indent",
-                " one is not an indent",
-                "   plain spaces are not kept",
-                "  Heading",
-                "\u00a0after a tab",
-                "line one\u00a0\u00a0\u00a0line two",
-                "  ",
-            ],
-        )
-        self.assertEqual(changed, 10)
+        assert texts == [
+            "\xa0\xa0\xa0nested {",
+            "\xa0\xa0en indent",
+            " one is not an indent",
+            "   plain spaces are not kept",
+            "  Heading",
+            "\xa0after a tab",
+            "line one\xa0\xa0\xa0line two",
+            "  ",
+        ]
+        assert changed == 10
 
     def test_code_text_writes_unicode_spaces_as_spaces(self) -> None:
         code = _styled(None, _run("\u00a0\u00a0\u2002\u202fx\u00a0=\u20021;"))
-        self.assertEqual(_ooxml.code_text(code), "    x = 1;")
+        assert _ooxml.code_text(code) == "    x = 1;"
 
 
 def _first_run(node: ET.Element) -> ET.Element:
@@ -913,7 +896,7 @@ class UnderlineTests(unittest.TestCase):
             [body, styled, direct, valueless, heading, code_paragraph]
         )
 
-        self.assertEqual(_ooxml.drop_redundant_underline(root, styles), 4)
+        assert _ooxml.drop_redundant_underline(root, styles) == 4
         values = {
             name: run.find(f"./{W}rPr/{W}u")
             for name, run in {
@@ -926,18 +909,17 @@ class UnderlineTests(unittest.TestCase):
                 "code": code,
             }.items()
         }
-        self.assertEqual(
-            {name: None if node is None else node.get(W + "val") for name, node in values.items()},
-            {
-                "emphasis": "double",
-                "styled": "none",
-                "direct": "none",
-                "valueless": None,
-                "heading": "none",
-                # A text box in a heading is a paragraph of its own.
-                "box": "single",
-                "code": "none",
-            },
-        )
-        self.assertIsNotNone(values["valueless"])
-        self.assertEqual(_ooxml.drop_redundant_underline(root, styles), 0)
+        assert {
+            name: None if node is None else node.get(W + "val") for name, node in values.items()
+        } == {
+            "emphasis": "double",
+            "styled": "none",
+            "direct": "none",
+            "valueless": None,
+            "heading": "none",
+            # A text box in a heading is a paragraph of its own.
+            "box": "single",
+            "code": "none",
+        }
+        assert values["valueless"] is not None
+        assert _ooxml.drop_redundant_underline(root, styles) == 0

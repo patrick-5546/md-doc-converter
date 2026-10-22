@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -11,6 +12,8 @@ import unittest
 from collections import Counter, defaultdict
 from pathlib import Path
 from unittest import mock
+
+import pytest
 
 from md_doc_converter.markdown import preprocess
 from md_doc_converter.markdown.headings import Heading, HeadingError, headings
@@ -39,13 +42,13 @@ class HeadingIdsTest(unittest.TestCase):
         with mock.patch("subprocess.run", return_value=completed) as run:
             actual = headings("# First\n\n## Second\n")
 
-        self.assertEqual(actual, [Heading(1, "first", "First"), Heading(2, "second", "Second")])
+        assert actual == [Heading(1, "first", "First"), Heading(2, "second", "Second")]
         run.assert_called_once()
 
     def test_missing_pandoc_reports_the_command_failure(self) -> None:
         with (
             mock.patch("subprocess.run", side_effect=FileNotFoundError("missing executable")),
-            self.assertRaisesRegex(HeadingError, "failed to run.*missing executable"),
+            pytest.raises(HeadingError, match=r"failed to run.*missing executable"),
         ):
             headings("# Heading\n", pandoc="missing-pandoc")
 
@@ -53,7 +56,7 @@ class HeadingIdsTest(unittest.TestCase):
         completed = subprocess.CompletedProcess(["pandoc"], 1, stdout="", stderr="bad reader")
         with (
             mock.patch("subprocess.run", return_value=completed),
-            self.assertRaisesRegex(HeadingError, "bad reader"),
+            pytest.raises(HeadingError, match="bad reader"),
         ):
             headings("# Heading\n")
 
@@ -70,7 +73,7 @@ class HeadingIdsTest(unittest.TestCase):
                 completed = subprocess.CompletedProcess(["pandoc"], 0, stdout=payload, stderr="")
                 with (
                     mock.patch("subprocess.run", return_value=completed),
-                    self.assertRaises(HeadingError),
+                    pytest.raises(HeadingError),
                 ):
                     headings("# Heading\n")
 
@@ -83,7 +86,7 @@ class HeadingIdsTest(unittest.TestCase):
             text=True,
             check=True,
         )
-        self.assertIn("Markdown preprocessor", result.stdout)
+        assert "Markdown preprocessor" in result.stdout
 
     @unittest.skipUnless(PANDOC, "pandoc not installed")
     def test_gfm_heading_ids_match_pandoc(self) -> None:
@@ -105,18 +108,15 @@ class HeadingIdsTest(unittest.TestCase):
 
         actual = headings(markdown, pandoc=PANDOC or "pandoc")
 
-        self.assertEqual(
-            [heading.identifier for heading in actual],
-            [
-                "1-overview",
-                "foobar--baz",
-                "résumé",
-                "same",
-                "same-1",
-                "formatted-text-link",
-            ],
-        )
-        self.assertEqual(actual[-1].text, "Formatted Text Link")
+        assert [heading.identifier for heading in actual] == [
+            "1-overview",
+            "foobar--baz",
+            "résumé",
+            "same",
+            "same-1",
+            "formatted-text-link",
+        ]
+        assert actual[-1].text == "Formatted Text Link"
 
     @unittest.skipUnless(PANDOC, "pandoc not installed")
     def test_renderer_reader_honors_explicit_heading_ids(self) -> None:
@@ -126,10 +126,10 @@ class HeadingIdsTest(unittest.TestCase):
             reader=RENDERER_READER,
         )
 
-        self.assertEqual(
-            actual,
-            [Heading(1, "custom-id", "Explicit"), Heading(1, "1-overview", "1. Overview")],
-        )
+        assert actual == [
+            Heading(1, "custom-id", "Explicit"),
+            Heading(1, "1-overview", "1. Overview"),
+        ]
 
 
 class PreprocessHeadingIdsTest(unittest.TestCase):
@@ -149,12 +149,12 @@ class PreprocessHeadingIdsTest(unittest.TestCase):
             preprocess.preprocess(markdown, source_path="input.md")
 
         warnings = stderr.getvalue()
-        self.assertNotIn("#1-overview", warnings)
-        self.assertNotIn("#r%C3%A9sum%C3%A9", warnings)
-        self.assertNotIn("#r\u00e9sum\u00e9", warnings)
-        self.assertNotIn("#custom-id", warnings)
-        self.assertNotIn("#code-only", warnings)
-        self.assertIn("broken anchor '#overview'", warnings)
+        assert "#1-overview" not in warnings
+        assert "#r%C3%A9sum%C3%A9" not in warnings
+        assert "#résumé" not in warnings
+        assert "#custom-id" not in warnings
+        assert "#code-only" not in warnings
+        assert "broken anchor '#overview'" in warnings
 
     @unittest.skipUnless(PANDOC, "pandoc not installed")
     def test_directory_links_remap_to_combined_renderer_ids(self) -> None:
@@ -199,20 +199,20 @@ class PreprocessHeadingIdsTest(unittest.TestCase):
             with contextlib.redirect_stderr(stderr):
                 result = preprocess.collect_directory(str(docs), stats)
 
-        self.assertIn("[bare](#same-1)", result)
-        self.assertIn("[to duplicate](#same-1)", result)
-        self.assertIn("[self](#same-1)", result)
-        self.assertIn("[to unicode](#r%C3%A9sum%C3%A9-1)", result)
-        self.assertIn("[encoded unicode](#r%C3%A9sum%C3%A9-1)", result)
-        self.assertIn("[encoded self](#r%C3%A9sum%C3%A9-1)", result)
-        self.assertIn("[custom](#custom-id)", result)
-        self.assertIn('<a href="#r%C3%A9sum%C3%A9-1">HTML target</a>', result)
-        self.assertIn('<a href="#same-1">HTML self</a>', result)
-        self.assertIn('`[Literal](#same)` and `<a href="#same">Literal HTML</a>`', result)
-        self.assertRegex(result, r"\[old id\]\([^)]*b%20page\.md#overview\)")
-        self.assertIn("heading not found in target file", stderr.getvalue())
-        self.assertNotIn("broken anchor", stderr.getvalue())
-        self.assertNotIn("target not found", stderr.getvalue())
+        assert "[bare](#same-1)" in result
+        assert "[to duplicate](#same-1)" in result
+        assert "[self](#same-1)" in result
+        assert "[to unicode](#r%C3%A9sum%C3%A9-1)" in result
+        assert "[encoded unicode](#r%C3%A9sum%C3%A9-1)" in result
+        assert "[encoded self](#r%C3%A9sum%C3%A9-1)" in result
+        assert "[custom](#custom-id)" in result
+        assert '<a href="#r%C3%A9sum%C3%A9-1">HTML target</a>' in result
+        assert '<a href="#same-1">HTML self</a>' in result
+        assert '`[Literal](#same)` and `<a href="#same">Literal HTML</a>`' in result
+        assert re.search(r"\[old id\]\([^)]*b%20page\.md#overview\)", result)
+        assert "heading not found in target file" in stderr.getvalue()
+        assert "broken anchor" not in stderr.getvalue()
+        assert "target not found" not in stderr.getvalue()
 
         rendered = subprocess.run(
             ["pandoc", f"--from={RENDERER_READER}", "--to=json"],
@@ -222,10 +222,14 @@ class PreprocessHeadingIdsTest(unittest.TestCase):
             check=True,
         )
         blocks = json.loads(rendered.stdout)["blocks"]
-        self.assertEqual(
-            [block["c"][1][0] for block in blocks if block["t"] == "Header"],
-            ["same", "r\u00e9sum\u00e9", "same-1", "1-overview", "r\u00e9sum\u00e9-1", "custom-id"],
-        )
+        assert [block["c"][1][0] for block in blocks if block["t"] == "Header"] == [
+            "same",
+            "résumé",
+            "same-1",
+            "1-overview",
+            "résumé-1",
+            "custom-id",
+        ]
 
 
 if __name__ == "__main__":

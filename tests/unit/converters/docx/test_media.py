@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shutil
 import tempfile
 import unittest
@@ -10,6 +11,8 @@ from collections.abc import Collection
 from pathlib import Path
 from unittest.mock import patch
 from xml.etree import ElementTree as ET
+
+import pytest
 
 from md_doc_converter.converters.docx import media as _media
 from md_doc_converter.converters.docx import models as _models
@@ -160,16 +163,16 @@ CROPPED_CAIRO_PAGE = CAIRO_PAGE.replace(
 class EmfCropTests(unittest.TestCase):
     def test_libreoffice_page_is_cropped_to_the_drawing(self) -> None:
         results, tools = _convert({"drawing": {"svg": LIBREOFFICE_PAGE}})
-        self.assertEqual(results, {"drawing": (CROPPED_PAGE, [])})
-        self.assertEqual(tools.kinds(), ["svg"])
+        assert results == {"drawing": (CROPPED_PAGE, [])}
+        assert tools.kinds() == ["svg"]
 
     def test_fallback_page_is_cropped_to_the_frame_of_an_odg_export(self) -> None:
         results, tools = _convert({"drawing": {"svg": None, "cairo": CAIRO_PAGE}})
         result, findings = results["drawing"]
-        self.assertEqual(result, CROPPED_CAIRO_PAGE)
-        self.assertEqual(len(findings), 1)
-        self.assertIn("trying the PDF/pdftocairo vector fallback", findings[0])
-        self.assertEqual(tools.kinds(), ["svg", "pdf", "cairo", "odg"])
+        assert result == CROPPED_CAIRO_PAGE
+        assert len(findings) == 1
+        assert "trying the PDF/pdftocairo vector fallback" in findings[0]
+        assert tools.kinds() == ["svg", "pdf", "cairo", "odg"]
 
     def test_page_is_kept_whole_when_the_drawing_frame_is_unknown(self) -> None:
         two = LIBREOFFICE_PAGE.replace(
@@ -188,18 +191,16 @@ class EmfCropTests(unittest.TestCase):
             with self.subTest(reason=reason):
                 results, _tools = _convert({"drawing": outputs})
                 result, findings = results["drawing"]
-                self.assertEqual(result, expected)
-                self.assertEqual(
-                    findings[-1], f"kept LibreOffice's whole page around the drawing: {reason}"
-                )
+                assert result == expected
+                assert findings[-1] == f"kept LibreOffice's whole page around the drawing: {reason}"
 
     def test_a_unitless_pdftocairo_page_is_measured_in_points(self) -> None:
         # Poppler before 25.04 with Cairo 1.17.6 or newer writes the page size without a unit.
         unitless = CAIRO_PAGE.replace('width="612pt" height="792pt"', 'width="612" height="792"')
         cropped, _tools = _convert({"drawing": {"svg": None, "cairo": unitless}})
-        self.assertEqual(cropped["drawing"][0], CROPPED_CAIRO_PAGE)
+        assert cropped["drawing"][0] == CROPPED_CAIRO_PAGE
         whole, _tools = _convert({"drawing": {"svg": None, "cairo": unitless, "odg": False}})
-        self.assertEqual(whole["drawing"][0], CAIRO_PAGE)
+        assert whole["drawing"][0] == CAIRO_PAGE
 
     def test_only_a_unitless_page_size_gets_points(self) -> None:
         with tempfile.TemporaryDirectory(prefix="docx-emf-units-") as directory:
@@ -218,17 +219,17 @@ class EmfCropTests(unittest.TestCase):
                 with self.subTest(before=before):
                     path.write_text(f"<?xml version='1.0'?>\n{before}<g width='5'/></svg>\n")
                     _media._size_in_points(path)
-                    self.assertEqual(
-                        path.read_text(), f"<?xml version='1.0'?>\n{after}<g width='5'/></svg>\n"
+                    assert (
+                        path.read_text() == f"<?xml version='1.0'?>\n{after}<g width='5'/></svg>\n"
                     )
 
 
 class EmfBatchTests(unittest.TestCase):
     def test_all_drawings_convert_in_one_libreoffice_run(self) -> None:
         results, tools = _convert({name: {"svg": LIBREOFFICE_PAGE} for name in ("a", "b", "c")})
-        self.assertEqual(results, {name: (CROPPED_PAGE, []) for name in ("a", "b", "c")})
-        self.assertEqual(tools.kinds(), ["svg"])
-        self.assertEqual(tools.inputs(0), ["a", "b", "c"])
+        assert results == {name: (CROPPED_PAGE, []) for name in ("a", "b", "c")}
+        assert tools.kinds() == ["svg"]
+        assert tools.inputs(0) == ["a", "b", "c"]
 
     def test_only_drawings_that_svg_export_missed_take_the_fallback_together(self) -> None:
         results, tools = _convert(
@@ -238,22 +239,24 @@ class EmfBatchTests(unittest.TestCase):
                 "c": {"svg": INVALID_SVG, "cairo": CAIRO_PAGE},
             }
         )
-        self.assertEqual(results["a"], (CROPPED_PAGE, []))
+        assert results["a"] == (CROPPED_PAGE, [])
         for name, reason in (
             ("b", "LibreOffice SVG export produced no nonempty SVG"),
             ("c", "Unresolved SVG resource"),
         ):
             result, findings = results[name]
-            self.assertEqual(result, CROPPED_CAIRO_PAGE)
+            assert result == CROPPED_CAIRO_PAGE
             [finding] = findings
-            self.assertIn(reason, finding)
-            self.assertTrue(finding.endswith("; trying the PDF/pdftocairo vector fallback"))
-        self.assertEqual(tools.kinds(), ["svg", "pdf", "cairo", "cairo", "odg"])
-        self.assertEqual(
-            [tools.inputs(index) for index in (0, 1, 4)], [["a", "b", "c"], ["b", "c"], ["b", "c"]]
-        )
+            assert reason in finding
+            assert finding.endswith("; trying the PDF/pdftocairo vector fallback")
+        assert tools.kinds() == ["svg", "pdf", "cairo", "cairo", "odg"]
+        assert [tools.inputs(index) for index in (0, 1, 4)] == [
+            ["a", "b", "c"],
+            ["b", "c"],
+            ["b", "c"],
+        ]
         profiles = {call[1] for call in tools.calls if call[1] != "-svg"}
-        self.assertEqual(len(profiles), 1)
+        assert len(profiles) == 1
 
     def test_a_failed_fallback_affects_only_its_drawing(self) -> None:
         results, tools = _convert(
@@ -263,11 +266,11 @@ class EmfBatchTests(unittest.TestCase):
             }
         )
         result, findings = results["a"]
-        self.assertRegex(result, r"; EMF fallback did not produce .*a\.pdf$")
-        self.assertEqual(len(findings), 1)
-        self.assertEqual(results["b"][0], CROPPED_CAIRO_PAGE)
-        self.assertEqual(tools.kinds(), ["svg", "pdf", "cairo", "odg"])
-        self.assertEqual(tools.inputs(3), ["b"])
+        assert re.search(r"; EMF fallback did not produce .*a\.pdf$", result)
+        assert len(findings) == 1
+        assert results["b"][0] == CROPPED_CAIRO_PAGE
+        assert tools.kinds() == ["svg", "pdf", "cairo", "odg"]
+        assert tools.inputs(3) == ["b"]
 
     def test_a_failed_run_keeps_the_drawings_it_exported(self) -> None:
         results, _tools = _convert(
@@ -277,13 +280,12 @@ class EmfBatchTests(unittest.TestCase):
             },
             failing="svg",
         )
-        self.assertEqual(results["a"], (CROPPED_PAGE, []))
+        assert results["a"] == (CROPPED_PAGE, [])
         result, [finding] = results["b"]
-        self.assertEqual(result, CROPPED_CAIRO_PAGE)
-        self.assertEqual(
-            finding,
-            "EMF-to-SVG conversion failed: synthetic crash; "
-            "trying the PDF/pdftocairo vector fallback",
+        assert result == CROPPED_CAIRO_PAGE
+        assert (
+            finding == "EMF-to-SVG conversion failed: synthetic crash; "
+            "trying the PDF/pdftocairo vector fallback"
         )
 
 
@@ -293,18 +295,18 @@ class MediaFailureTests(unittest.TestCase):
             {"a": {"svg": LIBREOFFICE_PAGE}, "b": {}}, missing=("libreoffice", "soffice")
         )
         for result, findings in results.values():
-            self.assertIn("requires LibreOffice", result)
-            self.assertEqual(findings, [])
-        self.assertEqual(tools.calls, [])
+            assert "requires LibreOffice" in result
+            assert findings == []
+        assert tools.calls == []
 
     def test_pdftocairo_is_needed_only_by_the_fallback(self) -> None:
         results, tools = _convert(
             {"a": {"svg": LIBREOFFICE_PAGE}, "b": {"svg": None, "cairo": CAIRO_PAGE}},
             missing=("pdftocairo",),
         )
-        self.assertEqual(results["a"], (CROPPED_PAGE, []))
-        self.assertIn("this EMF requires pdftocairo for PDF-to-SVG", results["b"][0])
-        self.assertEqual(tools.kinds(), ["svg"])
+        assert results["a"] == (CROPPED_PAGE, [])
+        assert "this EMF requires pdftocairo for PDF-to-SVG" in results["b"][0]
+        assert tools.kinds() == ["svg"]
 
     def test_svg_css_resource_fragments_must_exist(self) -> None:
         with tempfile.TemporaryDirectory(prefix="docx-svg-fragment-") as directory:
@@ -313,7 +315,7 @@ class MediaFailureTests(unittest.TestCase):
                 '<svg xmlns="http://www.w3.org/2000/svg"><path clip-path="url(#missing)"/></svg>',
                 encoding="utf-8",
             )
-            with self.assertRaisesRegex(_models.ConversionError, "Unresolved SVG resource"):
+            with pytest.raises(_models.ConversionError, match="Unresolved SVG resource"):
                 _media.validate_svg(path)
             path.write_text(
                 '<svg xmlns="http://www.w3.org/2000/svg"><defs><clipPath id="clip"/></defs>'
@@ -369,7 +371,7 @@ class ImageDescriptionTests(unittest.TestCase):
             ": Bus Interface",
         )
         generated = "A diagram of a computer. AI-generated content may be incorrect."
-        self.assertEqual(_described(image(alt=generated), caption), [("Bus Interface", True)])
+        assert _described(image(alt=generated), caption) == [("Bus Interface", True)]
 
     def test_title_follows_the_number_with_any_separator(self) -> None:
         captions = {
@@ -383,14 +385,14 @@ class ImageDescriptionTests(unittest.TestCase):
         }
         for title, caption in captions.items():
             with self.subTest(title=title):
-                self.assertEqual(_described(image(alt=None), caption), [(title, True)])
+                assert _described(image(alt=None), caption) == [(title, True)]
 
     def test_an_image_between_two_captions_takes_the_side_most_captions_are_on(self) -> None:
         below = [image(alt=None), _figure(": One"), image(alt=None), _figure(": Two")]
         above = [_figure(": One"), image(alt=None), _figure(": Two"), image(alt=None)]
         expected = [("One", True), ("Two", True)]
-        self.assertEqual(_described(*below), expected)
-        self.assertEqual(_described(*above), expected)
+        assert _described(*below) == expected
+        assert _described(*above) == expected
 
     def test_a_caption_on_the_less_common_side_is_still_used(self) -> None:
         content = [
@@ -402,13 +404,13 @@ class ImageDescriptionTests(unittest.TestCase):
             _figure(": Three"),
             image(alt=None),
         ]
-        self.assertEqual(_described(*content), [("One", True), ("Two", True), ("Three", True)])
+        assert _described(*content) == [("One", True), ("Two", True), ("Three", True)]
 
     def test_a_caption_describes_one_image(self) -> None:
-        self.assertEqual(
-            _described(image(alt=None), _figure(": Shared"), image(alt="Word")),
-            [("Shared", True), ("Word", False)],
-        )
+        assert _described(image(alt=None), _figure(": Shared"), image(alt="Word")) == [
+            ("Shared", True),
+            ("Word", False),
+        ]
 
     def test_table_and_equation_captions_do_not_describe_images(self) -> None:
         for caption in (
@@ -417,13 +419,13 @@ class ImageDescriptionTests(unittest.TestCase):
             _caption("Table 3: Registers"),
         ):
             with self.subTest(text=_ooxml.word_text(caption)):
-                self.assertEqual(_described(image(), caption), [("Diagram", False)])
+                assert _described(image(), caption) == [("Diagram", False)]
 
     def test_without_a_caption_word_alt_text_is_kept(self) -> None:
-        self.assertEqual(
-            _described(image(), paragraph("Body text"), image(alt=None)),
-            [("Diagram", False), (None, False)],
-        )
+        assert _described(image(), paragraph("Body text"), image(alt=None)) == [
+            ("Diagram", False),
+            (None, False),
+        ]
 
 
 def _headed(*content: ET.Element) -> list[tuple[str | None, bool]]:
@@ -445,16 +447,13 @@ class HeadingAltTextTests(unittest.TestCase):
     def test_a_heading_describes_the_images_directly_below_it(self) -> None:
         pair = image(alt=None)
         pair.extend(image(alt=None).findall(W + "r"))
-        self.assertEqual(
-            _headed(
-                _caption("1.2", "\t", "Block", "\u2011", "diagram", style="Heading1"),
-                paragraph(""),
-                image(alt=None),
-                paragraph("Data flow", "Heading1"),
-                pair,
-            ),
-            [("1.2 Block\u2011diagram", True), ("Data flow", True), ("Data flow", True)],
-        )
+        assert _headed(
+            _caption("1.2", "\t", "Block", "‑", "diagram", style="Heading1"),
+            paragraph(""),
+            image(alt=None),
+            paragraph("Data flow", "Heading1"),
+            pair,
+        ) == [("1.2 Block‑diagram", True), ("Data flow", True), ("Data flow", True)]
 
     def test_only_a_heading_directly_above_in_the_same_container_counts(self) -> None:
         beside = image(alt=None)
@@ -467,18 +466,13 @@ class HeadingAltTextTests(unittest.TestCase):
         }
         for name, content in cases.items():
             with self.subTest(case=name):
-                self.assertEqual(
-                    _headed(paragraph("Heading", "Heading1"), *content)[-1], (None, False)
-                )
+                assert _headed(paragraph("Heading", "Heading1"), *content)[-1] == (None, False)
 
     def test_a_caption_or_word_alt_text_wins_over_the_heading(self) -> None:
-        self.assertEqual(
-            _headed(
-                paragraph("Heading", "Heading1"),
-                image(alt=None),
-                _figure(": Caption"),
-                paragraph("Other", "Heading1"),
-                image(alt="Word"),
-            ),
-            [("Caption", False), ("Word", False)],
-        )
+        assert _headed(
+            paragraph("Heading", "Heading1"),
+            image(alt=None),
+            _figure(": Caption"),
+            paragraph("Other", "Heading1"),
+            image(alt="Word"),
+        ) == [("Caption", False), ("Word", False)]

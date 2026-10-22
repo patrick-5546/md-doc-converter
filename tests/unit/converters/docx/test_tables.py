@@ -5,6 +5,8 @@ from __future__ import annotations
 import unittest
 from xml.etree import ElementTree as ET
 
+import pytest
+
 from md_doc_converter.converters.docx import models as _models
 from md_doc_converter.converters.docx import reference as _reference
 from md_doc_converter.converters.docx import tables as _tables
@@ -22,7 +24,7 @@ from tests.support.docx import (
 
 class SourceTableTests(unittest.TestCase):
     def test_compact_spacing_preserves_escaped_pipes_and_empty_cells(self) -> None:
-        self.assertEqual(_tables.compact_table_row(r"|  A \| B  |    |"), r"| A \| B | |")
+        assert _tables.compact_table_row(r"|  A \| B  |    |") == r"| A \| B | |"
 
     def test_blank_header_and_all_blank_rows_survive(self) -> None:
         source = table(
@@ -35,8 +37,8 @@ class SourceTableTests(unittest.TestCase):
             "<tbody><tr><td>data</td><td></td></tr><tr><td></td><td></td></tr></tbody></table>"
         ).find("table")
         result = _tables.repair_source_table(source, reference)
-        self.assertIsNone(_tables.html_table_to_pipe(result))
-        self.assertEqual(len(_tables.html_rows(result)), 3)
+        assert _tables.html_table_to_pipe(result) is None
+        assert len(_tables.html_rows(result)) == 3
 
     def test_first_row_is_a_markdown_header_without_repeat_header_metadata(self) -> None:
         source = table(row(cell("data"), cell("value")), row(cell(""), cell("")))
@@ -45,17 +47,14 @@ class SourceTableTests(unittest.TestCase):
             "<tbody><tr><td></td><td></td></tr></tbody></table>"
         ).find("table")
         result = _tables.repair_source_table(source, reference)
-        self.assertIsNone(result.find("thead"))
-        self.assertEqual(
-            _tables.html_table_to_pipe(result),
-            "| data | value |\n| --- | --- |\n| | |\n",
-        )
-        self.assertEqual(len(result.findall("./tbody/tr")), 2)
+        assert result.find("thead") is None
+        assert _tables.html_table_to_pipe(result) == "| data | value |\n| --- | --- |\n| | |\n"
+        assert len(result.findall("./tbody/tr")) == 2
 
     def test_zero_row_table_is_recovered(self) -> None:
         result = _tables.repair_source_table(table(), None)
-        self.assertEqual(_reference.html_element(result), "<table></table>")
-        self.assertIsNone(_tables.html_table_to_pipe(result))
+        assert _reference.html_element(result) == "<table></table>"
+        assert _tables.html_table_to_pipe(result) is None
 
     def test_zero_cell_word_rows_are_restored_without_guessing(self) -> None:
         source = table(row(), row(cell("A"), cell("B")), row())
@@ -63,10 +62,10 @@ class SourceTableTests(unittest.TestCase):
             "<table><tbody><tr><td>A</td><td>B</td></tr></tbody></table>"
         ).find("table")
         result = _tables.repair_source_table(source, reference)
-        self.assertEqual([len(item) for item in result.findall("./tbody/tr")], [0, 2, 0])
+        assert [len(item) for item in result.findall("./tbody/tr")] == [0, 2, 0]
 
     def test_missing_cell_table_fails_closed(self) -> None:
-        with self.assertRaisesRegex(_models.ConversionError, "omitted"):
+        with pytest.raises(_models.ConversionError, match="omitted"):
             _tables.repair_source_table(table(row(cell(""))), None)
 
     def test_nonmatching_table_text_fails_even_with_shared_words(self) -> None:
@@ -74,7 +73,7 @@ class SourceTableTests(unittest.TestCase):
         reference = _reference.parse_html(
             "<table><tbody><tr><td>same first</td><td>different content</td></tr></tbody></table>"
         ).find("table")
-        with self.assertRaisesRegex(_models.ConversionError, "content does not align"):
+        with pytest.raises(_models.ConversionError, match="content does not align"):
             _tables.repair_source_table(source, reference)
 
     def test_invented_reference_rows_fail_instead_of_being_deleted(self) -> None:
@@ -82,7 +81,7 @@ class SourceTableTests(unittest.TestCase):
         reference = _reference.parse_html(
             "<table><tbody><tr><td>data</td></tr><tr><td></td></tr></tbody></table>"
         ).find("table")
-        with self.assertRaisesRegex(_models.ConversionError, "introduced table rows"):
+        with pytest.raises(_models.ConversionError, match="introduced table rows"):
             _tables.repair_source_table(source, reference)
 
     def test_multiline_html_to_pipe_and_escaping(self) -> None:
@@ -91,10 +90,9 @@ class SourceTableTests(unittest.TestCase):
             "<tr><td>A | B</td><td><p>First line</p><p></p><p><strong>Second</strong>"
             ' and <a href="#_Ref">target</a></p></td></tr></tbody></table>'
         )
-        self.assertEqual(
-            _tables.html_table_to_pipe(source),
-            "| Name | Details |\n| --- | --- |\n"
-            r"| A \| B | First line<br><br>**Second** and [target](#_Ref) |" + "\n",
+        assert (
+            _tables.html_table_to_pipe(source) == "| Name | Details |\n| --- | --- |\n"
+            r"| A \| B | First line<br><br>**Second** and [target](#_Ref) |" + "\n"
         )
 
     def test_merged_html_stays_html(self) -> None:
@@ -103,9 +101,7 @@ class SourceTableTests(unittest.TestCase):
             '<table><thead><tr><th colspan="2">A</th></tr></thead>'
             "<tbody><tr><td>x</td><td>y</td></tr></tbody></table>"
         ).find("table")
-        self.assertIsNone(
-            _tables.html_table_to_pipe(_tables.repair_source_table(source, reference))
-        )
+        assert _tables.html_table_to_pipe(_tables.repair_source_table(source, reference)) is None
 
     def test_vertical_merge_keeps_fully_covered_blank_row(self) -> None:
         source = table(row(cell("A", merge="restart")), row(cell("", merge="continue")), columns=1)
@@ -113,13 +109,11 @@ class SourceTableTests(unittest.TestCase):
             '<table><tbody><tr><td rowspan="2">A</td></tr></tbody></table>'
         ).find("table")
         result = _tables.repair_source_table(source, reference)
-        self.assertEqual([len(item) for item in result.findall("./tbody/tr")], [1, 0])
+        assert [len(item) for item in result.findall("./tbody/tr")] == [1, 0]
 
     def test_nonempty_vertical_continuation_is_not_lost(self) -> None:
         source = table(row(cell("A", merge="restart")), row(cell("keep", merge="continue")))
-        with self.assertRaisesRegex(
-            _models.ConversionError, "continuation contains retained content"
-        ):
+        with pytest.raises(_models.ConversionError, match="continuation contains retained content"):
             _tables.word_table_rows(source)
 
     def test_nested_tables_and_caption_are_not_flattened(self) -> None:
@@ -129,14 +123,14 @@ class SourceTableTests(unittest.TestCase):
             "<table><tbody><tr><td>nested</td></tr></tbody></table>"
             "</td></tr></tbody></table>"
         )
-        self.assertIsNone(_tables.html_table_to_pipe(source))
+        assert _tables.html_table_to_pipe(source) is None
 
     def test_word_anchor_is_removed_without_losing_cell_text(self) -> None:
         source = (
             "<table><thead><tr><th>A</th></tr></thead><tbody><tr>"
             '<td>before <a id="_Cell"></a>body</td></tr></tbody></table>'
         )
-        self.assertEqual(_tables.html_table_to_pipe(source), "| A |\n| --- |\n| before body |\n")
+        assert _tables.html_table_to_pipe(source) == "| A |\n| --- |\n| before body |\n"
 
     def test_widths_fonts_and_mixed_cell_alignment_do_not_force_html(self) -> None:
         source = (
@@ -148,9 +142,7 @@ class SourceTableTests(unittest.TestCase):
             '<tr><td style="text-align: left; color: red;">1</td>'
             '<td style="background: gray">2</td></tr></tbody></table>'
         )
-        self.assertEqual(
-            _tables.html_table_to_pipe(source), "| A | B |\n| --- | --- |\n| 1 | 2 |\n"
-        )
+        assert _tables.html_table_to_pipe(source) == "| A | B |\n| --- | --- |\n| 1 | 2 |\n"
 
     def test_all_word_column_alignments_use_plain_markdown_separators(self) -> None:
         for alignment in ("left", "center", "right"):
@@ -163,18 +155,16 @@ class SourceTableTests(unittest.TestCase):
                         f"<table><tr><th {attribute}>Header</th></tr>"
                         f"<tr><td {attribute}>Value</td></tr></table>"
                     )
-                    self.assertEqual(
-                        _tables.html_table_to_pipe(source), "| Header |\n| --- |\n| Value |\n"
-                    )
+                    assert _tables.html_table_to_pipe(source) == "| Header |\n| --- |\n| Value |\n"
 
     def test_caption_alone_does_not_force_html(self) -> None:
         source = (
             "<table><caption>Table <strong>caption</strong></caption>"
             "<tbody><tr><td>Name</td></tr><tr><td>Value</td></tr></tbody></table>"
         )
-        self.assertEqual(
-            _tables.html_table_to_pipe(source),
-            "Table **caption**\n\n| Name |\n| --- |\n| Value |\n",
+        assert (
+            _tables.html_table_to_pipe(source)
+            == "Table **caption**\n\n| Name |\n| --- |\n| Value |\n"
         )
 
     def test_caption_cannot_create_a_heading_list_or_rule(self) -> None:
@@ -186,8 +176,8 @@ class SourceTableTests(unittest.TestCase):
                 )
                 assert rendered is not None
                 parsed = _reference.pandoc_html(rendered, _reference.require_pandoc())
-                self.assertEqual([node.tag for node in parsed], ["p", "table"])
-                self.assertEqual("".join(parsed[0].itertext()), caption)
+                assert [node.tag for node in parsed] == ["p", "table"]
+                assert "".join(parsed[0].itertext()) == caption
 
     def test_header_breaks_are_spaces_and_cells_lose_empty_edge_lines(self) -> None:
         source = (
@@ -197,11 +187,10 @@ class SourceTableTests(unittest.TestCase):
             "<tr><td><p>in</p><p></p><p>side</p></td><td><p>trailing</p><p></p></td><td></td></tr>"
             "</tbody></table>"
         )
-        self.assertEqual(
-            _tables.html_table_to_pipe(source),
-            r"| Addr \[31:24\] | Two paras | `a  b` c |"
+        assert (
+            _tables.html_table_to_pipe(source) == r"| Addr \[31:24\] | Two paras | `a  b` c |"
             "\n| --- | --- | --- |\n"
-            "| line1<br>line2 | leading | end |\n| in<br><br>side | trailing | |\n",
+            "| line1<br>line2 | leading | end |\n| in<br><br>side | trailing | |\n"
         )
 
     def test_inline_code_uses_markdown_and_preserves_pipes_and_backticks(self) -> None:
@@ -210,11 +199,10 @@ class SourceTableTests(unittest.TestCase):
             "<tr><td><code>a|b</code> and <code>`literal`</code></td></tr></tbody></table>"
         )
         rendered = _tables.html_table_to_pipe(source)
-        self.assertIsNotNone(rendered)
         assert rendered is not None
-        self.assertNotIn("<code>", rendered)
+        assert "<code>" not in rendered
         parsed = _reference.pandoc_html(rendered, _reference.require_pandoc())
-        self.assertEqual([node.text for node in parsed.iter("code")], ["a|b", "`literal`"])
+        assert [node.text for node in parsed.iter("code")] == ["a|b", "`literal`"]
 
     def test_structural_fallback_reports_reason_and_discards_widths(self) -> None:
         source = _reference.parse_html(
@@ -224,13 +212,13 @@ class SourceTableTests(unittest.TestCase):
         ).find("table")
         assert source is not None
         rendered = _tables.render_source_table(source)
-        self.assertFalse(rendered.markdown)
-        self.assertEqual(rendered.reason, "merged cells")
-        self.assertIn('colspan="2"', rendered.text)
-        self.assertNotIn("width", rendered.text)
-        self.assertNotIn("colgroup", rendered.text)
-        self.assertNotIn("align", rendered.text)
-        self.assertNotIn("style", rendered.text)
+        assert not rendered.markdown
+        assert rendered.reason == "merged cells"
+        assert 'colspan="2"' in rendered.text
+        assert "width" not in rendered.text
+        assert "colgroup" not in rendered.text
+        assert "align" not in rendered.text
+        assert "style" not in rendered.text
 
 
 class EmptyListItemTests(unittest.TestCase):
@@ -242,34 +230,27 @@ class EmptyListItemTests(unittest.TestCase):
         return _reference.inner_html(root), count
 
     def test_empty_bullets_go_wherever_they_are(self) -> None:
-        self.assertEqual(
-            self._omit(
-                "<ul><li></li><li><p>a</p></li><li><p></p></li><li>b</li><li><br></li></ul>"
-            ),
-            ("<ul><li><p>a</p></li><li>b</li></ul>", 3),
-        )
+        assert self._omit(
+            "<ul><li></li><li><p>a</p></li><li><p></p></li><li>b</li><li><br></li></ul>"
+        ) == ("<ul><li><p>a</p></li><li>b</li></ul>", 3)
 
     def test_empty_numbers_go_only_at_the_ends_so_others_keep_word_numbers(self) -> None:
-        self.assertEqual(
-            self._omit(
-                '<ol start="3"><li></li><li><p></p></li><li>c</li><li></li><li>d</li><li></li></ol>'
-            ),
-            ('<ol start="5"><li>c</li><li></li><li>d</li></ol>', 3),
-        )
+        assert self._omit(
+            '<ol start="3"><li></li><li><p></p></li><li>c</li><li></li><li>d</li><li></li></ol>'
+        ) == ('<ol start="5"><li>c</li><li></li><li>d</li></ol>', 3)
 
     def test_lists_left_empty_go_and_their_items_are_checked_again(self) -> None:
-        self.assertEqual(
-            self._omit("<ul><li>a<ul><li></li></ul></li><li><ul><li><p></p></li></ul></li></ul>"),
-            ("<ul><li>a</li></ul>", 3),
-        )
-        self.assertEqual(self._omit("<p>x</p><ol><li></li></ol>"), ("<p>x</p>", 1))
+        assert self._omit(
+            "<ul><li>a<ul><li></li></ul></li><li><ul><li><p></p></li></ul></li></ul>"
+        ) == ("<ul><li>a</li></ul>", 3)
+        assert self._omit("<p>x</p><ol><li></li></ol>") == ("<p>x</p>", 1)
 
     def test_items_with_anchors_pictures_or_tables_stay(self) -> None:
         markup = (
             '<ul><li><a id="target"></a></li><li><img src="a.png"></li>'
             "<li><table></table></li></ul>"
         )
-        self.assertEqual(self._omit(markup), (markup, 0))
+        assert self._omit(markup) == (markup, 0)
 
 
 class CellListTests(unittest.TestCase):
@@ -286,17 +267,17 @@ class CellListTests(unittest.TestCase):
         rendered = self._render(
             "<p>Update:</p><ul><li><p>Chapter 9</p></li><li>Chapter <strong>10</strong></li></ul>"
         )
-        self.assertTrue(rendered.markdown)
-        self.assertIn("| A | Update:<br>\u2022 Chapter 9<br>\u2022 Chapter **10** |", rendered.text)
+        assert rendered.markdown
+        assert "| A | Update:<br>• Chapter 9<br>• Chapter **10** |" in rendered.text
 
     def test_numbered_items_keep_word_numbers_as_decimals(self) -> None:
         rendered = self._render('<ol start="3" type="a"><li>x</li><li></li><li>y</li></ol>')
-        self.assertIn("| A | 3. x<br>4.<br>5. y |", rendered.text)
+        assert "| A | 3. x<br>4.<br>5. y |" in rendered.text
 
     def test_nested_lists_keep_the_table_html(self) -> None:
         nested = self._render("<ul><li>a<ul><li>b</li></ul></li></ul>")
-        self.assertFalse(nested.markdown)
-        self.assertEqual(nested.reason, "nested list in a cell")
+        assert not nested.markdown
+        assert nested.reason == "nested list in a cell"
 
     def test_further_item_paragraphs_and_indented_paragraphs_become_lines(self) -> None:
         rendered = self._render(
@@ -304,8 +285,8 @@ class CellListTests(unittest.TestCase):
             "<ol><li><p>a</p><p>more about a</p></li>"
             "<li><p>b</p><blockquote><blockquote><p>quoted</p></blockquote></blockquote></li></ol>"
         )
-        self.assertTrue(rendered.markdown)
-        self.assertIn("| A | Indented<br>1. a<br>more about a<br>2. b<br>quoted |", rendered.text)
+        assert rendered.markdown
+        assert "| A | Indented<br>1. a<br>more about a<br>2. b<br>quoted |" in rendered.text
 
     def test_quotes_and_items_holding_other_blocks_keep_the_table_html(self) -> None:
         for markup in (
@@ -315,13 +296,13 @@ class CellListTests(unittest.TestCase):
             "<ul><li>a<p>b</p></li></ul>",
         ):
             with self.subTest(markup=markup):
-                self.assertFalse(self._render(markup).markdown)
+                assert not self._render(markup).markdown
 
     def test_lines_read_back_as_text_not_lists(self) -> None:
         rendered = self._render("<ol><li>x</li><li>y</li></ol><ul><li>z</li></ul>")
         tree = _reference.pandoc_html(rendered.text, _reference.require_pandoc())
-        self.assertFalse([node for node in tree.iter() if node.tag in {"ol", "ul"}])
-        self.assertIn("1. x", "".join(tree.itertext()))
+        assert not [node for node in tree.iter() if node.tag in {"ol", "ul"}]
+        assert "1. x" in "".join(tree.itertext())
 
 
 class CellInlineTagTests(unittest.TestCase):
@@ -329,16 +310,16 @@ class CellInlineTagTests(unittest.TestCase):
         rendered = CellListTests._render(
             "x<sup>2</sup>, H<sub>2</sub>O, <mark>new</mark>, <u>a|b *c*</u>"
         )
-        self.assertTrue(rendered.markdown)
-        self.assertIn(
-            r"| A | x<sup>2</sup>, H<sub>2</sub>O, <mark>new</mark>, <u>a\|b \*c\*</u> |",
-            rendered.text,
+        assert rendered.markdown
+        assert (
+            r"| A | x<sup>2</sup>, H<sub>2</sub>O, <mark>new</mark>, <u>a\|b \*c\*</u> |"
+            in rendered.text
         )
         tree = _reference.pandoc_html(rendered.text, _reference.require_pandoc())
-        self.assertEqual("".join(next(tree.iter("u")).itertext()), "a|b *c*")
+        assert "".join(next(tree.iter("u")).itertext()) == "a|b *c*"
 
     def test_tags_with_attributes_keep_the_table_html(self) -> None:
-        self.assertFalse(CellListTests._render('x<sup title="note">1</sup>').markdown)
+        assert not CellListTests._render('x<sup title="note">1</sup>').markdown
 
 
 class CellListCheckTests(unittest.TestCase):
@@ -371,7 +352,7 @@ class CellListCheckTests(unittest.TestCase):
             "first<br>1. typed<br>plain",
         ):
             with self.subTest(markup=markup):
-                self.assertIsNone(self._problem(markup))
+                assert self._problem(markup) is None
 
     def test_other_changes_to_numbers_are_still_found(self) -> None:
         for markup in (
@@ -380,7 +361,7 @@ class CellListCheckTests(unittest.TestCase):
             "1. 1. first<br>1. typed<br>plain",
         ):
             with self.subTest(markup=markup):
-                self.assertEqual(self._problem(markup), "changed Word cell content")
+                assert self._problem(markup) == "changed Word cell content"
 
 
 def _texts(table_node: ET.Element) -> list[list[str]]:
@@ -420,8 +401,8 @@ class EmptyRowTests(unittest.TestCase):
                 row(cell(" "), cell("")),
             )
         )
-        self.assertEqual(dropped, 3)
-        self.assertEqual(tables, [[["A", "B"], ["a", "b"]]])
+        assert dropped == 3
+        assert tables == [[["A", "B"], ["a", "b"]]]
 
     def test_the_only_row_and_a_template_fill_in_row_stay(self) -> None:
         dropped, tables = self._dropped(
@@ -431,8 +412,8 @@ class EmptyRowTests(unittest.TestCase):
             ),
             table(row(cell(""), cell(""))),
         )
-        self.assertEqual(dropped, 2)
-        self.assertEqual(tables, [[["", ""]], [["Name", "Value"], ["", ""]], [["", ""]]])
+        assert dropped == 2
+        assert tables == [[["", ""]], [["Name", "Value"], ["", ""]], [["", ""]]]
 
     def test_rows_in_a_vertical_merge_stay(self) -> None:
         dropped, tables = self._dropped(
@@ -443,14 +424,14 @@ class EmptyRowTests(unittest.TestCase):
                 row(cell(""), cell("")),
             )
         )
-        self.assertEqual(dropped, 1)
-        self.assertEqual(len(tables[0]), 3)
+        assert dropped == 1
+        assert len(tables[0]) == 3
 
     def test_a_removed_rows_bookmarks_move_to_the_nearest_kept_row(self) -> None:
         marked = row(cell(bookmark("_Gone", "")), cell(""))
         body = ET.Element(W + "body")
         body.append(table(marked, row(cell("first"), cell("x")), row(cell("last"), cell("y"))))
-        self.assertEqual(_tables.drop_empty_rows(body), 1)
+        assert _tables.drop_empty_rows(body) == 1
         rows = body.findall(f"./{W}tbl/{W}tr")
         names = [node.get(W + "name") for node in rows[0].iter(W + "bookmarkStart")]
-        self.assertEqual(names, ["_Gone"])
+        assert names == ["_Gone"]

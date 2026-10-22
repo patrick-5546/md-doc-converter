@@ -11,6 +11,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import pytest
 from typing_extensions import override
 
 from md_doc_converter.rendering import pipeline as render
@@ -57,14 +58,14 @@ class RenderTest(unittest.TestCase):
             stdout = "true\n" if self.git_work_tree else ""
             return subprocess.CompletedProcess(command, 0 if stdout else 128, stdout, "")
         elif command[0] == "pandoc":
-            self.assertTrue(Path(command[-1]).is_file())
+            assert Path(command[-1]).is_file()
             styles = Path(command[command.index("--include-in-header") + 1])
             self.styles.append(styles.read_text(encoding="utf-8"))
             self.pandoc_calls.append((command, kwargs))
             Path(command[command.index("-o") + 1]).write_text("<html>rendered</html>")
         elif command[:2] == ["node", str(render.PDF_PRINTER)]:
             self.printer_commands.append(command)
-            self.assertTrue(Path(command[-1]).is_file())
+            assert Path(command[-1]).is_file()
             Path(command[command.index("-o") + 1]).write_bytes(b"PDF")
         else:
             self.fail(f"Unexpected command: {command}")
@@ -84,79 +85,75 @@ class RenderTest(unittest.TestCase):
     def test_input_name_preserves_dots_spaces_and_unicode(self) -> None:
         source = self.root / "cache.v2 \u03bc.md"
         source.touch()
-        self.assertEqual(
-            render.output_path(source, FORMAT.HTML), self.root / "cache.v2 \u03bc.html"
-        )
-        self.assertEqual(render.output_path(source, FORMAT.PDF), self.root / "cache.v2 \u03bc.pdf")
+        assert render.output_path(source, FORMAT.HTML) == self.root / "cache.v2 μ.html"
+        assert render.output_path(source, FORMAT.PDF) == self.root / "cache.v2 μ.pdf"
 
     def test_folder_output_goes_inside_the_folder_and_keeps_its_suffix(self) -> None:
         source = self.root / "cache.v2"
         source.mkdir()
-        self.assertEqual(render.output_path(source, FORMAT.PDF), source / "cache.v2.pdf")
-        self.assertEqual(
-            render.output_path(self.root / ".", FORMAT.HTML),
-            self.root / f"{self.root.name}.html",
+        assert render.output_path(source, FORMAT.PDF) == source / "cache.v2.pdf"
+        assert (
+            render.output_path(self.root / ".", FORMAT.HTML) == self.root / f"{self.root.name}.html"
         )
 
     def test_explicit_output_selects_directory_and_name(self) -> None:
         pdf = self.root / "reviews/selected.PDF"
-        self.assertEqual(render.output_path(self.source, FORMAT.PDF, pdf), pdf)
+        assert render.output_path(self.source, FORMAT.PDF, pdf) == pdf
         html = self.root / "reviews/selected.htm"
-        self.assertEqual(render.output_path(self.source, FORMAT.HTML, html), html)
+        assert render.output_path(self.source, FORMAT.HTML, html) == html
 
     def test_wrong_output_format_is_rejected(self) -> None:
         for output_format, output in ((FORMAT.PDF, "x.html"), (FORMAT.HTML, "x.pdf")):
-            with self.subTest(output=output), self.assertRaises(render.RenderError):
+            with self.subTest(output=output), pytest.raises(render.RenderError):
                 render.output_path(self.source, output_format, self.root / output)
 
     def test_output_cannot_alias_a_source_file(self) -> None:
         alias = self.root / "alias.html"
         alias.hardlink_to(self.source)
-        with self.assertRaises(render.RenderError):
+        with pytest.raises(render.RenderError):
             render.validate_destinations((alias,), (self.source,))
-        self.assertEqual(self.source.read_text(), "# Canonical Markdown\n")
+        assert self.source.read_text() == "# Canonical Markdown\n"
 
     def test_output_symlinks_and_directories_are_rejected(self) -> None:
         alias = self.root / "alias.html"
         alias.symlink_to(self.source)
         for destination in (alias, self.root):
-            with self.subTest(destination=destination), self.assertRaises(render.RenderError):
+            with self.subTest(destination=destination), pytest.raises(render.RenderError):
                 render.validate_destinations((destination,), (self.source,))
 
     def test_render_publishes_only_the_deliverable_and_keeps_scratch_private(self) -> None:
         with mock.patch("subprocess.run", side_effect=self.fake_run):
             pdf = self.render_document(FORMAT.PDF)
             html = self.render_document(FORMAT.HTML)
-        self.assertEqual(pdf, self.root / "cache.v2 spec.pdf")
-        self.assertEqual(pdf.read_bytes(), b"PDF")
-        self.assertEqual(html, self.root / "cache.v2 spec.html")
-        self.assertEqual(html.read_text(), "<html>rendered</html>")
-        self.assertEqual(
-            sorted(path.name for path in self.root.iterdir()),
-            ["cache.v2 spec.html", "cache.v2 spec.md", "cache.v2 spec.pdf"],
-        )
-        self.assertEqual(self.source.read_text(), "# Canonical Markdown\n")
-        self.assertTrue(self.prepared)
-        self.assertTrue(all(not path.exists() for path in self.prepared))
+        assert pdf == self.root / "cache.v2 spec.pdf"
+        assert pdf.read_bytes() == b"PDF"
+        assert html == self.root / "cache.v2 spec.html"
+        assert html.read_text() == "<html>rendered</html>"
+        assert sorted(path.name for path in self.root.iterdir()) == [
+            "cache.v2 spec.html",
+            "cache.v2 spec.md",
+            "cache.v2 spec.pdf",
+        ]
+        assert self.source.read_text() == "# Canonical Markdown\n"
+        assert self.prepared
+        assert all(not path.exists() for path in self.prepared)
         for command, options in self.pandoc_calls:
             scratch = Path(str(options["cwd"]))
-            self.assertFalse(scratch.exists())
-            self.assertTrue(Path(command[-1]).is_relative_to(scratch))
+            assert not scratch.exists()
+            assert Path(command[-1]).is_relative_to(scratch)
             environment = options["env"]
             assert isinstance(environment, dict)
-            self.assertTrue(environment["PATH"].startswith(str(self.tools.node_bin) + os.pathsep))
-            self.assertEqual(environment["PUPPETEER_CACHE_DIR"], str(self.tools.puppeteer_cache))
+            assert environment["PATH"].startswith(str(self.tools.node_bin) + os.pathsep)
+            assert environment["PUPPETEER_CACHE_DIR"] == str(self.tools.puppeteer_cache)
             # Only the stylesheet of the installed KaTeX is linked; the others are inlined.
             linked = [command[index + 1] for index, part in enumerate(command) if part == "--css"]
-            self.assertEqual(
-                linked, ["https://cdn.jsdelivr.net/npm/katex@0.19.0/dist/katex.min.css"]
-            )
+            assert linked == ["https://cdn.jsdelivr.net/npm/katex@0.19.0/dist/katex.min.css"]
 
     def test_an_unreadable_katex_version_fails_before_rendering(self) -> None:
         (self.tools.node_modules / "katex" / "package.json").write_text("{}")
         with (
             mock.patch("subprocess.run", side_effect=self.fake_run) as run,
-            self.assertRaisesRegex(render.RenderError, "installed KaTeX version"),
+            pytest.raises(render.RenderError, match="installed KaTeX version"),
         ):
             self.render_document(FORMAT.HTML)
         run.assert_not_called()
@@ -171,11 +168,11 @@ class RenderTest(unittest.TestCase):
             (str(render.PDF_TIMEOUT_MAX), render.PDF_TIMEOUT_MAX),
         ):
             with self.subTest(value=value):
-                self.assertEqual(render.pdf_timeout_seconds(value), expected)
+                assert render.pdf_timeout_seconds(value) == expected
         for value in ("-1", "1.5", "10s", "\u00b2", str(render.PDF_TIMEOUT_MAX + 1)):
             with (
                 self.subTest(value=value),
-                self.assertRaisesRegex(render.RenderError, "--pdf-timeout"),
+                pytest.raises(render.RenderError, match="--pdf-timeout"),
             ):
                 render.pdf_timeout_seconds(value)
 
@@ -183,24 +180,21 @@ class RenderTest(unittest.TestCase):
         with mock.patch("subprocess.run", side_effect=self.fake_run):
             self.render_document(FORMAT.PDF)
             self.render_document(FORMAT.PDF, options=Options(pdf_timeout="0"))
-        self.assertEqual(
-            [command[command.index("--timeout-seconds") + 1] for command in self.printer_commands],
-            [str(render.PDF_TIMEOUT_DEFAULT), "0"],
-        )
+        assert [
+            command[command.index("--timeout-seconds") + 1] for command in self.printer_commands
+        ] == [str(render.PDF_TIMEOUT_DEFAULT), "0"]
         for command in self.printer_commands:
-            self.assertEqual(
-                command[command.index("--node-modules") + 1], str(self.tools.node_modules)
-            )
+            assert command[command.index("--node-modules") + 1] == str(self.tools.node_modules)
 
     def test_invalid_pdf_timeout_fails_before_rendering_and_html_ignores_it(self) -> None:
         run = mock.Mock(side_effect=self.fake_run)
         with mock.patch("subprocess.run", run):
-            with self.assertRaisesRegex(render.RenderError, "MD_DOC_CONVERTER_PDF_TIMEOUT"):
+            with pytest.raises(render.RenderError, match="MD_DOC_CONVERTER_PDF_TIMEOUT"):
                 self.render_document(FORMAT.PDF, options=Options(pdf_timeout="ten"))
             run.assert_not_called()
             html = self.render_document(FORMAT.HTML, options=Options(pdf_timeout="ten"))
-        self.assertTrue(html.is_file())
-        self.assertFalse(self.printer_commands)
+        assert html.is_file()
+        assert not self.printer_commands
 
     def test_command_line_flags_override_environment_defaults(self) -> None:
         source = str(self.source)
@@ -216,37 +210,37 @@ class RenderTest(unittest.TestCase):
             contextlib.redirect_stdout(io.StringIO()) as messages,
             contextlib.redirect_stderr(io.StringIO()) as errors,
         ):
-            self.assertEqual(render.main([source], action="pdf"), 0)
-            self.assertEqual(
+            assert render.main([source], action="pdf") == 0
+            assert (
                 render.main(
                     [source, "--header", "Flag header", "--footer", "", "--pdf-timeout", "30"],
                     action="pdf",
-                ),
-                0,
+                )
+                == 0
             )
-            self.assertEqual(render.main([source, "--pdf-timeout", "-5"], action="pdf"), 1)
+            assert render.main([source, "--pdf-timeout", "-5"], action="pdf") == 1
         timeouts = [
             command[command.index("--timeout-seconds") + 1] for command in self.printer_commands
         ]
-        self.assertEqual(timeouts, ["45", "30"])
-        self.assertIn('content: "Header from environment"', self.styles[0])
-        self.assertIn('content: "Footer from environment"', self.styles[0])
-        self.assertIn('content: "Flag header"', self.styles[1])
-        self.assertNotIn("Footer from environment", self.styles[1])
-        self.assertIn(f"-> {self.root / 'cache.v2 spec.pdf'}", messages.getvalue())
-        self.assertIn("--pdf-timeout", errors.getvalue())
+        assert timeouts == ["45", "30"]
+        assert 'content: "Header from environment"' in self.styles[0]
+        assert 'content: "Footer from environment"' in self.styles[0]
+        assert 'content: "Flag header"' in self.styles[1]
+        assert "Footer from environment" not in self.styles[1]
+        assert f"-> {self.root / 'cache.v2 spec.pdf'}" in messages.getvalue()
+        assert "--pdf-timeout" in errors.getvalue()
 
     def test_extra_stylesheet_is_inlined_last_and_protected(self) -> None:
         extra = self.root / "extra.html"
         extra.write_text(".markdown-body { color: red; }\n")
         with mock.patch("subprocess.run", side_effect=self.fake_run):
             self.render_document(FORMAT.HTML, options=Options(extra_css=extra, header="Header"))
-            with self.assertRaisesRegex(render.RenderError, "would replace an input"):
+            with pytest.raises(render.RenderError, match="would replace an input"):
                 self.render_document(FORMAT.HTML, output=extra, options=Options(extra_css=extra))
-        self.assertGreater(self.styles[0].index("color: red"), self.styles[0].index('"Header"'))
-        self.assertEqual(extra.read_text(), ".markdown-body { color: red; }\n")
+        assert self.styles[0].index("color: red") > self.styles[0].index('"Header"')
+        assert extra.read_text() == ".markdown-body { color: red; }\n"
         extra.write_text("</STYLE><script>alert(1)</script>")
-        with self.assertRaisesRegex(render.RenderError, "must not contain"):
+        with pytest.raises(render.RenderError, match="must not contain"):
             self.render_document(FORMAT.HTML, options=Options(extra_css=extra))
 
     def test_conversion_failure_leaves_previous_deliverable_and_cleans_scratch(self) -> None:
@@ -260,15 +254,15 @@ class RenderTest(unittest.TestCase):
 
         with (
             mock.patch("subprocess.run", side_effect=fail_pandoc),
-            self.assertRaises(subprocess.CalledProcessError),
+            pytest.raises(subprocess.CalledProcessError),
         ):
             self.render_document(FORMAT.PDF)
-        self.assertEqual(destination.read_text(), "previous")
-        self.assertEqual(
-            sorted(path.name for path in self.root.iterdir()),
-            ["cache.v2 spec.md", "cache.v2 spec.pdf"],
-        )
-        self.assertTrue(all(not path.exists() for path in self.prepared))
+        assert destination.read_text() == "previous"
+        assert sorted(path.name for path in self.root.iterdir()) == [
+            "cache.v2 spec.md",
+            "cache.v2 spec.pdf",
+        ]
+        assert all(not path.exists() for path in self.prepared)
 
     def test_publication_failure_leaves_the_previous_file(self) -> None:
         destination = self.root / "doc.pdf"
@@ -284,14 +278,15 @@ class RenderTest(unittest.TestCase):
 
         with (
             mock.patch.object(Path, "replace", autospec=True, side_effect=fail_partial),
-            self.assertRaisesRegex(render.RenderError, "any previous file is unchanged"),
+            pytest.raises(render.RenderError, match="any previous file is unchanged"),
         ):
             render.publish(staged, destination)
-        self.assertEqual(destination.read_text(), "previous")
-        self.assertEqual(
-            {path.name for path in self.root.iterdir()},
-            {"cache.v2 spec.md", "doc.pdf", "staged.pdf"},
-        )
+        assert destination.read_text() == "previous"
+        assert {path.name for path in self.root.iterdir()} == {
+            "cache.v2 spec.md",
+            "doc.pdf",
+            "staged.pdf",
+        }
 
     def test_publication_keeps_the_rendered_file_mode(self) -> None:
         staged = self.root / "staged.pdf"
@@ -299,8 +294,8 @@ class RenderTest(unittest.TestCase):
         staged.chmod(0o640)
         destination = self.root / "new folder" / "doc.pdf"
         render.publish(staged, destination)
-        self.assertEqual(destination.read_text(), "new")
-        self.assertEqual(destination.stat().st_mode & 0o777, 0o640)
+        assert destination.read_text() == "new"
+        assert destination.stat().st_mode & 511 == 416
 
     def test_intermediates_are_kept_on_request_even_when_rendering_fails(self) -> None:
         kept = self.root / "debug"
@@ -309,16 +304,15 @@ class RenderTest(unittest.TestCase):
             contextlib.redirect_stderr(io.StringIO()) as messages,
         ):
             self.render_document(FORMAT.PDF, options=Options(keep_intermediates=kept))
-        self.assertEqual(
-            sorted(str(path.relative_to(kept)) for path in kept.rglob("*") if path.is_file()),
-            [
-                "markdown/cache.v2 spec.md",
-                "page-styles.html",
-                "render/cache.v2 spec.html",
-                "render/cache.v2 spec.pdf",
-            ],
-        )
-        self.assertIn(str(kept), messages.getvalue())
+        assert sorted(
+            str(path.relative_to(kept)) for path in kept.rglob("*") if path.is_file()
+        ) == [
+            "markdown/cache.v2 spec.md",
+            "page-styles.html",
+            "render/cache.v2 spec.html",
+            "render/cache.v2 spec.pdf",
+        ]
+        assert str(kept) in messages.getvalue()
 
         failed = self.root / "failed"
 
@@ -330,11 +324,11 @@ class RenderTest(unittest.TestCase):
         with (
             mock.patch("subprocess.run", side_effect=fail_pandoc),
             contextlib.redirect_stderr(io.StringIO()),
-            self.assertRaises(subprocess.CalledProcessError),
+            pytest.raises(subprocess.CalledProcessError),
         ):
             self.render_document(FORMAT.HTML, options=Options(keep_intermediates=failed))
-        self.assertTrue((failed / "markdown/cache.v2 spec.md").is_file())
-        self.assertTrue((failed / "page-styles.html").is_file())
+        assert (failed / "markdown/cache.v2 spec.md").is_file()
+        assert (failed / "page-styles.html").is_file()
 
     def test_intermediate_directory_must_be_new_or_empty_and_separate(self) -> None:
         nonempty = self.root / "nonempty"
@@ -353,13 +347,13 @@ class RenderTest(unittest.TestCase):
             with (
                 self.subTest(kept=kept),
                 mock.patch("subprocess.run", side_effect=self.fake_run),
-                self.assertRaisesRegex(render.RenderError, message),
+                pytest.raises(render.RenderError, match=message),
             ):
                 self.render_document(
                     FORMAT.HTML, source=source, options=Options(keep_intermediates=kept)
                 )
-        self.assertEqual((nonempty / "keep.txt").read_text(), "keep")
-        self.assertFalse((folder / "debug").exists())
+        assert (nonempty / "keep.txt").read_text() == "keep"
+        assert not (folder / "debug").exists()
 
     def test_missing_prerequisites_fail_before_any_rendering(self) -> None:
         run = mock.Mock(side_effect=self.fake_run)
@@ -367,11 +361,11 @@ class RenderTest(unittest.TestCase):
         with (
             mock.patch.object(render, "render_problems", return_value=[problem]),
             mock.patch("subprocess.run", run),
-            self.assertRaisesRegex(render.RenderError, "(?s)prerequisites are missing.*doctor"),
+            pytest.raises(render.RenderError, match=r"(?s)prerequisites are missing.*doctor"),
         ):
             self.render_document(FORMAT.PDF)
         run.assert_not_called()
-        self.assertFalse((self.root / "cache.v2 spec.pdf").exists())
+        assert not (self.root / "cache.v2 spec.pdf").exists()
 
     def test_gitignore_filtering_defaults_to_folders_in_git_work_trees(self) -> None:
         folder = self.root / "docs"
@@ -393,7 +387,7 @@ class RenderTest(unittest.TestCase):
                 self.render_document(
                     FORMAT.HTML, source=source, options=Options(respect_gitignore=choice)
                 )
-                self.assertEqual("--respect-gitignore" in self.preprocess_commands[-1], expected)
+                assert ("--respect-gitignore" in self.preprocess_commands[-1]) == expected
 
 
 class TableCodePipeFilterTest(unittest.TestCase):
@@ -401,7 +395,7 @@ class TableCodePipeFilterTest(unittest.TestCase):
         defaults = asset_path("pandoc-defaults.yaml").read_text(encoding="utf-8")
         reader = re.search(r"^from: (\S+)$", defaults, re.MULTILINE)
         assert reader is not None
-        self.assertIn("table-code-pipes.lua", defaults)
+        assert "table-code-pipes.lua" in defaults
         result = subprocess.run(
             [
                 "pandoc",
@@ -414,8 +408,8 @@ class TableCodePipeFilterTest(unittest.TestCase):
             text=True,
             check=True,
         )
-        self.assertIn("<code>a|b</code>", result.stdout)
-        self.assertIn("<code>c\\|d</code>", result.stdout)
+        assert "<code>a|b</code>" in result.stdout
+        assert "<code>c\\|d</code>" in result.stdout
 
 
 if __name__ == "__main__":

@@ -56,7 +56,7 @@ class LinkValidationTests(unittest.TestCase):
             ),
         ):
             with self.subTest(expected=expected):
-                self.assertEqual(self.validate_external_link(expected, rendered), [])
+                assert self.validate_external_link(expected, rendered) == []
 
     def test_distinct_reserved_delimiters_and_percent_sequences_are_not_equivalent(self) -> None:
         for expected, rendered in (
@@ -74,13 +74,9 @@ class LinkValidationTests(unittest.TestCase):
                 details = [
                     detail for _reason, detail in self.validate_external_link(expected, rendered)
                 ]
-                self.assertTrue(
-                    any(
-                        "do not preserve every recovered Word hyperlink" in detail
-                        for detail in details
-                    ),
-                    details,
-                )
+                assert any(
+                    "do not preserve every recovered Word hyperlink" in detail for detail in details
+                ), details
 
     def test_markdown_emission_preserves_entity_shaped_query_text(self) -> None:
         target = "https://example.test/?q=one&copy;=two&notit=three"
@@ -89,12 +85,10 @@ class LinkValidationTests(unittest.TestCase):
 
         rendered = _tables.table_inline(link)
 
-        self.assertIsNotNone(rendered)
         assert rendered is not None
-        self.assertEqual(
-            _validation.collect_references(_reference.pandoc_html(rendered, self.pandoc)).links,
-            [target],
-        )
+        assert _validation.collect_references(
+            _reference.pandoc_html(rendered, self.pandoc)
+        ).links == [target]
 
 
 class ParagraphSplitTests(unittest.TestCase):
@@ -126,7 +120,7 @@ class ParagraphSplitTests(unittest.TestCase):
         }
         for markdown, expected in cases.items():
             with self.subTest(markdown=markdown):
-                self.assertEqual(self.split(markdown), expected)
+                assert self.split(markdown) == expected
 
     def test_pieces_with_only_filler_stay_with_a_neighbour(self) -> None:
         cases = {
@@ -137,7 +131,7 @@ class ParagraphSplitTests(unittest.TestCase):
         }
         for markdown, expected in cases.items():
             with self.subTest(markdown=markdown):
-                self.assertEqual(self.split(markdown, "MARK"), expected)
+                assert self.split(markdown, "MARK") == expected
 
     def test_headings_and_tables_keep_their_line_breaks(self) -> None:
         line: JSONValue = [{"t": "Str", "c": "a"}, {"t": "LineBreak"}, {"t": "Str", "c": "b"}]
@@ -145,7 +139,7 @@ class ParagraphSplitTests(unittest.TestCase):
         table: JSONValue = {"t": "Table", "c": [["", [], []], [None, []], [], [], [], [line]]}
         blocks: JSONValue = [heading, table]
 
-        self.assertEqual(_reference.split_paragraphs_at_line_breaks(blocks), blocks)
+        assert _reference.split_paragraphs_at_line_breaks(blocks) == blocks
 
 
 class TableCodePipeTests(unittest.TestCase):
@@ -158,7 +152,7 @@ class TableCodePipeTests(unittest.TestCase):
             "Table code test",
             input_text=json.dumps(_reference.protect_backslashes(tree)),
         )
-        self.assertIn("`a\\|b`", written)
-        self.assertIn("``x`\\|`y``", written)
-        self.assertIn("Outside `c|d`.", written)
-        self.assertEqual(_reference.markdown_ast(written, pandoc, "Table code test").ast, tree)
+        assert "`a\\|b`" in written
+        assert "``x`\\|`y``" in written
+        assert "Outside `c|d`." in written
+        assert _reference.markdown_ast(written, pandoc, "Table code test").ast == tree

@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 from xml.etree import ElementTree as ET
 
+import pytest
 from typing_extensions import override
 
 from md_doc_converter.converters.docx import media as _media
@@ -41,12 +42,12 @@ class EmfWorkflowTest(unittest.TestCase):
         for name in ("width", "height"):
             size = _media._length_mm(root.get(name))
             assert size is not None
-            self.assertAlmostEqual(size, 10, delta=0.1)
+            assert size == pytest.approx(10, abs=0.1)
 
     def test_real_synthetic_emf_conversion(self) -> None:
         stats = _pipeline.convert_docx(self.source)
-        self.assertIn("diagram.svg", self.source.with_suffix(".md").read_text(encoding="utf-8"))
-        self.assertEqual(stats["unique_images"], 1)
+        assert "diagram.svg" in self.source.with_suffix(".md").read_text(encoding="utf-8")
+        assert stats["unique_images"] == 1
         self.assert_cropped_to_the_drawing()
 
     def test_real_drawings_of_a_document_convert_in_one_run(self) -> None:
@@ -71,9 +72,9 @@ class EmfWorkflowTest(unittest.TestCase):
 
         with patch.object(_reference, "run_command", record):
             stats = _pipeline.convert_docx(self.source)
-        self.assertEqual(stats["unique_images"], 3)
-        self.assertEqual(descriptions.count("EMF-to-SVG conversion"), 1)
-        self.assertNotIn("EMF-to-PDF fallback conversion", descriptions)
+        assert stats["unique_images"] == 3
+        assert descriptions.count("EMF-to-SVG conversion") == 1
+        assert "EMF-to-PDF fallback conversion" not in descriptions
         for name in names:
             self.assert_cropped_to_the_drawing(name)
 
@@ -95,5 +96,5 @@ class EmfWorkflowTest(unittest.TestCase):
             contextlib.redirect_stderr(io.StringIO()),
         ):
             _pipeline.convert_docx(self.source)
-        self.assertIn("diagram.svg", self.source.with_suffix(".md").read_text(encoding="utf-8"))
+        assert "diagram.svg" in self.source.with_suffix(".md").read_text(encoding="utf-8")
         self.assert_cropped_to_the_drawing()

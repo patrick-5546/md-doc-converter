@@ -19,6 +19,7 @@ from typing import NoReturn
 from unittest.mock import patch
 from xml.etree import ElementTree as ET
 
+import pytest
 from typing_extensions import override
 
 from md_doc_converter.converters.docx import diagnostics as _diagnostics
@@ -139,16 +140,16 @@ class ConversionTests(unittest.TestCase):
             ]
         )
         # Headings lose trailing punctuation and skipped levels; bold labels keep theirs.
-        self.assertIn("# Title\n", result)
-        self.assertIn("## Gap\n", result)
-        self.assertIn("**1)**\n\nDo the thing.", result)
-        self.assertIn("**Closed.**", result)
-        self.assertIn("# Contents", result)
-        self.assertIn("Original index entry", result)
-        self.assertEqual(result.count("## Flow\n"), 2)
-        self.assertEqual(stats["qualified_headings"], 0)
-        self.assertTrue(result.endswith("\n"))
-        self.assertFalse(result.endswith("\n\n"))
+        assert "# Title\n" in result
+        assert "## Gap\n" in result
+        assert "**1)**\n\nDo the thing." in result
+        assert "**Closed.**" in result
+        assert "# Contents" in result
+        assert "Original index entry" in result
+        assert result.count("## Flow\n") == 2
+        assert stats["qualified_headings"] == 0
+        assert result.endswith("\n")
+        assert not result.endswith("\n\n")
 
     def test_ordered_list_start_and_nesting_survive_conversion_and_splitting(self) -> None:
         write_docx(
@@ -165,7 +166,7 @@ class ConversionTests(unittest.TestCase):
         _pipeline.convert_docx(self.source, split_depth=1)
         content = (self.root / "Synthetic Guide" / "01-numbers.md").read_text(encoding="utf-8")
         shape = _recovery._list_shape(_reference.pandoc_html(content, self.pandoc))
-        self.assertEqual(shape, [("ol", "1", 7, 2), ("ol", "1", 7, 2)])
+        assert shape == [("ol", "1", 7, 2), ("ol", "1", 7, 2)]
 
     def test_unordered_word_lists_are_dash_markdown(self) -> None:
         write_docx(
@@ -175,13 +176,13 @@ class ConversionTests(unittest.TestCase):
         )
         _pipeline.convert_docx(self.source)
         content = self.source.with_suffix(".md").read_text(encoding="utf-8")
-        self.assertIn("- ", content)
-        self.assertNotIn("* ", content)
-        self.assertNotIn("+ ", content)
-        self.assertEqual(
-            _recovery._list_shape(_reference.pandoc_html(content, self.pandoc)),
-            [("ul", "1", 1, 2), ("ul", "1", 1, 1)],
-        )
+        assert "- " in content
+        assert "* " not in content
+        assert "+ " not in content
+        assert _recovery._list_shape(_reference.pandoc_html(content, self.pandoc)) == [
+            ("ul", "1", 1, 2),
+            ("ul", "1", 1, 1),
+        ]
 
     def test_nondecimal_ordered_list_becomes_a_numbered_markdown_list(self) -> None:
         # Markdown numbers lists only with decimals; Word's letters become numbers, not HTML.
@@ -192,11 +193,11 @@ class ConversionTests(unittest.TestCase):
         )
         _pipeline.convert_docx(self.source)
         content = self.source.with_suffix(".md").read_text(encoding="utf-8")
-        self.assertNotIn("<", content)
-        self.assertRegex(content, r"^3\.\s+First\n+4\.\s+Second\n")
-        self.assertEqual(
-            _recovery._list_shape(_reference.pandoc_html(content, self.pandoc)), [("ol", "1", 3, 2)]
-        )
+        assert "<" not in content
+        assert re.search(r"^3\.\s+First\n+4\.\s+Second\n", content)
+        assert _recovery._list_shape(_reference.pandoc_html(content, self.pandoc)) == [
+            ("ol", "1", 3, 2)
+        ]
 
     def test_list_defined_by_a_word_list_style_is_a_list(self) -> None:
         # Pandoc ignores w:numStyleLink; the converter resolves it for both converters.
@@ -210,12 +211,12 @@ class ConversionTests(unittest.TestCase):
             styles=(word_style("Bullets", "numbering", number="1"),),
             extras={"word/numbering.xml": numbering_xml("bullet", 1, style_link="Bullets")},
         )
-        self.assertEqual(report.status("lists"), "applied")
-        self.assertRegex(result, r"Intro\n\n- Alpha\n+- Beta\n\nOutro")
-        self.assertEqual(
-            _recovery._list_shape(_reference.pandoc_html(result, self.pandoc)), [("ul", "1", 1, 2)]
-        )
-        self.assertNotIn("lists:", warnings)
+        assert report.status("lists") == "applied"
+        assert re.search(r"Intro\n\n- Alpha\n+- Beta\n\nOutro", result)
+        assert _recovery._list_shape(_reference.pandoc_html(result, self.pandoc)) == [
+            ("ul", "1", 1, 2)
+        ]
+        assert "lists:" not in warnings
 
     def test_inherited_style_numbering_replaces_plain_markitdown_paragraphs(self) -> None:
         # Mammoth gives paragraphs numbered through a basedOn style as plain paragraphs.
@@ -232,12 +233,12 @@ class ConversionTests(unittest.TestCase):
             ),
             extras={"word/numbering.xml": numbering_xml("bullet", 1)},
         )
-        self.assertEqual(report.status("lists"), "applied")
-        self.assertRegex(result, r"Intro\n\n- Alpha\n+- Beta\n\nOutro")
-        self.assertEqual(
-            _recovery._list_shape(_reference.pandoc_html(result, self.pandoc)), [("ul", "1", 1, 2)]
-        )
-        self.assertNotIn("lists:", warnings)
+        assert report.status("lists") == "applied"
+        assert re.search(r"Intro\n\n- Alpha\n+- Beta\n\nOutro", result)
+        assert _recovery._list_shape(_reference.pandoc_html(result, self.pandoc)) == [
+            ("ul", "1", 1, 2)
+        ]
+        assert "lists:" not in warnings
 
     def test_paragraphs_without_a_defined_word_list_are_not_list_items(self) -> None:
         body = [paragraph("Intro"), numbered("Alpha", number="9"), numbered("Beta", number="9")]
@@ -249,9 +250,9 @@ class ConversionTests(unittest.TestCase):
                 result, report, warnings = self.convert_reported(
                     body, output=self.root / f"{name}.md", extras=extras
                 )
-                self.assertEqual(report.status("lists"), "not needed")
-                self.assertIn("Intro\n\nAlpha\n\nBeta", result)
-                self.assertNotIn("lists:", warnings)
+                assert report.status("lists") == "not needed"
+                assert "Intro\n\nAlpha\n\nBeta" in result
+                assert "lists:" not in warnings
 
     def test_lists_after_fields_pandoc_cannot_close_keep_word_numbering(self) -> None:
         # Pandoc leaves such a field open and moves later list items' text out of the list.
@@ -294,13 +295,13 @@ class ConversionTests(unittest.TestCase):
             ],
             extras={"word/numbering.xml": numbering_xml()},
         )
-        self.assertEqual(report.status("lists"), "applied")
-        self.assertRegex(result, r"Intro\n\n7\.\s+Alpha\n+8\.\s+Beta\n\nOutro")
+        assert report.status("lists") == "applied"
+        assert re.search(r"Intro\n\n7\.\s+Alpha\n+8\.\s+Beta\n\nOutro", result)
         for text in ("[Scope](#scope)", "Revision 2", "Figure 1"):
-            self.assertIn(f"\n{text}\n", f"\n{result}")
-        self.assertIn(
-            "  fields: applied (2 field(s) unwrapped, 1 table-of-contents page number(s) dropped)",
-            report.summary(),
+            assert f"\n{text}\n" in f"\n{result}"
+        assert (
+            "  fields: applied (2 field(s) unwrapped, 1 table-of-contents page number(s) dropped)"
+            in report.summary()
         )
 
     def test_lists_that_start_at_a_nested_level_keep_word_numbering(self) -> None:
@@ -309,9 +310,9 @@ class ConversionTests(unittest.TestCase):
             [paragraph("Intro"), numbered("Alpha", 1), numbered("Beta", 1), paragraph("Outro")],
             extras={"word/numbering.xml": numbering_xml()},
         )
-        self.assertEqual(report.status("lists"), "applied")
-        self.assertRegex(result, r"Intro\n\n7\.\s+Alpha\n+8\.\s+Beta\n\nOutro")
-        self.assertNotIn("lists:", warnings)
+        assert report.status("lists") == "applied"
+        assert re.search(r"Intro\n\n7\.\s+Alpha\n+8\.\s+Beta\n\nOutro", result)
+        assert "lists:" not in warnings
 
     def test_consecutive_lists_at_a_nested_level_stay_separate_lists(self) -> None:
         # MarkItDown nests the second list in the first, four spaces in: "    1. B one".
@@ -326,13 +327,13 @@ class ConversionTests(unittest.TestCase):
             ],
             extras={"word/numbering.xml": numbering_xml(second="bullet")},
         )
-        self.assertEqual(report.status("lists"), "applied")
-        self.assertRegex(
-            result, r"Intro\n\n- A one\n+- A two\n\n7\.\s+B one\n+8\.\s+B two\n\nOutro"
+        assert report.status("lists") == "applied"
+        assert re.search(
+            r"Intro\n\n- A one\n+- A two\n\n7\.\s+B one\n+8\.\s+B two\n\nOutro", result
         )
         parsed = _reference.pandoc_html(result, self.pandoc)
-        self.assertEqual([node.tag for node in parsed], ["p", "ul", "ol", "p"])
-        self.assertNotIn("lists:", warnings)
+        assert [node.tag for node in parsed] == ["p", "ul", "ol", "p"]
+        assert "lists:" not in warnings
 
     def test_numbered_outline_level_heading_stays_a_list_item(self) -> None:
         # Pandoc and MarkItDown read it as a list item; only a "heading N" style is a heading.
@@ -344,15 +345,14 @@ class ConversionTests(unittest.TestCase):
             [paragraph("Intro"), numbered("Alpha"), numbered("Beta"), outlined, paragraph("Outro")],
             extras={"word/numbering.xml": numbering_xml()},
         )
-        self.assertEqual(report.status("lists"), "applied")
-        self.assertRegex(result, r"Intro\n\n7\.\s+Alpha\n+8\.\s+Beta\n+9\.\s+Gamma\n\nOutro")
-        self.assertIn(
+        assert report.status("lists") == "applied"
+        assert re.search(r"Intro\n\n7\.\s+Alpha\n+8\.\s+Beta\n+9\.\s+Gamma\n\nOutro", result)
+        assert (
             "    not applied (1): Word numbers this outline-level heading as a list item; "
-            "kept as a list item",
-            report.summary(),
+            "kept as a list item" in report.summary()
         )
-        self.assertEqual(report.status("cleanup"), "not needed")
-        self.assertNotIn("lists:", warnings)
+        assert report.status("cleanup") == "not needed"
+        assert "lists:" not in warnings
 
     def test_headings_lose_trailing_punctuation_that_list_items_keep(self) -> None:
         outlined = numbered("Gamma.")
@@ -370,17 +370,16 @@ class ConversionTests(unittest.TestCase):
             ],
             extras={"word/numbering.xml": numbering_xml()},
         )
-        self.assertIn("# Overview\n", result)
-        self.assertIn("## Why?\n", result)
-        self.assertIn("## Steps\n", result)
-        self.assertRegex(result, r"7\.\s+Alpha\.\n+8\.\s+Gamma\.")
-        self.assertIn("[Back to the steps](#steps)", result)
-        self.assertIn(
+        assert "# Overview\n" in result
+        assert "## Why?\n" in result
+        assert "## Steps\n" in result
+        assert re.search(r"7\.\s+Alpha\.\n+8\.\s+Gamma\.", result)
+        assert "[Back to the steps](#steps)" in result
+        assert (
             "  headings: partial (3 applied, 2 heading(s) with trailing punctuation trimmed, "
-            "1 not applied)",
-            report.summary(),
+            "1 not applied)" in report.summary()
         )
-        self.assertEqual(report.status("checks"), "applied")
+        assert report.status("checks") == "applied"
 
     def test_skipped_heading_levels_close_with_their_subheadings(self) -> None:
         result, report, _warnings = self.convert_reported(
@@ -396,21 +395,18 @@ class ConversionTests(unittest.TestCase):
             ]
         )
         levels = re.findall(r"^(#+) (.+)$", result, re.MULTILINE)
-        self.assertEqual(
-            levels,
-            [
-                ("##", "Start"),
-                ("#", "One"),
-                ("##", "Three"),
-                ("###", "Four"),
-                ("##", "Three again"),
-                ("##", "Two"),
-                ("###", "Five"),
-            ],
-        )
-        self.assertIn("<h4>In a cell</h4>", result)
-        self.assertIn("4 heading(s) moved up to close a skipped level", "\n".join(report.summary()))
-        self.assertEqual(report.status("checks"), "applied")
+        assert levels == [
+            ("##", "Start"),
+            ("#", "One"),
+            ("##", "Three"),
+            ("###", "Four"),
+            ("##", "Three again"),
+            ("##", "Two"),
+            ("###", "Five"),
+        ]
+        assert "<h4>In a cell</h4>" in result
+        assert "4 heading(s) moved up to close a skipped level" in "\n".join(report.summary())
+        assert report.status("checks") == "applied"
 
     def test_bare_web_and_e_mail_addresses_become_autolinks(self) -> None:
         result, report, _warnings = self.convert_reported(
@@ -427,14 +423,12 @@ class ConversionTests(unittest.TestCase):
             ],
             relations=(("site", "hyperlink", "https://linked.example", "External"),),
         )
-        self.assertIn("Owner: Jane <jane@example.com>; see <https://example.com/spec>.", result)
-        self.assertIn("<https://linked.example>", result)
-        self.assertIn("| <https://cell.example/p> |", result)
-        self.assertIn("| Reviewer <reviewer@cell.example> |", result)
-        self.assertIn(
-            "  links: applied (1, 4 bare web or e-mail address(es) linked)", report.summary()
-        )
-        self.assertEqual(report.status("checks"), "applied")
+        assert "Owner: Jane <jane@example.com>; see <https://example.com/spec>." in result
+        assert "<https://linked.example>" in result
+        assert "| <https://cell.example/p> |" in result
+        assert "| Reviewer <reviewer@cell.example> |" in result
+        assert "  links: applied (1, 4 bare web or e-mail address(es) linked)" in report.summary()
+        assert report.status("checks") == "applied"
 
     def explained(
         self, words: str, name: str, *, explain: bool = True
@@ -480,7 +474,7 @@ class ConversionTests(unittest.TestCase):
         converted, report = self.explained("zephyr quill", "first")
         _other, other = self.explained("quokka marble", "second")
         lines = report.explanation()
-        self.assertEqual(lines, other.explanation())
+        assert lines == other.explanation()
         for expected in (
             "docx-to-md: explain (fixed labels and counts only; no document text)",
             (
@@ -508,14 +502,14 @@ class ConversionTests(unittest.TestCase):
             "    file type: docx 1",
             "    on disk: no 1",
         ):
-            self.assertIn(expected, lines)
+            assert expected in lines
         shared = "\n".join(lines).casefold()
         for word in ("zephyr", "quill", "quokka", "marble", "zanzibar", "xylophone", "guide"):
-            self.assertNotIn(word, shared)
+            assert word not in shared
         quiet, plain = self.explained("zephyr quill", "third", explain=False)
-        self.assertEqual(quiet, converted)
-        self.assertEqual(plain.summary(), report.summary())
-        self.assertEqual((plain.explanation(), plain.items, plain.events), ([], {}, []))
+        assert quiet == converted
+        assert plain.summary() == report.summary()
+        assert (plain.explanation(), plain.items, plain.events) == ([], {}, [])
 
     def test_explain_is_kept_in_the_diagnostic_report(self) -> None:
         write_docx(self.source, [hyperlink("Zephyr", anchor="Zanzibar_spot")])
@@ -532,10 +526,10 @@ class ConversionTests(unittest.TestCase):
                     )
                 data = json.loads((diagnostics / "diagnostics.json").read_text(encoding="utf-8"))
                 if explain:
-                    self.assertEqual(data["explain"], report.explanation())
-                    self.assertIn("    bookmark: nowhere 1", data["explain"])
+                    assert data["explain"] == report.explanation()
+                    assert "    bookmark: nowhere 1" in data["explain"]
                 else:
-                    self.assertNotIn("explain", data)
+                    assert "explain" not in data
 
     def test_numbering_off_paragraphs_stay_with_the_list_item_before_them(self) -> None:
         result, report, warnings = self.convert_reported(
@@ -550,11 +544,11 @@ class ConversionTests(unittest.TestCase):
             ],
             extras={"word/numbering.xml": numbering_xml()},
         )
-        self.assertEqual(report.status("lists"), "applied")
-        self.assertRegex(
-            result, r"7\.\s+Alpha\n+ {4}More alpha\n+8\.\s+Beta\n+ {4}More beta\n\nOutro\n\nLoose"
+        assert report.status("lists") == "applied"
+        assert re.search(
+            r"7\.\s+Alpha\n+ {4}More alpha\n+8\.\s+Beta\n+ {4}More beta\n\nOutro\n\nLoose", result
         )
-        self.assertNotIn("lists:", warnings)
+        assert "lists:" not in warnings
 
     def test_paragraphs_pandoc_reads_as_headings_are_not_list_items(self) -> None:
         contents = word_style("TOCHeading", based_on="Heading1", number="1")
@@ -571,9 +565,9 @@ class ConversionTests(unittest.TestCase):
             styles=(contents,),
             extras={"word/numbering.xml": numbering_xml()},
         )
-        self.assertEqual(report.status("lists"), "applied")
-        self.assertIn("Contents", result)
-        self.assertNotIn("lists:", warnings)
+        assert report.status("lists") == "applied"
+        assert "Contents" in result
+        assert "lists:" not in warnings
 
     def test_backticks_backslashes_and_hashes_keep_their_text(self) -> None:
         texts = (
@@ -591,12 +585,12 @@ class ConversionTests(unittest.TestCase):
         def shown(tag: str) -> list[str]:
             return [" ".join("".join(node.itertext()).split()) for node in parsed.iter(tag)]
 
-        self.assertEqual(shown("p")[: len(texts)], list(texts))
-        self.assertEqual(shown("li"), list(items))
-        self.assertFalse(list(parsed.iter("code")))
-        self.assertFalse(list(parsed.iter("h1")))
-        self.assertEqual(report.status("lists"), "applied")
-        self.assertIn("  literal-text: applied (10)", report.summary())
+        assert shown("p")[: len(texts)] == list(texts)
+        assert shown("li") == list(items)
+        assert not list(parsed.iter("code"))
+        assert not list(parsed.iter("h1"))
+        assert report.status("lists") == "applied"
+        assert "  literal-text: applied (10)" in report.summary()
 
     def test_brackets_stay_text_rather_than_links(self) -> None:
         result, report, _warnings = self.convert_reported(
@@ -608,12 +602,12 @@ class ConversionTests(unittest.TestCase):
             extras={"word/numbering.xml": numbering_xml()},
         )
         parsed = _reference.pandoc_html(result, self.pandoc)
-        self.assertEqual(_validation.collect_references(parsed).links, [])
+        assert _validation.collect_references(parsed).links == []
         visible = "".join(parsed.itertext())
         for literal in ("Set bit[3](W1C) and see [note].", "Clear field[7:0](RW) first."):
-            self.assertIn(literal, visible)
-        self.assertEqual(report.status("lists"), "applied")
-        self.assertEqual(report.status("checks"), "applied")
+            assert literal in visible
+        assert report.status("lists") == "applied"
+        assert report.status("checks") == "applied"
 
     def test_symbol_fonts_and_unclosable_emphasis_keep_lists(self) -> None:
         def styled(text: str, *, font: str | None = None, bold: bool = False) -> ET.Element:
@@ -643,14 +637,14 @@ class ConversionTests(unittest.TestCase):
             ],
             extras={"word/numbering.xml": numbering_xml()},
         )
-        self.assertIn("Passed \u2713\n", result)
-        self.assertIn("Reviewed \u2713", result)
-        self.assertIn("A \u2192 B", result)
-        self.assertNotIn("\u00fc", result)
-        self.assertIn("<strong>Note:</strong>next", result)
-        self.assertEqual(report.status("lists"), "applied")
-        self.assertIn("  symbols: applied (3)", report.summary())
-        self.assertNotIn("lists:", warnings)
+        assert "Passed ✓\n" in result
+        assert "Reviewed ✓" in result
+        assert "A → B" in result
+        assert "ü" not in result
+        assert "<strong>Note:</strong>next" in result
+        assert report.status("lists") == "applied"
+        assert "  symbols: applied (3)" in report.summary()
+        assert "lists:" not in warnings
 
     def test_vml_text_boxes_in_list_items_keep_the_list(self) -> None:
         # Pandoc splits a paragraph around a VML text box; MarkItDown puts its text after.
@@ -661,8 +655,8 @@ class ConversionTests(unittest.TestCase):
             [paragraph("Intro"), item, numbered("Beta"), paragraph("Outro")],
             extras={"word/numbering.xml": numbering_xml()},
         )
-        self.assertEqual(report.status("lists"), "applied")
-        self.assertRegex(result, r"7\.\s+Lead tail\n\nBox label\n\n8\.\s+Beta\n")
+        assert report.status("lists") == "applied"
+        assert re.search(r"7\.\s+Lead tail\n\nBox label\n\n8\.\s+Beta\n", result)
 
     def test_lists_inside_tables_keep_word_numbers(self) -> None:
         write_docx(
@@ -678,7 +672,7 @@ class ConversionTests(unittest.TestCase):
         )
         _pipeline.convert_docx(self.source)
         content = self.source.with_suffix(".md").read_text(encoding="utf-8")
-        self.assertIn("| 7. Seven<br>8. Eight |", content)
+        assert "| 7. Seven<br>8. Eight |" in content
 
     def test_multiple_empty_headerless_and_nested_tables(self) -> None:
         nested = table(row(cell("nested")), columns=1)
@@ -696,14 +690,14 @@ class ConversionTests(unittest.TestCase):
         )
         parsed = _reference.pandoc_html(result, self.pandoc)
         tables = list(parsed.iter("table"))
-        self.assertEqual(len(tables), 5)
+        assert len(tables) == 5
         # The first table's empty rows go, so its data row leads a Markdown table.
-        self.assertEqual([len(_tables.html_rows(item)) for item in tables], [1, 0, 1, 1, 1])
-        self.assertEqual(stats["tables"], 5)
-        self.assertEqual(len(list(parsed.iter("thead"))), 1)
-        self.assertIn("nested", result)
-        self.assertIn("Before", result)
-        self.assertIn("After", result)
+        assert [len(_tables.html_rows(item)) for item in tables] == [1, 0, 1, 1, 1]
+        assert stats["tables"] == 5
+        assert len(list(parsed.iter("thead"))) == 1
+        assert "nested" in result
+        assert "Before" in result
+        assert "After" in result
 
     def test_rows_with_grid_gaps_keep_their_word_cells(self) -> None:
         # Pandoc writes an empty cell per grid column for gridBefore and pads short rows.
@@ -727,23 +721,20 @@ class ConversionTests(unittest.TestCase):
                 )
             ]
         )
-        self.assertEqual(report.status("tables"), "applied")
-        self.assertNotIn("tables:", warnings)
+        assert report.status("tables") == "applied"
+        assert "tables:" not in warnings
         shape = [
             [(node.get("colspan", "1"), "".join(node.itertext())) for node in tr]
             for tr in _tables.html_rows(
                 next(_reference.pandoc_html(result, self.pandoc).iter("table"))
             )
         ]
-        self.assertEqual(
-            shape,
-            [
-                [("1", "a"), ("1", "b"), ("1", "c")],
-                [("2", ""), ("1", "z")],
-                [("1", "x"), ("2", "")],
-                [("1", "p"), ("1", "q")],
-            ],
-        )
+        assert shape == [
+            [("1", "a"), ("1", "b"), ("1", "c")],
+            [("2", ""), ("1", "z")],
+            [("1", "x"), ("2", "")],
+            [("1", "p"), ("1", "q")],
+        ]
 
     def test_rows_wider_than_the_table_grid_keep_every_cell(self) -> None:
         # Pandoc drops the cells beyond w:tblGrid, which Word tolerates.
@@ -756,13 +747,13 @@ class ConversionTests(unittest.TestCase):
                 )
             ]
         )
-        self.assertEqual(report.status("tables"), "applied")
-        self.assertNotIn("tables:", warnings)
+        assert report.status("tables") == "applied"
+        assert "tables:" not in warnings
         parsed = next(_reference.pandoc_html(result, self.pandoc).iter("table"))
-        self.assertEqual(
-            [["".join(node.itertext()) for node in tr] for tr in _tables.html_rows(parsed)],
-            [["a", "b", "c"], ["x", "y", "z"]],
-        )
+        assert [["".join(node.itertext()) for node in tr] for tr in _tables.html_rows(parsed)] == [
+            ["a", "b", "c"],
+            ["x", "y", "z"],
+        ]
 
     def test_a_narrow_first_body_row_keeps_every_table_cell(self) -> None:
         # Pandoc takes a table's columns from its first body row and drops the rest.
@@ -778,8 +769,8 @@ class ConversionTests(unittest.TestCase):
                 table(title, row(cell("p"), cell("q"), cell("r")), columns=3),
             ]
         )
-        self.assertEqual(report.status("tables"), "applied")
-        self.assertNotIn("tables:", warnings)
+        assert report.status("tables") == "applied"
+        assert "tables:" not in warnings
         shapes = [
             [
                 [(node.get("colspan", "1"), "".join(node.itertext())) for node in tr]
@@ -787,17 +778,14 @@ class ConversionTests(unittest.TestCase):
             ]
             for rendered in _reference.pandoc_html(result, self.pandoc).iter("table")
         ]
-        self.assertEqual(
-            shapes,
+        assert shapes == [
             [
-                [
-                    [("1", "h1"), ("1", "h2"), ("1", "h3")],
-                    [("1", "a"), ("1", "b")],
-                    [("1", "x"), ("1", "y"), ("1", "z")],
-                ],
-                [[("2", "Title")], [("1", "p"), ("1", "q"), ("1", "r")]],
+                [("1", "h1"), ("1", "h2"), ("1", "h3")],
+                [("1", "a"), ("1", "b")],
+                [("1", "x"), ("1", "y"), ("1", "z")],
             ],
-        )
+            [[("2", "Title")], [("1", "p"), ("1", "q"), ("1", "r")]],
+        ]
 
     def test_a_blank_header_row_goes_and_the_next_row_leads(self) -> None:
         result, _stats = self.convert(
@@ -809,12 +797,12 @@ class ConversionTests(unittest.TestCase):
                 ),
             ]
         )
-        self.assertNotIn("<table", result)
+        assert "<table" not in result
         # The row that leads is the header, whose paragraphs become spaces.
-        self.assertIn(r"| A \| B | first second |", result)
+        assert r"| A \| B | first second |" in result
         parsed = _reference.pandoc_html(result, self.pandoc)
         actual = next(parsed.iter("table"))
-        self.assertEqual(len(_tables.html_rows(actual)), 1)
+        assert len(_tables.html_rows(actual)) == 1
 
     def test_nonempty_header_uses_editable_multiline_pipe_table(self) -> None:
         result, stats = self.convert(
@@ -826,12 +814,12 @@ class ConversionTests(unittest.TestCase):
                 ),
             ]
         )
-        self.assertIn("| Name | Details |", result)
-        self.assertIn("| --- | --- |", result)
-        self.assertIn(r"A \| B", result)
-        self.assertIn("first<br><br>second", result)
-        self.assertEqual(stats["multiline_tables"], 1)
-        self.assertEqual(len(list(_reference.pandoc_html(result, self.pandoc).iter("tr"))), 2)
+        assert "| Name | Details |" in result
+        assert "| --- | --- |" in result
+        assert r"A \| B" in result
+        assert "first<br><br>second" in result
+        assert stats["multiline_tables"] == 1
+        assert len(list(_reference.pandoc_html(result, self.pandoc).iter("tr"))) == 2
 
     def test_aligned_word_cells_have_plain_separators_without_changing_literal_values(self) -> None:
         headers: list[ET.Element] = []
@@ -850,10 +838,10 @@ class ConversionTests(unittest.TestCase):
                 )
             ]
         )
-        self.assertIn("| Left | Center | Right |\n| --- | --- | --- |\n", result)
-        self.assertIn("| :---: | ---: | :--- |\n", result)
-        self.assertNotIn(
-            "text-align", _reference.html_element(_reference.pandoc_html(result, self.pandoc))
+        assert "| Left | Center | Right |\n| --- | --- | --- |\n" in result
+        assert "| :---: | ---: | :--- |\n" in result
+        assert "text-align" not in _reference.html_element(
+            _reference.pandoc_html(result, self.pandoc)
         )
 
     def test_signal_identifiers_are_readable_in_prose_and_table_cells(self) -> None:
@@ -863,9 +851,9 @@ class ConversionTests(unittest.TestCase):
                 table(row(cell("Signal")), row(cell("_ctl_s_ready")), columns=1),
             ]
         )
-        self.assertIn("Signal _ctl_s_ready is low.", result)
-        self.assertIn("| _ctl_s_ready |", result)
-        self.assertNotIn(r"\_ctl_s_ready", result)
+        assert "Signal _ctl_s_ready is low." in result
+        assert "| _ctl_s_ready |" in result
+        assert r"\_ctl_s_ready" not in result
 
     def test_an_all_empty_table_keeps_its_first_row_after_splitting(self) -> None:
         self.convert(
@@ -876,7 +864,7 @@ class ConversionTests(unittest.TestCase):
             split_depth=6,
         )
         content = (self.root / "Synthetic Guide" / "01-tables.md").read_text(encoding="utf-8")
-        self.assertEqual(len(list(_reference.pandoc_html(content, self.pandoc).iter("tr"))), 1)
+        assert len(list(_reference.pandoc_html(content, self.pandoc).iter("tr"))) == 1
 
     def test_zero_cell_rows_survive_actual_converter_streams(self) -> None:
         result, _stats = self.convert(
@@ -888,9 +876,10 @@ class ConversionTests(unittest.TestCase):
         )
         tables = _reference.pandoc_html(result, self.pandoc).iter("table")
         # Rows without cells show nothing, so they go unless no other row would be left.
-        self.assertEqual(
-            [[len(item) for item in _tables.html_rows(actual)] for actual in tables], [[2], [0]]
-        )
+        assert [[len(item) for item in _tables.html_rows(actual)] for actual in tables] == [
+            [2],
+            [0],
+        ]
 
     def test_empty_rows_are_omitted_and_reported(self) -> None:
         marked = row(cell(bookmark("_RowMark", "")), cell(""))
@@ -912,19 +901,20 @@ class ConversionTests(unittest.TestCase):
                 hyperlink("Back to the row", anchor="_RowMark"),
             ]
         )
-        self.assertIn("| Name | Value |\n| --- | --- |\n| a | 1 |\n", result)
+        assert "| Name | Value |\n| --- | --- |\n| a | 1 |\n" in result
         # A template's fill-in row stays.
-        self.assertIn("| Field | Notes |\n| --- | --- |\n| | |\n", result)
-        self.assertNotIn("<table", result)
-        self.assertIn("[Back to the row](#tables)", result)
-        self.assertIn("  tables: applied (2 Markdown, 4 empty row(s) omitted)", report.summary())
-        self.assertEqual(report.status("checks"), "applied")
+        assert "| Field | Notes |\n| --- | --- |\n| | |\n" in result
+        assert "<table" not in result
+        assert "[Back to the row](#tables)" in result
+        assert "  tables: applied (2 Markdown, 4 empty row(s) omitted)" in report.summary()
+        assert report.status("checks") == "applied"
 
     def test_legacy_horizontal_merge_is_source_aware(self) -> None:
         first, continuation = cell("Merged"), cell("")
         first_props = first.find(W + "tcPr")
         continuation_props = continuation.find(W + "tcPr")
-        assert first_props is not None and continuation_props is not None
+        assert first_props is not None
+        assert continuation_props is not None
         ET.SubElement(first_props, W + "hMerge", {W + "val": "restart"})
         ET.SubElement(continuation_props, W + "hMerge")
         result, _stats = self.convert(
@@ -932,8 +922,8 @@ class ConversionTests(unittest.TestCase):
                 table(row(first, continuation, header=True), row(cell("left"), cell("right"))),
             ]
         )
-        self.assertIn('colspan="2"', result)
-        self.assertEqual(len(list(_reference.pandoc_html(result, self.pandoc).iter("tr"))), 2)
+        assert 'colspan="2"' in result
+        assert len(list(_reference.pandoc_html(result, self.pandoc).iter("tr"))) == 2
 
     def test_merged_rows_and_source_caption_survive(self) -> None:
         result, _stats = self.convert(
@@ -946,10 +936,10 @@ class ConversionTests(unittest.TestCase):
                 ),
             ]
         )
-        self.assertIn('colspan="2"', result)
-        self.assertIn('rowspan="2"', result)
-        self.assertIn("<caption>A source caption</caption>", result)
-        self.assertEqual(len(list(_reference.pandoc_html(result, self.pandoc).iter("tr"))), 3)
+        assert 'colspan="2"' in result
+        assert 'rowspan="2"' in result
+        assert "<caption>A source caption</caption>" in result
+        assert len(list(_reference.pandoc_html(result, self.pandoc).iter("tr"))) == 3
 
     def test_bookmark_and_parenthesized_identity(self) -> None:
         result, stats = self.convert(
@@ -958,10 +948,10 @@ class ConversionTests(unittest.TestCase):
                 hyperlink("See it", anchor="_Ref_(detail)"),
             ]
         )
-        self.assertNotIn("<a ", result)
-        self.assertIn("[See it](#destination)", result)
-        self.assertIn("### Destination\n", result)
-        self.assertEqual(stats["bookmarks"], 1)
+        assert "<a " not in result
+        assert "[See it](#destination)" in result
+        assert "### Destination\n" in result
+        assert stats["bookmarks"] == 1
 
     def test_bookmark_matching_its_heading_id_needs_no_html_workaround(self) -> None:
         result, _stats = self.convert(
@@ -971,14 +961,14 @@ class ConversionTests(unittest.TestCase):
             ],
             split_depth=1,
         )
-        self.assertIn("Title", result)
+        assert "Title" in result
         child = (self.root / "Synthetic Guide" / "01-title.md").read_text(encoding="utf-8")
         parsed = _validation.collect_references(_reference.pandoc_html(child, self.pandoc))
-        self.assertEqual(parsed.anchors.count("title"), 1)
-        self.assertIn("# Title", child)
-        self.assertIn("[Go](#title)", child)
-        self.assertNotIn("<h1", child)
-        self.assertNotIn("<a ", child)
+        assert parsed.anchors.count("title") == 1
+        assert "# Title" in child
+        assert "[Go](#title)" in child
+        assert "<h1" not in child
+        assert "<a " not in child
 
     def test_word_bookmark_wins_over_a_different_heading_id(self) -> None:
         result, _stats = self.convert(
@@ -988,12 +978,11 @@ class ConversionTests(unittest.TestCase):
                 bookmark("title", "Actual target", "Heading1"),
             ]
         )
-        self.assertIn("[Real destination](#actual-target)", result)
-        self.assertNotIn("<a ", result)
-        self.assertEqual(
-            _validation.collect_references(_reference.pandoc_html(result, self.pandoc)).anchors,
-            ["title", "actual-target"],
-        )
+        assert "[Real destination](#actual-target)" in result
+        assert "<a " not in result
+        assert _validation.collect_references(
+            _reference.pandoc_html(result, self.pandoc)
+        ).anchors == ["title", "actual-target"]
 
     def test_missing_word_bookmark_is_not_replaced_by_matching_heading_slug(self) -> None:
         result, report, warnings = self.convert_reported(
@@ -1002,10 +991,10 @@ class ConversionTests(unittest.TestCase):
                 hyperlink("Missing real bookmark", anchor="title"),
             ]
         )
-        self.assertIn("Missing real bookmark", result)
-        self.assertNotIn("](#title)", result)
-        self.assertEqual(report.status("links"), "not applied")
-        self.assertIn("link to missing Word bookmark 'title'; kept as plain text", warnings)
+        assert "Missing real bookmark" in result
+        assert "](#title)" not in result
+        assert report.status("links") == "not applied"
+        assert "link to missing Word bookmark 'title'; kept as plain text" in warnings
 
     def test_unicode_bookmark_and_output_name(self) -> None:
         output = self.root / "R\u00e9sum\u00e9.v2.md"
@@ -1019,13 +1008,13 @@ class ConversionTests(unittest.TestCase):
             relations=(("image", "image", "media/image.png", "Internal"),),
             media={"image.png": PNG},
         )
-        self.assertNotIn("<a ", result)
-        self.assertIn("#r%C3%A9sum%C3%A9-1", result)
-        self.assertIn(
-            "r\u00e9sum\u00e9-1",
-            _validation.collect_references(_reference.pandoc_html(result, self.pandoc)).anchors,
+        assert "<a " not in result
+        assert "#r%C3%A9sum%C3%A9-1" in result
+        assert (
+            "résumé-1"
+            in _validation.collect_references(_reference.pandoc_html(result, self.pandoc)).anchors
         )
-        self.assertTrue((self.root / ".images" / "R\u00e9sum\u00e9.v2" / "image.png").is_file())
+        assert (self.root / ".images" / "Résumé.v2" / "image.png").is_file()
 
     def test_bookmark_in_table_and_table_link(self) -> None:
         result, _stats = self.convert(
@@ -1039,11 +1028,11 @@ class ConversionTests(unittest.TestCase):
                 hyperlink("Cell", anchor="_Cell"),
             ]
         )
-        self.assertNotIn("<a ", result)
-        self.assertNotIn("<table", result)
-        self.assertIn("| Header |", result)
-        self.assertIn("[Cell](#title)", result)
-        self.assertIn("[Back](#title)", result)
+        assert "<a " not in result
+        assert "<table" not in result
+        assert "| Header |" in result
+        assert "[Cell](#title)" in result
+        assert "[Back](#title)" in result
 
     def test_complex_table_bookmarks_use_section_links_without_anchor_wrappers(self) -> None:
         result, _stats = self.convert(
@@ -1056,12 +1045,12 @@ class ConversionTests(unittest.TestCase):
                 hyperlink("Go to table", anchor="_Cell"),
             ]
         )
-        self.assertIn("<table", result)
-        self.assertIn('href="#1-overview"', result)
-        self.assertIn("[Go to table](#1-overview)", result)
-        self.assertNotIn('id="_Cell"', result)
-        self.assertNotIn('name="_Cell"', result)
-        self.assertNotIn("<span", result)
+        assert "<table" in result
+        assert 'href="#1-overview"' in result
+        assert "[Go to table](#1-overview)" in result
+        assert 'id="_Cell"' not in result
+        assert 'name="_Cell"' not in result
+        assert "<span" not in result
 
     def test_preamble_bookmark_targets_document_top_across_split_pages(self) -> None:
         for depth in (0, 1):
@@ -1077,14 +1066,14 @@ class ConversionTests(unittest.TestCase):
                     output=output,
                     split_depth=depth,
                 )
-                self.assertIn("[Opening](#)", result)
-                self.assertNotIn("<a ", result)
+                assert "[Opening](#)" in result
+                assert "<a " not in result
                 if depth:
                     child = (output.parent / "guide" / "01-body.md").read_text(encoding="utf-8")
-                    self.assertIn("[Top](../guide.md)", child)
+                    assert "[Top](../guide.md)" in child
                 else:
-                    self.assertIn("[Top](#)", result)
-                    self.assertTrue(result.startswith("Opening text"))
+                    assert "[Top](#)" in result
+                    assert result.startswith("Opening text")
 
     def test_only_referenced_nonheading_bookmarks_report_retargeting(self) -> None:
         write_docx(
@@ -1104,14 +1093,14 @@ class ConversionTests(unittest.TestCase):
         with contextlib.redirect_stderr(stderr):
             _pipeline.convert_docx(self.source, keep_intermediates=diagnostics)
         warnings = stderr.getvalue()
-        self.assertIn("'_Before' now links to the document top", warnings)
-        self.assertIn("'_Body' now links to its containing section #1-overview", warnings)
-        self.assertNotIn("_Unused", warnings)
-        self.assertNotIn("_Exact", warnings)
+        assert "'_Before' now links to the document top" in warnings
+        assert "'_Body' now links to its containing section #1-overview" in warnings
+        assert "_Unused" not in warnings
+        assert "_Exact" not in warnings
         report = json.loads((diagnostics / "diagnostics.json").read_text(encoding="utf-8"))
-        self.assertEqual(report["bookmark_targets"]["_Exact"]["kind"], "heading")
-        self.assertEqual(report["bookmark_targets"]["_Body"]["kind"], "section")
-        self.assertEqual(report["bookmark_targets"]["_Before"]["kind"], "document_top")
+        assert report["bookmark_targets"]["_Exact"]["kind"] == "heading"
+        assert report["bookmark_targets"]["_Body"]["kind"] == "section"
+        assert report["bookmark_targets"]["_Before"]["kind"] == "document_top"
 
     def test_duplicate_heading_links_use_final_page_local_ids(self) -> None:
         for depth in (0, 1, 2):
@@ -1130,19 +1119,19 @@ class ConversionTests(unittest.TestCase):
                     split_depth=depth,
                 )
                 if depth == 0:
-                    self.assertIn("[Second target](#2-same--detail-1)", result)
-                    self.assertIn("[First target](#2-same--detail)", result)
+                    assert "[Second target](#2-same--detail-1)" in result
+                    assert "[First target](#2-same--detail)" in result
                 elif depth == 1:
                     first = (output.parent / "guide" / "01-first.md").read_text(encoding="utf-8")
                     second = (output.parent / "guide" / "02-second.md").read_text(encoding="utf-8")
-                    self.assertIn("[Second target](02-second.md#2-same--detail)", first)
-                    self.assertIn("[First target](01-first.md#2-same--detail)", second)
+                    assert "[Second target](02-second.md#2-same--detail)" in first
+                    assert "[First target](01-first.md#2-same--detail)" in second
                 else:
                     first = (
                         output.parent / "guide" / "01-first" / "01-2-same-detail.md"
                     ).read_text(encoding="utf-8")
-                    self.assertIn(
-                        "[Second target](../02-second/01-2-same-detail.md#2-same--detail)", first
+                    assert (
+                        "[Second target](../02-second/01-2-same-detail.md#2-same--detail)" in first
                     )
 
     def test_markdown_caption_does_not_change_word_section_mapping(self) -> None:
@@ -1153,11 +1142,11 @@ class ConversionTests(unittest.TestCase):
                 hyperlink("Actual section", anchor="_Heading"),
             ]
         )
-        self.assertNotIn("<table", result)
+        assert "<table" not in result
         parsed = _reference.pandoc_html(result, self.pandoc)
-        self.assertEqual(_validation.collect_references(parsed).headings, [1])
-        self.assertIn("# Not a heading", "".join(parsed.itertext()))
-        self.assertIn("[Actual section](#heading)", result)
+        assert _validation.collect_references(parsed).headings == [1]
+        assert "# Not a heading" in "".join(parsed.itertext())
+        assert "[Actual section](#heading)" in result
 
     def test_link_to_missing_bookmark_is_kept_as_text_and_summarized(self) -> None:
         output = self.root / "output.md"
@@ -1165,16 +1154,14 @@ class ConversionTests(unittest.TestCase):
         result, report, _warnings = self.convert_reported(
             [hyperlink("Missing", anchor="_Missing")], output=output
         )
-        self.assertEqual(result, "Missing\n")
+        assert result == "Missing\n"
         summary = report.summary()
-        self.assertEqual(summary[0], "docx-to-md: transforms (baseline: MarkItDown)")
-        self.assertIn("  alignment: applied", summary)
-        self.assertIn("  links: not applied (1)", summary)
-        self.assertIn(
-            "    not applied (1): link to a missing Word bookmark; kept as plain text", summary
-        )
-        self.assertIn("  checks: passed", summary)
-        self.assertNotIn("_Missing", "\n".join(summary))
+        assert summary[0] == "docx-to-md: transforms (baseline: MarkItDown)"
+        assert "  alignment: applied" in summary
+        assert "  links: not applied (1)" in summary
+        assert "    not applied (1): link to a missing Word bookmark; kept as plain text" in summary
+        assert "  checks: passed" in summary
+        assert "_Missing" not in "\n".join(summary)
 
     def test_cross_references_to_missing_bookmarks_are_kept_as_text(self) -> None:
         def reference(anchor: str, value: str, *, simple: bool = False) -> ET.Element:
@@ -1192,19 +1179,18 @@ class ConversionTests(unittest.TestCase):
                 reference("_Missing", "6"),
             ]
         )
-        self.assertIn("| See 3 | See [4](#target) |", result)
-        self.assertIn("| See 5 | Plain |", result)
-        self.assertIn("See 6", result)
-        self.assertEqual(
-            dict(report.records["links"].skipped),
-            {"link to a missing Word bookmark; kept as plain text": 3},
+        assert "| See 3 | See [4](#target) |" in result
+        assert "| See 5 | Plain |" in result
+        assert "See 6" in result
+        assert dict(report.records["links"].skipped) == {
+            "link to a missing Word bookmark; kept as plain text": 3
+        }
+        assert (
+            "links: cross-reference to missing Word bookmark '_Gone'; kept as plain text"
+            in warnings
         )
-        self.assertIn(
-            "links: cross-reference to missing Word bookmark '_Gone'; kept as plain text",
-            warnings,
-        )
-        self.assertEqual(report.status("pages"), "applied")
-        self.assertEqual(report.status("checks"), "applied")
+        assert report.status("pages") == "applied"
+        assert report.status("checks") == "applied"
 
     def test_simple_fields_keep_their_cached_results(self) -> None:
         def field(instruction: str, *children: ET.Element) -> ET.Element:
@@ -1249,14 +1235,14 @@ class ConversionTests(unittest.TestCase):
                     body, output=self.root / f"fields-{aligned}.md"
                 )
                 for text in ("Table 2\u20111: Registers", "Figure 3: Pipeline", "See Figure 3."):
-                    self.assertIn(f"\n{text}\n", result)
-                self.assertEqual(report.status("fields"), "applied")
-                self.assertIn("  fields: applied (4 simple field(s) kept)", report.summary())
+                    assert f"\n{text}\n" in result
+                assert report.status("fields") == "applied"
+                assert "  fields: applied (4 simple field(s) kept)" in report.summary()
                 if aligned:
-                    self.assertIn("[Back to the figure](#results)", result)
-                    self.assertFalse(report.records["bookmarks"].skipped)
-                    self.assertEqual(report.status("checks"), "applied")
-                    self.assertFalse(report.records["checks"].skipped)
+                    assert "[Back to the figure](#results)" in result
+                    assert not report.records["bookmarks"].skipped
+                    assert report.status("checks") == "applied"
+                    assert not report.records["checks"].skipped
 
     def test_bookmarks_in_leading_title_paragraphs_keep_their_position(self) -> None:
         # Pandoc reads leading Title and Subtitle paragraphs as metadata, outside its body.
@@ -1270,13 +1256,13 @@ class ConversionTests(unittest.TestCase):
             ],
             styles=(word_style("Title"), word_style("Subtitle")),
         )
-        self.assertEqual(report.status("checks"), "applied")
-        self.assertFalse(report.records["checks"].skipped)
-        self.assertEqual(report.status("bookmarks"), "applied")
-        self.assertRegex(
-            result, r"Document title\n\nDocument subtitle\n\nBody\n\n\[Back to the title\]\(#"
+        assert report.status("checks") == "applied"
+        assert not report.records["checks"].skipped
+        assert report.status("bookmarks") == "applied"
+        assert re.search(
+            r"Document title\n\nDocument subtitle\n\nBody\n\n\[Back to the title\]\(#", result
         )
-        self.assertNotIn("checks:", warnings)
+        assert "checks:" not in warnings
 
     def test_word_line_breaks_start_new_paragraphs(self) -> None:
         # MarkItDown strips the trailing spaces of its hard breaks, so Word's line breaks
@@ -1306,16 +1292,16 @@ class ConversionTests(unittest.TestCase):
             ),
             media={"art.png": PNG},
         )
-        self.assertIn("first line\n\nsecond line\n", result)
-        self.assertIn("# Heading top Heading bottom\n", result)
-        self.assertRegex(
-            result,
+        assert "first line\n\nsecond line\n" in result
+        assert "# Heading top Heading bottom\n" in result
+        assert re.search(
             r"!\[Diagram\]\(\.images/[^)\n]+\)\n\n\[Source\]\(https://example\.test/a\?b=1&amp;c=2\)",
+            result,
         )
-        self.assertNotIn("\\\n", result)
-        self.assertIn("  line-breaks: partial (2 applied, 1 not applied)", report.summary())
-        self.assertEqual(report.status("checks"), "applied")
-        self.assertFalse(report.records["checks"].skipped)
+        assert "\\\n" not in result
+        assert "  line-breaks: partial (2 applied, 1 not applied)" in report.summary()
+        assert report.status("checks") == "applied"
+        assert not report.records["checks"].skipped
 
     def test_line_breaks_at_block_ends_leave_no_backslash(self) -> None:
         def trailing(content: ET.Element) -> ET.Element:
@@ -1333,11 +1319,11 @@ class ConversionTests(unittest.TestCase):
             ],
             extras={"word/numbering.xml": numbering_xml()},
         )
-        self.assertNotIn("\\", result)
-        self.assertRegex(result, r"7\.\s+Alpha\n+8\.\s+Beta\n\nPlain\n\nMarked\n")
-        self.assertEqual(report.status("lists"), "applied")
-        self.assertNotIn("<ol", result)
-        self.assertNotIn("lists:", warnings)
+        assert "\\" not in result
+        assert re.search(r"7\.\s+Alpha\n+8\.\s+Beta\n\nPlain\n\nMarked\n", result)
+        assert report.status("lists") == "applied"
+        assert "<ol" not in result
+        assert "lists:" not in warnings
 
     def test_stray_field_marks_do_not_stop_markitdown(self) -> None:
         def fail(*_arguments: object) -> NoReturn:
@@ -1352,8 +1338,8 @@ class ConversionTests(unittest.TestCase):
                 result, report, _warnings = self.convert_reported(
                     [stray, paragraph("After")], output=self.root / f"stray-{aligned}.md"
                 )
-                self.assertIn("Before\n\nAfter", result)
-                self.assertIn("  fields: applied (1 stray field mark(s) removed)", report.summary())
+                assert "Before\n\nAfter" in result
+                assert "  fields: applied (1 stray field mark(s) removed)" in report.summary()
 
     def test_nested_empty_and_targetless_hyperlinks(self) -> None:
         nested = hyperlink("Outer ", relation="outer")
@@ -1367,15 +1353,14 @@ class ConversionTests(unittest.TestCase):
                 ("inner", "hyperlink", "https://example.test/inner", "External"),
             ),
         )
-        self.assertEqual(result, "[Outer Inner](https://example.test/outer)\n\nPlain\n")
+        assert result == "[Outer Inner](https://example.test/outer)\n\nPlain\n"
         summary = report.summary()
-        self.assertIn("  links: partial (1 applied, 1 not applied)", summary)
-        self.assertIn(
+        assert "  links: partial (1 applied, 1 not applied)" in summary
+        assert (
             "    not applied (1): Word hyperlink nested in another hyperlink; "
-            "its text stays in the outer link",
-            summary,
+            "its text stays in the outer link" in summary
         )
-        self.assertEqual(warnings.count("links:"), 1)
+        assert warnings.count("links:") == 1
 
     def test_underline_stays_but_not_in_links_headings_or_code(self) -> None:
         def underlined(node: ET.Element) -> ET.Element:
@@ -1410,13 +1395,13 @@ class ConversionTests(unittest.TestCase):
             ],
             relations=(("site", "hyperlink", "https://example.test/spec", "External"),),
         )
-        self.assertEqual(
-            result,
-            "# Overview\n\nDo <u>not</u> connect.\n\n[Spec site](https://example.test/spec)\n\n"
+        assert (
+            result
+            == "# Overview\n\nDo <u>not</u> connect.\n\n[Spec site](https://example.test/spec)\n\n"
             "Call `init()` first.\n\n| Rule | Link |\n| --- | --- |\n"
-            "| Must <u>not</u> | [Site](https://example.test/spec) |\n",
+            "| Must <u>not</u> | [Site](https://example.test/spec) |\n"
         )
-        self.assertIn("  underline: applied (4)", report.summary())
+        assert "  underline: applied (4)" in report.summary()
 
     def test_screen_tips_become_link_titles_and_double_strikethrough_is_struck(self) -> None:
         tipped = hyperlink("Spec site", relation="site")
@@ -1432,10 +1417,9 @@ class ConversionTests(unittest.TestCase):
             [tipped, struck],
             relations=(("site", "hyperlink", "https://example.test/spec", "External"),),
         )
-        self.assertEqual(
-            result,
-            '[Spec site](https://example.test/spec "Opens the \\"specification\\"")\n\n'
-            "~~double~~ and ~~single~~\n",
+        assert (
+            result == '[Spec site](https://example.test/spec "Opens the \\"specification\\"")\n\n'
+            "~~double~~ and ~~single~~\n"
         )
 
     def test_hyperlink_with_a_missing_relationship_still_converts(self) -> None:
@@ -1450,15 +1434,14 @@ class ConversionTests(unittest.TestCase):
                     [paragraph("Before"), hyperlink("Dangling", relation="gone")],
                     output=self.root / f"dangling-{aligned}.md",
                 )
-                self.assertEqual(result, "Before\n\nDangling\n")
-                self.assertEqual(report.records["alignment"].failure is None, aligned)
-                self.assertEqual(
-                    dict(report.records["links"].skipped),
-                    {"Word hyperlink relationship is missing; its target is dropped": 1},
-                )
-                self.assertIn(
-                    "links: Word hyperlink relationship 'gone' is missing; its target is dropped",
-                    warnings,
+                assert result == "Before\n\nDangling\n"
+                assert (report.records["alignment"].failure is None) == aligned
+                assert dict(report.records["links"].skipped) == {
+                    "Word hyperlink relationship is missing; its target is dropped": 1
+                }
+                assert (
+                    "links: Word hyperlink relationship 'gone' is missing; its target is dropped"
+                    in warnings
                 )
 
     def test_hyperlink_that_pandoc_splits_keeps_the_markitdown_link(self) -> None:
@@ -1478,11 +1461,10 @@ class ConversionTests(unittest.TestCase):
             ),
             extras={"word/footnotes.xml": notes.encode()},
         )
-        self.assertIn("https://example.test/a", result)
-        self.assertEqual(
-            dict(report.records["links"].skipped),
-            {"Pandoc rendered N links for one Word hyperlink; kept as MarkItDown converted it": 1},
-        )
+        assert "https://example.test/a" in result
+        assert dict(report.records["links"].skipped) == {
+            "Pandoc rendered N links for one Word hyperlink; kept as MarkItDown converted it": 1
+        }
 
     def test_png_and_svg_do_not_require_office_or_poppler(self) -> None:
         original = shutil.which
@@ -1501,12 +1483,10 @@ class ConversionTests(unittest.TestCase):
                 ),
                 media={"image.png": PNG, "image.svg": SVG},
             )
-        self.assertIn(".images/Synthetic%20Guide/image.png", result)
-        self.assertIn(".images/Synthetic%20Guide/image.svg", result)
-        self.assertEqual(stats["image_occurrences"], 2)
-        self.assertEqual(
-            (self.root / ".images" / "Synthetic Guide" / "image.png").read_bytes(), PNG
-        )
+        assert ".images/Synthetic%20Guide/image.png" in result
+        assert ".images/Synthetic%20Guide/image.svg" in result
+        assert stats["image_occurrences"] == 2
+        assert (self.root / ".images" / "Synthetic Guide" / "image.png").read_bytes() == PNG
 
     def test_line_breaks_in_list_items_formatting_and_links(self) -> None:
         item = numbered("Alpha")
@@ -1527,13 +1507,12 @@ class ConversionTests(unittest.TestCase):
             relations=(("site", "hyperlink", "https://example.test/", "External"),),
             extras={"word/numbering.xml": numbering_xml()},
         )
-        self.assertEqual(
-            result,
-            "7. Alpha\n\n    continued\n\n8. Beta\n\n**Bold**\n\n**text**\n\n"
-            "[Line one Line two](https://example.test/)\n",
+        assert (
+            result == "7. Alpha\n\n    continued\n\n8. Beta\n\n**Bold**\n\n**text**\n\n"
+            "[Line one Line two](https://example.test/)\n"
         )
-        self.assertEqual(report.status("lists"), "applied")
-        self.assertEqual(report.status("checks"), "applied")
+        assert report.status("lists") == "applied"
+        assert report.status("checks") == "applied"
 
     def test_list_markers_take_one_space_and_lines_have_no_trailing_whitespace(self) -> None:
         result, report, _warnings = self.convert_reported(
@@ -1548,16 +1527,13 @@ class ConversionTests(unittest.TestCase):
             ],
             extras={"word/numbering.xml": numbering_xml()},
         )
-        self.assertEqual(
-            result,
-            "[Go](#scope)\n\n# Scope\n\nText ends with spaces\n\n"
-            "7. Alpha\n\n8.\n\n9. Beta\n\nOutro\n",
+        assert (
+            result == "[Go](#scope)\n\n# Scope\n\nText ends with spaces\n\n"
+            "7. Alpha\n\n8.\n\n9. Beta\n\nOutro\n"
         )
-        self.assertIn("  spaces: applied (3)", report.summary())
-        self.assertIn(
-            "  cleanup: applied (1 line(s) with trailing whitespace trimmed)", report.summary()
-        )
-        self.assertEqual(report.status("checks"), "applied")
+        assert "  spaces: applied (3)" in report.summary()
+        assert "  cleanup: applied (1 line(s) with trailing whitespace trimmed)" in report.summary()
+        assert report.status("checks") == "applied"
 
     def test_empty_headings_are_omitted_and_do_not_prevent_splitting(self) -> None:
         report = _diagnostics.TransformReport()
@@ -1575,12 +1551,12 @@ class ConversionTests(unittest.TestCase):
                 qualify=True,
                 report=report,
             )
-        self.assertEqual(report.status("pages"), "applied")
-        self.assertEqual(report.status("duplicate-headings"), "not needed")
-        self.assertIn("    not applied (2): Word heading has no text; omitted", report.summary())
+        assert report.status("pages") == "applied"
+        assert report.status("duplicate-headings") == "not needed"
+        assert "    not applied (2): Word heading has no text; omitted" in report.summary()
         pages = self.root / "Synthetic Guide"
-        self.assertEqual((pages / "01-one.md").read_text(encoding="utf-8"), "# One\n\nText\n")
-        self.assertEqual((pages / "02-two.md").read_text(encoding="utf-8"), "# Two\n\nEnd\n")
+        assert (pages / "01-one.md").read_text(encoding="utf-8") == "# One\n\nText\n"
+        assert (pages / "02-two.md").read_text(encoding="utf-8") == "# Two\n\nEnd\n"
 
     def test_bookmark_on_an_empty_heading_goes_to_the_heading_after_it(self) -> None:
         # Enter at the start of a heading leaves its table-of-contents bookmark in the
@@ -1599,14 +1575,14 @@ class ConversionTests(unittest.TestCase):
                 paragraph("A note under Interfaces"),
             ]
         )
-        self.assertEqual(
-            result,
-            "[2.1 Interfaces](#interfaces)\n\n[Notes](#interfaces)\n\n# Design\n\nText\n\n"
-            "## Interfaces\n\nPorts\n\nA note under Interfaces\n",
+        assert (
+            result
+            == "[2.1 Interfaces](#interfaces)\n\n[Notes](#interfaces)\n\n# Design\n\nText\n\n"
+            "## Interfaces\n\nPorts\n\nA note under Interfaces\n"
         )
-        self.assertIn("    not applied (3): Word heading has no text; omitted", report.summary())
-        self.assertEqual(report.status("checks"), "applied")
-        self.assertFalse(report.records["checks"].skipped)
+        assert "    not applied (3): Word heading has no text; omitted" in report.summary()
+        assert report.status("checks") == "applied"
+        assert not report.records["checks"].skipped
 
     def test_bookmark_in_an_empty_paragraph_goes_to_the_heading_after_it(self) -> None:
         result, report, warnings = self.convert_reported(
@@ -1619,9 +1595,9 @@ class ConversionTests(unittest.TestCase):
                 paragraph("Figure 1: Pipe"),
             ]
         )
-        self.assertIn("[Figure 1: Pipe](#buffers)", result)
-        self.assertEqual(report.status("checks"), "applied")
-        self.assertNotIn("_Toc5", warnings)
+        assert "[Figure 1: Pipe](#buffers)" in result
+        assert report.status("checks") == "applied"
+        assert "_Toc5" not in warnings
 
     def test_heading_with_only_a_picture_is_a_paragraph(self) -> None:
         picture = image()
@@ -1641,17 +1617,16 @@ class ConversionTests(unittest.TestCase):
             relations=(("image", "image", "media/image.png", "Internal"),),
             media={"image.png": PNG},
         )
-        self.assertEqual(
-            result,
-            "[Figure 1: Diagram](#block-diagram)\n\n## Block diagram\n\n"
-            "![Diagram](.images/Synthetic%20Guide/image.png)\n\nFigure 1: Diagram\n\n## Next\n",
+        assert (
+            result == "[Figure 1: Diagram](#block-diagram)\n\n## Block diagram\n\n"
+            "![Diagram](.images/Synthetic%20Guide/image.png)\n\nFigure 1: Diagram\n\n## Next\n"
         )
-        self.assertIn(
-            "    not applied (1): Word heading has only a picture; kept as a paragraph",
-            report.summary(),
+        assert (
+            "    not applied (1): Word heading has only a picture; kept as a paragraph"
+            in report.summary()
         )
-        self.assertEqual(report.status("images"), "applied")
-        self.assertEqual(report.status("checks"), "applied")
+        assert report.status("images") == "applied"
+        assert report.status("checks") == "applied"
 
     def test_word_title_becomes_the_only_h1(self) -> None:
         result, report, _warnings = self.convert_reported(
@@ -1666,13 +1641,12 @@ class ConversionTests(unittest.TestCase):
             ],
             styles=(word_style("Title"),),
         )
-        self.assertEqual(
-            result,
-            "# XYZ_TOP Guide \\#2\n\nDate: today\n\n[Go to setup](#setup)\n\n## Intro\n\n"
-            "Text\n\n### Setup\n\nMore\n",
+        assert (
+            result == "# XYZ_TOP Guide \\#2\n\nDate: today\n\n[Go to setup](#setup)\n\n## Intro\n\n"
+            "Text\n\n### Setup\n\nMore\n"
         )
-        self.assertIn("  title: applied (2 heading(s) moved down one level)", report.summary())
-        self.assertEqual(report.status("checks"), "applied")
+        assert "  title: applied (2 heading(s) moved down one level)" in report.summary()
+        assert report.status("checks") == "applied"
 
     def test_word_title_stays_a_paragraph_when_headings_cannot_move_down(self) -> None:
         for name, body, reason in (
@@ -1696,9 +1670,9 @@ class ConversionTests(unittest.TestCase):
                     output=self.root / name / "guide.md",
                     styles=(word_style("Title"),),
                 )
-                self.assertTrue(result.startswith("Guide Title\n\n# "))
-                self.assertIn(f"    not applied (1): {reason}", report.summary())
-                self.assertIn("Word title 'Guide Title'", warnings)
+                assert result.startswith("Guide Title\n\n# ")
+                assert f"    not applied (1): {reason}" in report.summary()
+                assert "Word title 'Guide Title'" in warnings
 
     def test_split_root_page_does_not_repeat_the_word_title(self) -> None:
         report = _diagnostics.TransformReport()
@@ -1714,11 +1688,10 @@ class ConversionTests(unittest.TestCase):
                 report=report,
                 styles=(word_style("Title"),),
             )
-        self.assertEqual(
-            (self.root / "Synthetic Guide.md").read_text(encoding="utf-8"),
-            "# Guide Title\n\nDate: today\n\n## Sections\n\n- [One](Synthetic%20Guide/01-one.md)\n",
-        )
-        self.assertIn("  title: applied (1 repeated title paragraph(s) removed)", report.summary())
+        assert (self.root / "Synthetic Guide.md").read_text(
+            encoding="utf-8"
+        ) == "# Guide Title\n\nDate: today\n\n## Sections\n\n- [One](Synthetic%20Guide/01-one.md)\n"
+        assert "  title: applied (1 repeated title paragraph(s) removed)" in report.summary()
 
     def test_images_in_table_cells_keep_a_markdown_table(self) -> None:
         result, report, _warnings = self.convert_reported(
@@ -1726,10 +1699,10 @@ class ConversionTests(unittest.TestCase):
             relations=(("image", "image", "media/image.png", "Internal"),),
             media={"image.png": PNG},
         )
-        self.assertEqual(
-            result, "| Diagram |\n| --- |\n| ![Diagram](.images/Synthetic%20Guide/image.png) |\n"
+        assert (
+            result == "| Diagram |\n| --- |\n| ![Diagram](.images/Synthetic%20Guide/image.png) |\n"
         )
-        self.assertIn("  tables: applied (1 Markdown)", report.summary())
+        assert "  tables: applied (1 Markdown)" in report.summary()
 
     def test_missing_alt_text_is_empty_and_reported(self) -> None:
         stderr = io.StringIO()
@@ -1739,9 +1712,9 @@ class ConversionTests(unittest.TestCase):
                 relations=(("image", "image", "media/image.png", "Internal"),),
                 media={"image.png": PNG},
             )
-        self.assertEqual(stats["unresolved_alt_text"], 1)
-        self.assertIn("Unresolved alt text", stderr.getvalue())
-        self.assertIn("![](.images/Synthetic%20Guide/image.png)", result)
+        assert stats["unresolved_alt_text"] == 1
+        assert "Unresolved alt text" in stderr.getvalue()
+        assert "![](.images/Synthetic%20Guide/image.png)" in result
 
     def test_a_document_without_images_gets_no_image_directory(self) -> None:
         output = self.root / "out" / "Guide.md"
@@ -1751,10 +1724,10 @@ class ConversionTests(unittest.TestCase):
             relations=(("image", "image", "media/image.png", "Internal"),),
             media={"image.png": PNG},
         )
-        self.assertTrue((output.parent / ".images" / "Guide" / "image.png").is_file())
+        assert (output.parent / ".images" / "Guide" / "image.png").is_file()
         write_docx(self.source, [paragraph("Text only")])
         _pipeline.convert_docx(self.source, output, replace_generated=True)
-        self.assertEqual(sorted(path.name for path in output.parent.iterdir()), ["Guide.md"])
+        assert sorted(path.name for path in output.parent.iterdir()) == ["Guide.md"]
 
     def test_caption_alt_text_is_recovered_without_invention(self) -> None:
         result, _stats = self.convert(
@@ -1762,8 +1735,9 @@ class ConversionTests(unittest.TestCase):
             relations=(("image", "image", "media/image.png", "Internal"),),
             media={"image.png": PNG},
         )
-        self.assertEqual(
-            next(_reference.pandoc_html(result, self.pandoc).iter("img")).get("alt"), "Request flow"
+        assert (
+            next(_reference.pandoc_html(result, self.pandoc).iter("img")).get("alt")
+            == "Request flow"
         )
 
     def test_caption_replaces_word_alt_text_and_is_reported(self) -> None:
@@ -1778,10 +1752,10 @@ class ConversionTests(unittest.TestCase):
             relations=(("image", "image", "media/image.png", "Internal"),),
             media={"image.png": PNG},
         )
-        self.assertIn("![Request flow](.images/", result)
-        self.assertIn(
-            "  images: partial (1 applied, 1 image(s) described by their caption, 1 not applied)",
-            report.summary(),
+        assert "![Request flow](.images/" in result
+        assert (
+            "  images: partial (1 applied, 1 image(s) described by their caption, 1 not applied)"
+            in report.summary()
         )
 
     def test_an_image_directly_below_a_heading_takes_its_text(self) -> None:
@@ -1797,12 +1771,12 @@ class ConversionTests(unittest.TestCase):
             relations=(("image", "image", "media/image.png", "Internal"),),
             media={"image.png": PNG},
         )
-        self.assertIn("![Block diagram](.images/", result)
-        self.assertIn("![](.images/", result)
-        self.assertIn(
-            "  images: applied (2, 1 image(s) described by the heading above)", report.summary()
+        assert "![Block diagram](.images/" in result
+        assert "![](.images/" in result
+        assert (
+            "  images: applied (2, 1 image(s) described by the heading above)" in report.summary()
         )
-        self.assertEqual(warnings.count("Unresolved alt text"), 1)
+        assert warnings.count("Unresolved alt text") == 1
 
     def test_repeated_and_nested_media_keep_exact_occurrences(self) -> None:
         result, stats = self.convert(
@@ -1810,8 +1784,8 @@ class ConversionTests(unittest.TestCase):
             relations=(("image", "image", "media/image.png", "Internal"),),
             media={"image.png": PNG},
         )
-        self.assertEqual(len(list(_reference.pandoc_html(result, self.pandoc).iter("img"))), 3)
-        self.assertEqual(stats["unique_images"], 1)
+        assert len(list(_reference.pandoc_html(result, self.pandoc).iter("img"))) == 3
+        assert stats["unique_images"] == 1
 
     def test_linked_image_with_literal_alt_characters_survives(self) -> None:
         link = hyperlink("", relation="external")
@@ -1830,10 +1804,10 @@ class ConversionTests(unittest.TestCase):
             media={"image.png": PNG},
         )
         parsed = _validation.collect_references(_reference.pandoc_html(result, self.pandoc))
-        self.assertEqual(parsed.links, ["https://example.test/target"])
-        self.assertEqual(
-            next(_reference.pandoc_html(result, self.pandoc).iter("img")).get("alt"),
-            r"A [B] | C \ D",
+        assert parsed.links == ["https://example.test/target"]
+        assert (
+            next(_reference.pandoc_html(result, self.pandoc).iter("img")).get("alt")
+            == r"A [B] | C \ D"
         )
 
     def test_multiple_images_and_text_in_one_word_run_are_not_dropped(self) -> None:
@@ -1850,9 +1824,9 @@ class ConversionTests(unittest.TestCase):
             relations=(("image", "image", "media/image.png", "Internal"),),
             media={"image.png": PNG},
         )
-        self.assertIn("Before", result)
-        self.assertIn("After", result)
-        self.assertEqual(stats["image_occurrences"], 2)
+        assert "Before" in result
+        assert "After" in result
+        assert stats["image_occurrences"] == 2
 
     def test_native_svg_extension_is_preferred_over_raster_fallback(self) -> None:
         content = image("png")
@@ -1870,9 +1844,9 @@ class ConversionTests(unittest.TestCase):
             ),
             media={"fallback.png": PNG, "vector.svg": SVG},
         )
-        self.assertIn("vector.svg", result)
-        self.assertNotIn("fallback.png", result)
-        self.assertEqual(stats["unique_images"], 1)
+        assert "vector.svg" in result
+        assert "fallback.png" not in result
+        assert stats["unique_images"] == 1
 
     def test_legacy_picture_and_object_previews_keep_metadata(self) -> None:
         for kind in ("pict", "object"):
@@ -1883,10 +1857,10 @@ class ConversionTests(unittest.TestCase):
                     relations=(("image", "image", "media/image.png", "Internal"),),
                     media={"image.png": PNG},
                 )
-                self.assertEqual(stats["image_occurrences"], 1)
-                self.assertEqual(result.count("image.png"), 1)
+                assert stats["image_occurrences"] == 1
+                assert result.count("image.png") == 1
                 parsed = _reference.pandoc_html(result, self.pandoc)
-                self.assertEqual(next(parsed.iter("img")).get("alt"), "Legacy preview")
+                assert next(parsed.iter("img")).get("alt") == "Legacy preview"
 
     def test_packaged_picture_fallback_is_used_for_unsupported_native_drawing(self) -> None:
         content = ET.Element(W + "p")
@@ -1902,8 +1876,8 @@ class ConversionTests(unittest.TestCase):
             relations=(("image", "image", "media/image.png", "Internal"),),
             media={"image.png": PNG},
         )
-        self.assertEqual(stats["image_occurrences"], 1)
-        self.assertIn("Legacy preview", result)
+        assert stats["image_occurrences"] == 1
+        assert "Legacy preview" in result
 
     def test_legacy_picture_with_a_text_box_keeps_each_once(self) -> None:
         content = legacy_image()
@@ -1919,9 +1893,9 @@ class ConversionTests(unittest.TestCase):
             relations=(("image", "image", "media/image.png", "Internal"),),
             media={"image.png": PNG},
         )
-        self.assertEqual(stats["image_occurrences"], 1)
-        self.assertEqual(result.count("image.png"), 1)
-        self.assertEqual(result.count("Caption text"), 1)
+        assert stats["image_occurrences"] == 1
+        assert result.count("image.png") == 1
+        assert result.count("Caption text") == 1
 
     def test_split_images_remain_relative_to_derived_namespace(self) -> None:
         self.convert(
@@ -1931,15 +1905,13 @@ class ConversionTests(unittest.TestCase):
             media={"image.png": PNG},
         )
         child = self.root / "Synthetic Guide" / "01-chapter" / "01-deep.md"
-        self.assertIn(
-            "../../.images/Synthetic%20Guide/image.png", child.read_text(encoding="utf-8")
-        )
+        assert "../../.images/Synthetic%20Guide/image.png" in child.read_text(encoding="utf-8")
 
     def test_emf_svg_publication_collision_gets_a_distinct_name(self) -> None:
         def convert_vectors(
             drawings: dict[str, tuple[bytes, str]], _work: Path
         ) -> dict[str, _media.VectorResult]:
-            self.assertEqual([suffix for _data, suffix in drawings.values()], [".emf"])
+            assert [suffix for _data, suffix in drawings.values()] == [".emf"]
             return {name: (SVG, []) for name in drawings}
 
         with patch.object(_media, "_convert_vectors", convert_vectors):
@@ -1951,11 +1923,11 @@ class ConversionTests(unittest.TestCase):
                 ),
                 media={"image.emf": synthetic_emf(), "image.svg": SVG},
             )
-        self.assertIn("](.images/Synthetic%20Guide/image.svg)", result)
-        self.assertIn("](.images/Synthetic%20Guide/image-2.svg)", result)
-        self.assertIn("Image name image.svg is already used; published as image-2.svg", warnings)
-        self.assertEqual(report.status("images"), "applied")
-        self.assertEqual(report.status("checks"), "applied")
+        assert "](.images/Synthetic%20Guide/image.svg)" in result
+        assert "](.images/Synthetic%20Guide/image-2.svg)" in result
+        assert "Image name image.svg is already used; published as image-2.svg" in warnings
+        assert report.status("images") == "applied"
+        assert report.status("checks") == "applied"
 
     def test_media_with_same_basename_in_distinct_package_paths_are_not_flattened(self) -> None:
         result, _stats = self.convert(
@@ -1966,8 +1938,8 @@ class ConversionTests(unittest.TestCase):
             ),
             media={"one/image.png": PNG, "two/image.png": PNG},
         )
-        self.assertIn("/one/image.png", result)
-        self.assertIn("/two/image.png", result)
+        assert "/one/image.png" in result
+        assert "/two/image.png" in result
 
     def test_missing_media_is_dropped_and_reported_in_diagnostics(self) -> None:
         write_docx(
@@ -1981,31 +1953,30 @@ class ConversionTests(unittest.TestCase):
         with contextlib.redirect_stderr(stderr):
             _pipeline.convert_docx(self.source, keep_intermediates=diagnostics, report=report)
         result = self.source.with_suffix(".md").read_text(encoding="utf-8")
-        self.assertIn("Before", result)
-        self.assertIn("After", result)
-        self.assertNotIn("![", result)
-        self.assertIn(
-            "Missing Word media part 'word/media/missing.png'; image dropped", stderr.getvalue()
+        assert "Before" in result
+        assert "After" in result
+        assert "![" not in result
+        assert (
+            "Missing Word media part 'word/media/missing.png'; image dropped" in stderr.getvalue()
         )
         saved = json.loads((diagnostics / "diagnostics.json").read_text(encoding="utf-8"))
-        self.assertEqual(saved["status"], "published")
-        self.assertEqual(saved["baseline"], "MarkItDown")
-        self.assertEqual(saved["transforms"]["images"]["status"], "not applied")
-        self.assertEqual(
-            saved["transforms"]["images"]["not_applied"],
-            {"Missing Word media part '...'; image dropped": 1},
-        )
+        assert saved["status"] == "published"
+        assert saved["baseline"] == "MarkItDown"
+        assert saved["transforms"]["images"]["status"] == "not applied"
+        assert saved["transforms"]["images"]["not_applied"] == {
+            "Missing Word media part '...'; image dropped": 1
+        }
 
     def test_external_images_are_not_fetched_and_are_reported(self) -> None:
         result, report, warnings = self.convert_reported(
             [paragraph("Before"), image(), paragraph("After")],
             relations=(("image", "image", "https://example.test/image.png", "External"),),
         )
-        self.assertIn("After", result)
-        self.assertNotIn("![", result)
-        self.assertNotIn("example.test", result)
-        self.assertIn("not fetched: 'https://example.test/image.png'; image dropped", warnings)
-        self.assertEqual(report.status("images"), "not applied")
+        assert "After" in result
+        assert "![" not in result
+        assert "example.test" not in result
+        assert "not fetched: 'https://example.test/image.png'; image dropped" in warnings
+        assert report.status("images") == "not applied"
 
     def test_linked_image_with_an_embedded_copy_uses_the_copy(self) -> None:
         content = image()
@@ -2019,10 +1990,10 @@ class ConversionTests(unittest.TestCase):
             ),
             media={"image.png": PNG},
         )
-        self.assertIn("](.images/Synthetic%20Guide/image.png)", result)
-        self.assertNotIn("cid:", result)
-        self.assertEqual(report.status("images"), "applied")
-        self.assertEqual(report.status("checks"), "applied")
+        assert "](.images/Synthetic%20Guide/image.png)" in result
+        assert "cid:" not in result
+        assert report.status("images") == "applied"
+        assert report.status("checks") == "applied"
 
     def test_text_boxes_are_reported_without_stopping_conversion(self) -> None:
         result, report, warnings = self.convert_reported(
@@ -2033,17 +2004,14 @@ class ConversionTests(unittest.TestCase):
                 paragraph("After"),
             ]
         )
-        self.assertIn("Before", result)
-        self.assertIn("After", result)
-        self.assertIn("Boxed legacy text", result)
-        self.assertEqual(
-            dict(report.records["images"].skipped),
-            {
-                "DrawingML text box: no embedded image; its text is omitted": 1,
-                "VML text box: no embedded image; its text is kept after its paragraph": 1,
-            },
-        )
-        self.assertIn("DrawingML text box at paragraph 2: no embedded image", warnings)
+        assert "Before" in result
+        assert "After" in result
+        assert "Boxed legacy text" in result
+        assert dict(report.records["images"].skipped) == {
+            "DrawingML text box: no embedded image; its text is omitted": 1,
+            "VML text box: no embedded image; its text is kept after its paragraph": 1,
+        }
+        assert "DrawingML text box at paragraph 2: no embedded image" in warnings
 
     def test_unconverted_vector_image_is_published_as_is(self) -> None:
         def fail(
@@ -2060,19 +2028,18 @@ class ConversionTests(unittest.TestCase):
                 relations=(("emf", "image", "media/diagram.emf", "Internal"),),
                 media={"diagram.emf": synthetic_emf()},
             )
-        self.assertIn("](.images/Synthetic%20Guide/diagram.emf)", result)
-        self.assertEqual(report.status("images"), "applied")
-        self.assertEqual(
-            dict(report.records["image-conversion"].skipped),
-            {"EMF to SVG conversion failed; published as EMF": 1},
-        )
-        self.assertIn("diagram.emf: synthetic .emf converter failure", warnings)
+        assert "](.images/Synthetic%20Guide/diagram.emf)" in result
+        assert report.status("images") == "applied"
+        assert dict(report.records["image-conversion"].skipped) == {
+            "EMF to SVG conversion failed; published as EMF": 1
+        }
+        assert "diagram.emf: synthetic .emf converter failure" in warnings
 
     def test_wmf_drawings_are_converted_like_emf(self) -> None:
         def convert_wmf(
             drawings: dict[str, tuple[bytes, str]], _work: Path
         ) -> dict[str, _media.VectorResult]:
-            self.assertEqual([suffix for _data, suffix in drawings.values()], [".wmf"])
+            assert [suffix for _data, suffix in drawings.values()] == [".wmf"]
             return {name: (SVG, []) for name in drawings}
 
         with patch.object(_media, "_convert_vectors", convert_wmf):
@@ -2081,9 +2048,9 @@ class ConversionTests(unittest.TestCase):
                 relations=(("wmf", "image", "media/diagram.wmf", "Internal"),),
                 media={"diagram.wmf": b"synthetic WMF"},
             )
-        self.assertIn("](.images/Synthetic%20Guide/diagram.svg)", result)
-        self.assertEqual(dict(report.records["image-conversion"].applied), {"WMF to SVG": 1})
-        self.assertEqual(report.status("images"), "applied")
+        assert "](.images/Synthetic%20Guide/diagram.svg)" in result
+        assert dict(report.records["image-conversion"].applied) == {"WMF to SVG": 1}
+        assert report.status("images") == "applied"
 
     def test_a_documents_drawings_convert_together_and_report_separately(self) -> None:
         calls: list[list[str]] = []
@@ -2112,14 +2079,15 @@ class ConversionTests(unittest.TestCase):
                     "third.wmf": b"synthetic WMF",
                 },
             )
-        self.assertEqual(calls, [[".emf", ".emf", ".wmf"]])
+        assert calls == [[".emf", ".emf", ".wmf"]]
         for name in names:
-            self.assertIn(f"](.images/Synthetic%20Guide/{name}.svg)", result)
-        self.assertEqual(
-            dict(report.records["image-conversion"].applied), {"EMF to SVG": 2, "WMF to SVG": 1}
-        )
-        self.assertIn("third.wmf: synthetic note", warnings)
-        self.assertEqual(warnings.count("synthetic note"), 1)
+            assert f"](.images/Synthetic%20Guide/{name}.svg)" in result
+        assert dict(report.records["image-conversion"].applied) == {
+            "EMF to SVG": 2,
+            "WMF to SVG": 1,
+        }
+        assert "third.wmf: synthetic note" in warnings
+        assert warnings.count("synthetic note") == 1
 
     def test_picture_in_a_drawing_group_is_published(self) -> None:
         result, report, _warnings = self.convert_reported(
@@ -2127,11 +2095,11 @@ class ConversionTests(unittest.TestCase):
             relations=(("image", "image", "media/grouped.png", "Internal"),),
             media={"grouped.png": PNG},
         )
-        self.assertIn(".images/Synthetic%20Guide/grouped.png", result)
-        self.assertIn("Grouped diagram", result)
-        self.assertIn("After", result)
-        self.assertEqual(report.status("images"), "applied")
-        self.assertEqual(report.status("checks"), "applied")
+        assert ".images/Synthetic%20Guide/grouped.png" in result
+        assert "Grouped diagram" in result
+        assert "After" in result
+        assert report.status("images") == "applied"
+        assert report.status("checks") == "applied"
 
     def test_dry_run_has_no_final_writes_and_retains_only_requested_bundle(self) -> None:
         write_docx(self.source, [paragraph("Title.", "Heading1")])
@@ -2140,20 +2108,20 @@ class ConversionTests(unittest.TestCase):
         _pipeline.convert_docx(
             self.source, output, split_depth=1, dry_run=True, keep_intermediates=diagnostics
         )
-        self.assertFalse(output.parent.exists())
-        self.assertEqual(
-            json.loads((diagnostics / "diagnostics.json").read_text(encoding="utf-8"))["status"],
-            "dry-run",
+        assert not output.parent.exists()
+        assert (
+            json.loads((diagnostics / "diagnostics.json").read_text(encoding="utf-8"))["status"]
+            == "dry-run"
         )
-        self.assertTrue((diagnostics / "markitdown.md").is_file())
-        self.assertTrue((diagnostics / "pandoc.html").is_file())
-        self.assertTrue((diagnostics / "reference.docx").is_file())
+        assert (diagnostics / "markitdown.md").is_file()
+        assert (diagnostics / "pandoc.html").is_file()
+        assert (diagnostics / "reference.docx").is_file()
 
     def test_dry_run_without_diagnostics_leaves_directory_listing_unchanged(self) -> None:
         write_docx(self.source, [paragraph("Title.", "Heading1")])
         before = set(self.root.iterdir())
         _pipeline.convert_docx(self.source, dry_run=True)
-        self.assertEqual(set(self.root.iterdir()), before)
+        assert set(self.root.iterdir()) == before
 
     def test_tmpdir_inside_images_is_not_used_as_scratch(self) -> None:
         write_docx(self.source, [paragraph("Text")])
@@ -2169,7 +2137,7 @@ class ConversionTests(unittest.TestCase):
             dry_run: bool,
             report: _diagnostics.TransformReport | None = None,
         ) -> dict[str, int]:
-            self.assertFalse(work.is_relative_to(images))
+            assert not work.is_relative_to(images)
             return original(
                 paths, work, qualify_duplicates=qualify_duplicates, dry_run=dry_run, report=report
             )
@@ -2179,8 +2147,8 @@ class ConversionTests(unittest.TestCase):
             patch.object(_pipeline, "_convert_in_work", inspect_work),
         ):
             _pipeline.convert_docx(self.source, dry_run=True)
-        self.assertFalse(any(images.iterdir()))
-        self.assertFalse(self.source.with_suffix(".md").exists())
+        assert not any(images.iterdir())
+        assert not self.source.with_suffix(".md").exists()
 
     def test_postpublication_diagnostic_failure_reports_outputs_are_published(self) -> None:
         write_docx(self.source, [paragraph("Published content")])
@@ -2207,14 +2175,12 @@ class ConversionTests(unittest.TestCase):
 
         with (
             patch.object(_diagnostics, "write_diagnostics", fail_final_report),
-            self.assertRaisesRegex(_models.ConversionError, "Outputs were published"),
+            pytest.raises(_models.ConversionError, match="Outputs were published"),
         ):
             _pipeline.convert_docx(self.source, keep_intermediates=diagnostics)
-        self.assertEqual(
-            self.source.with_suffix(".md").read_text(encoding="utf-8"), "Published content\n"
-        )
+        assert self.source.with_suffix(".md").read_text(encoding="utf-8") == "Published content\n"
         report = json.loads((diagnostics / "diagnostics.json").read_text(encoding="utf-8"))
-        self.assertIn("Outputs were published", report["error"])
+        assert "Outputs were published" in report["error"]
 
     def test_dry_run_with_replacement_permission_preserves_existing_batch(self) -> None:
         write_docx(self.source, [paragraph("New", "Heading1")])
@@ -2227,15 +2193,15 @@ class ConversionTests(unittest.TestCase):
         pages.mkdir()
         (pages / "old.md").write_text("old page", encoding="utf-8")
         _pipeline.convert_docx(self.source, split_depth=2, dry_run=True, replace_generated=True)
-        self.assertEqual(output.read_text(encoding="utf-8"), "old markdown")
-        self.assertEqual((images / "old.png").read_bytes(), PNG)
-        self.assertEqual((pages / "old.md").read_text(encoding="utf-8"), "old page")
+        assert output.read_text(encoding="utf-8") == "old markdown"
+        assert (images / "old.png").read_bytes() == PNG
+        assert (pages / "old.md").read_text(encoding="utf-8") == "old page"
 
     def test_explicit_markdown_replacement_is_normal_without_directory_content(self) -> None:
         output = self.root / "selected.md"
         output.write_text("old", encoding="utf-8")
         result, _stats = self.convert([paragraph("new")], output=output)
-        self.assertEqual(result, "new\n")
+        assert result == "new\n"
 
     def test_unsafe_destination_is_rejected_before_conversion_or_diagnostics_creation(self) -> None:
         write_docx(self.source, [paragraph("Text")])
@@ -2244,11 +2210,11 @@ class ConversionTests(unittest.TestCase):
         diagnostics = self.root / "diagnostics"
         with (
             patch.object(_source, "prepare_source") as prepare,
-            self.assertRaises(_models.ConversionError),
+            pytest.raises(_models.ConversionError),
         ):
             _pipeline.convert_docx(self.source, output, keep_intermediates=diagnostics)
         prepare.assert_not_called()
-        self.assertFalse(diagnostics.exists())
+        assert not diagnostics.exists()
 
     def test_hyperlink_field_tooltips_stay_out_of_links_without_pandoc(self) -> None:
         # mammoth keeps the \o switch in the link target; the fields become links first.
@@ -2283,12 +2249,12 @@ class ConversionTests(unittest.TestCase):
             contextlib.redirect_stderr(io.StringIO()),
         ):
             _pipeline.convert_docx(self.source, report=report)
-        self.assertEqual(
-            self.source.with_suffix(".md").read_text(encoding="utf-8"),
-            "[Simple label](https://example.test/item)\n\n"
-            "[Complex label](https://example.test/a)\n",
+        assert (
+            self.source.with_suffix(".md").read_text(encoding="utf-8")
+            == "[Simple label](https://example.test/item)\n\n"
+            "[Complex label](https://example.test/a)\n"
         )
-        self.assertEqual(report.status("cleanup"), "not needed")
+        assert report.status("cleanup") == "not needed"
 
     def test_missing_pandoc_publishes_the_markitdown_baseline(self) -> None:
         write_docx(
@@ -2311,21 +2277,18 @@ class ConversionTests(unittest.TestCase):
         ):
             stats = _pipeline.convert_docx(self.source, report=report)
         result = self.source.with_suffix(".md").read_text(encoding="utf-8")
-        self.assertIn("# Title", result)
-        self.assertIn("Text", result)
-        self.assertIn("](.images/Synthetic%20Guide/image.png)", result)
-        self.assertEqual(stats["image_occurrences"], 1)
-        self.assertEqual(report.baseline_images, 1)
+        assert "# Title" in result
+        assert "Text" in result
+        assert "](.images/Synthetic%20Guide/image.png)" in result
+        assert stats["image_occurrences"] == 1
+        assert report.baseline_images == 1
         unavailable = "Pandoc is not installed; see md-doc-converter doctor"
         for name in ("alignment", "images", "tables", "pages", "checks"):
-            self.assertEqual(report.records[name].unavailable, unavailable, name)
-        self.assertEqual(
-            report.summary()[:2],
-            [
-                "docx-to-md: transforms (baseline: MarkItDown; 1 image(s) at MarkItDown positions)",
-                f"  alignment: not applied: {unavailable}",
-            ],
-        )
+            assert report.records[name].unavailable == unavailable, name
+        assert report.summary()[:2] == [
+            "docx-to-md: transforms (baseline: MarkItDown; 1 image(s) at MarkItDown positions)",
+            f"  alignment: not applied: {unavailable}",
+        ]
 
     def test_hidden_text_is_dropped_with_and_without_alignment(self) -> None:
         def hidden(text: str) -> ET.Element:
@@ -2341,11 +2304,11 @@ class ConversionTests(unittest.TestCase):
         whole.append(hidden("HIDDEN PARAGRAPH"))
         body = [paragraph("Title", "Heading1"), mixed, whole, paragraph("After")]
         result, report, _warnings = self.convert_reported(body)
-        self.assertIn("Shown text.", result)
-        self.assertNotIn("SECRET", result)
-        self.assertNotIn("HIDDEN", result)
-        self.assertIn("  hidden-text: applied (2)", report.summary())
-        self.assertEqual(report.status("checks"), "applied")
+        assert "Shown text." in result
+        assert "SECRET" not in result
+        assert "HIDDEN" not in result
+        assert "  hidden-text: applied (2)" in report.summary()
+        assert report.status("checks") == "applied"
         original = shutil.which
 
         def without_pandoc(
@@ -2361,10 +2324,10 @@ class ConversionTests(unittest.TestCase):
         ):
             _pipeline.convert_docx(self.source, replace_generated=True, report=report)
         result = self.source.with_suffix(".md").read_text(encoding="utf-8")
-        self.assertIn("After", result)
-        self.assertNotIn("SECRET", result)
-        self.assertNotIn("HIDDEN", result)
-        self.assertIn("  hidden-text: applied (2)", report.summary())
+        assert "After" in result
+        assert "SECRET" not in result
+        assert "HIDDEN" not in result
+        assert "  hidden-text: applied (2)" in report.summary()
 
     def test_unicode_spaces_become_spaces_except_an_indent(self) -> None:
         body = [
@@ -2382,14 +2345,14 @@ class ConversionTests(unittest.TestCase):
         relations = (("image", "image", "media/image.png", "Internal"),)
         media = {"image.png": PNG}
         result, report, warnings = self.convert_reported(body, relations=relations, media=media)
-        self.assertIn("Clock 100 MHz and bit-bash.", result)
+        assert "Clock 100 MHz and bit-bash." in result
         # Markdown keeps only no-break spaces at the start of a paragraph.
-        self.assertIn("if (a) {\n\n\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0b = 1; // set\n\n}", result)
-        self.assertIn("| a b | |", result)
-        self.assertIn("![Diagram one](", result)
-        self.assertEqual(result.count("\u00a0"), 6)
-        self.assertIn("  spaces: applied (11)", report.summary())
-        self.assertEqual(report.status("checks"), "applied", warnings)
+        assert "if (a) {\n\n\xa0\xa0\xa0\xa0\xa0\xa0b = 1; // set\n\n}" in result
+        assert "| a b | |" in result
+        assert "![Diagram one](" in result
+        assert result.count("\xa0") == 6
+        assert "  spaces: applied (11)" in report.summary()
+        assert report.status("checks") == "applied", warnings
         original = shutil.which
 
         def without_pandoc(
@@ -2405,10 +2368,10 @@ class ConversionTests(unittest.TestCase):
         ):
             _pipeline.convert_docx(self.source, replace_generated=True, report=report)
         result = self.source.with_suffix(".md").read_text(encoding="utf-8")
-        self.assertIn("Clock 100 MHz and bit-bash.", result)
-        self.assertIn("![Diagram one](", result)
-        self.assertEqual(result.count("\u00a0"), 6)
-        self.assertIn("  spaces: applied (11)", report.summary())
+        assert "Clock 100 MHz and bit-bash." in result
+        assert "![Diagram one](" in result
+        assert result.count("\xa0") == 6
+        assert "  spaces: applied (11)" in report.summary()
 
     def test_header_breaks_become_spaces_and_cells_lose_empty_edge_lines(self) -> None:
         def broken(first: str, second: str) -> ET.Element:
@@ -2432,12 +2395,11 @@ class ConversionTests(unittest.TestCase):
                 ),
             ]
         )
-        self.assertIn(
+        assert (
             "| Addr [31:24] | Two paras |\n| --- | --- |\n| line1<br>line2 | in<br><br>side |\n"
-            "| trailing | leading |\n| end | x |\n",
-            result,
+            "| trailing | leading |\n| end | x |\n" in result
         )
-        self.assertEqual(report.status("checks"), "applied", warnings)
+        assert report.status("checks") == "applied", warnings
 
     def test_monospace_paragraphs_become_a_fenced_code_block(self) -> None:
         indented = code_run("wait();")
@@ -2460,16 +2422,15 @@ class ConversionTests(unittest.TestCase):
             paragraph("After."),
         ]
         result, report, warnings = self.convert_reported(body)
-        self.assertIn(
+        assert (
             'Before.\n\n````text\nif (state == "busy") {\n    wait();\n\n'
-            "} # end - done\n```\n````\n\nAfter.",
-            result,
+            "} # end - done\n```\n````\n\nAfter." in result
         )
-        self.assertIn(
-            "  code: applied (1 code block(s), 3 curly quote(s) and dash(es) straightened)",
-            report.summary(),
+        assert (
+            "  code: applied (1 code block(s), 3 curly quote(s) and dash(es) straightened)"
+            in report.summary()
         )
-        self.assertEqual(report.status("checks"), "applied", warnings)
+        assert report.status("checks") == "applied", warnings
 
     def test_a_one_cell_monospace_table_becomes_a_code_block(self) -> None:
         listing = cell(
@@ -2483,14 +2444,13 @@ class ConversionTests(unittest.TestCase):
             table(row(cell(paragraph_of(code_run("not code"))), cell("Next")), columns=2),
         ]
         result, report, warnings = self.convert_reported(body)
-        self.assertIn("Before.\n\n```text\nx = <a> & `b`\n\n  y = 2\n```\n\nAfter.", result)
-        self.assertIn("| `not code` | Next |", result)
-        self.assertIn(
+        assert "Before.\n\n```text\nx = <a> & `b`\n\n  y = 2\n```\n\nAfter." in result
+        assert "| `not code` | Next |" in result
+        assert (
             "  code: applied (1 code block(s), 1 inline code span(s), "
-            "1 one-cell table(s) made code blocks)",
-            report.summary(),
+            "1 one-cell table(s) made code blocks)" in report.summary()
         )
-        self.assertEqual(report.status("checks"), "applied", warnings)
+        assert report.status("checks") == "applied", warnings
 
     def test_monospace_text_becomes_inline_code_outside_headings_links_and_fields(self) -> None:
         bold = code_run("reg[3:0] ")
@@ -2536,15 +2496,15 @@ class ConversionTests(unittest.TestCase):
         result, report, warnings = self.convert_reported(
             body, relations=(("web", "hyperlink", "https://example.test/doc", "External"),)
         )
-        self.assertIn("Set `ctrl_reg[3:0]` to \u201cidle\u201d.", result)
-        self.assertIn("Run `` `cmd` `` now.", result)
-        self.assertIn("Broken `one`\n\n`two` end.", result)
-        self.assertIn("[linked label](https://example.test/doc)", result)
-        self.assertIn("By Field Author", result)
-        self.assertIn("## Monospace heading", result)
-        self.assertIn("| mode | `a\\|b` |", result)
-        self.assertIn("  code: applied (5 inline code span(s))", report.summary())
-        self.assertEqual(report.status("checks"), "applied", warnings)
+        assert "Set `ctrl_reg[3:0]` to “idle”." in result
+        assert "Run `` `cmd` `` now." in result
+        assert "Broken `one`\n\n`two` end." in result
+        assert "[linked label](https://example.test/doc)" in result
+        assert "By Field Author" in result
+        assert "## Monospace heading" in result
+        assert "| mode | `a\\|b` |" in result
+        assert "  code: applied (5 inline code span(s))" in report.summary()
+        assert report.status("checks") == "applied", warnings
 
     def test_failed_alignment_falls_back_to_the_markitdown_baseline(self) -> None:
         def fail(*_arguments: object) -> NoReturn:
@@ -2556,15 +2516,13 @@ class ConversionTests(unittest.TestCase):
                 relations=(("image", "image", "media/image.png", "Internal"),),
                 media={"image.png": PNG},
             )
-        self.assertIn("Text", result)
-        self.assertIn("](.images/Synthetic%20Guide/image.png)", result)
-        self.assertEqual(report.records["alignment"].failure, "synthetic alignment failure")
-        self.assertEqual(report.records["tables"].unavailable, "alignment failed; see alignment")
-        self.assertEqual(report.baseline_images, 1)
-        self.assertEqual(report.status("checks"), "applied")
-        self.assertIn(
-            "alignment: failed and was not applied: synthetic alignment failure", warnings
-        )
+        assert "Text" in result
+        assert "](.images/Synthetic%20Guide/image.png)" in result
+        assert report.records["alignment"].failure == "synthetic alignment failure"
+        assert report.records["tables"].unavailable == "alignment failed; see alignment"
+        assert report.baseline_images == 1
+        assert report.status("checks") == "applied"
+        assert "alignment: failed and was not applied: synthetic alignment failure" in warnings
 
     def test_a_failing_layer_is_reported_and_the_rest_is_published(self) -> None:
         def fail(_markdown: str) -> tuple[str, int]:
@@ -2572,10 +2530,10 @@ class ConversionTests(unittest.TestCase):
 
         with patch.object(_normalization, "normalize_unordered_lists", fail):
             result, report, _warnings = self.convert_reported([paragraph("Text")])
-        self.assertEqual(result, "Text\n")
-        self.assertEqual(report.status("cleanup"), "not applied")
-        self.assertEqual(report.records["cleanup"].failure, "RuntimeError: synthetic layer failure")
-        self.assertEqual(report.status("checks"), "applied")
+        assert result == "Text\n"
+        assert report.status("cleanup") == "not applied"
+        assert report.records["cleanup"].failure == "RuntimeError: synthetic layer failure"
+        assert report.status("checks") == "applied"
 
     def test_heading_level_seven_is_kept_as_a_paragraph(self) -> None:
         deep = paragraph("Level seven")
@@ -2583,12 +2541,11 @@ class ConversionTests(unittest.TestCase):
         ET.SubElement(properties, W + "outlineLvl", {W + "val": "6"})
         deep.insert(0, properties)
         result, report, _warnings = self.convert_reported([paragraph("Title", "Heading1"), deep])
-        self.assertIn("Level seven", result)
-        self.assertNotIn("# Level seven", result)
-        self.assertEqual(
-            dict(report.records["headings"].skipped),
-            {"Word heading levels 7-9 have no Markdown equivalent; kept as a paragraph": 1},
-        )
+        assert "Level seven" in result
+        assert "# Level seven" not in result
+        assert dict(report.records["headings"].skipped) == {
+            "Word heading levels 7-9 have no Markdown equivalent; kept as a paragraph": 1
+        }
 
     def test_unnamed_and_duplicate_bookmarks_are_reported(self) -> None:
         result, report, _warnings = self.convert_reported(
@@ -2599,14 +2556,11 @@ class ConversionTests(unittest.TestCase):
                 hyperlink("Go", anchor="_Twice"),
             ]
         )
-        self.assertIn("[Go](#first)", result)
-        self.assertEqual(
-            dict(report.records["bookmarks"].skipped),
-            {
-                "Word bookmark has no name; dropped": 1,
-                "duplicate Word bookmark name; the later one is dropped": 1,
-            },
-        )
+        assert "[Go](#first)" in result
+        assert dict(report.records["bookmarks"].skipped) == {
+            "Word bookmark has no name; dropped": 1,
+            "duplicate Word bookmark name; the later one is dropped": 1,
+        }
 
     def test_split_depths_follow_closed_heading_levels_and_bookmark_links(self) -> None:
         # Headings 1, 3, and 6 become levels 1, 2, and 3, and each depth splits at them.
@@ -2625,38 +2579,34 @@ class ConversionTests(unittest.TestCase):
                 stats = _pipeline.convert_docx(self.source, output, split_depth=depth)
                 pages = output.parent / "guide"
                 if depth == 0:
-                    self.assertIn(
-                        "# First\n\n[Deeper](#third)\n\n## Third\n\n### Detail\n\n[Up](#first)",
-                        output.read_text(encoding="utf-8"),
+                    assert (
+                        "# First\n\n[Deeper](#third)\n\n## Third\n\n### Detail\n\n[Up](#first)"
+                        in output.read_text(encoding="utf-8")
                     )
                 elif depth == 1:
-                    self.assertIn(
-                        "## Third\n\n### Detail\n\n[Up](#first)",
-                        (pages / "01-first.md").read_text(encoding="utf-8"),
-                    )
+                    assert "## Third\n\n### Detail\n\n[Up](#first)" in (
+                        pages / "01-first.md"
+                    ).read_text(encoding="utf-8")
                 elif depth == 2:
-                    self.assertIn(
-                        "[Deeper](01-first/01-third.md#third)",
-                        (pages / "01-first.md").read_text(encoding="utf-8"),
-                    )
-                    self.assertIn(
-                        "# Third\n\n## Detail\n\n[Up](../01-first.md#first)",
-                        (pages / "01-first" / "01-third.md").read_text(encoding="utf-8"),
-                    )
+                    assert "[Deeper](01-first/01-third.md#third)" in (
+                        pages / "01-first.md"
+                    ).read_text(encoding="utf-8")
+                    assert "# Third\n\n## Detail\n\n[Up](../01-first.md#first)" in (
+                        pages / "01-first" / "01-third.md"
+                    ).read_text(encoding="utf-8")
                 else:
                     detail = pages / "01-first" / "01-third" / "01-detail.md"
-                    self.assertIn(
-                        "# Detail\n\n[Up](../../01-first.md#first)",
-                        detail.read_text(encoding="utf-8"),
+                    assert "# Detail\n\n[Up](../../01-first.md#first)" in detail.read_text(
+                        encoding="utf-8"
                     )
-                self.assertGreaterEqual(stats["pages"], 1)
+                assert stats["pages"] >= 1
 
     def test_depth_zero_preserves_previous_page_tree(self) -> None:
         old = self.root / "Synthetic Guide"
         old.mkdir()
         (old / "old.md").write_text("old", encoding="utf-8")
         self.convert([paragraph("New text")])
-        self.assertEqual((old / "old.md").read_text(encoding="utf-8"), "old")
+        assert (old / "old.md").read_text(encoding="utf-8") == "old"
 
     def test_duplicate_qualification_is_opt_in(self) -> None:
         result, stats = self.convert(
@@ -2668,12 +2618,12 @@ class ConversionTests(unittest.TestCase):
             ],
             qualify=True,
         )
-        self.assertIn("### Same - occurrence 1", result)
-        self.assertIn("### Same - occurrence 2", result)
-        self.assertNotIn("<a ", result)
-        self.assertIn("[First](#same---occurrence-1)", result)
-        self.assertIn("[Second](#same---occurrence-2)", result)
-        self.assertEqual(stats["qualified_headings"], 2)
+        assert "### Same - occurrence 1" in result
+        assert "### Same - occurrence 2" in result
+        assert "<a " not in result
+        assert "[First](#same---occurrence-1)" in result
+        assert "[Second](#same---occurrence-2)" in result
+        assert stats["qualified_headings"] == 2
 
     def test_generated_toc_results_are_retained(self) -> None:
         index = ET.Element(W + "p")
@@ -2687,9 +2637,9 @@ class ConversionTests(unittest.TestCase):
             ],
             split_depth=1,
         )
-        self.assertIn("Contents", result)
+        assert "Contents" in result
         contents = self.root / "Synthetic Guide" / "01-contents.md"
-        self.assertIn("Cached contents entry", contents.read_text(encoding="utf-8"))
+        assert "Cached contents entry" in contents.read_text(encoding="utf-8")
 
     def test_complex_toc_field_results_and_blank_rows_survive(self) -> None:
         start = ET.Element(W + "p")
@@ -2710,8 +2660,8 @@ class ConversionTests(unittest.TestCase):
                 table(row(cell(""), cell(""))),
             ]
         )
-        self.assertIn("Cached field entry", result)
-        self.assertEqual(len(list(_reference.pandoc_html(result, self.pandoc).iter("tr"))), 1)
+        assert "Cached field entry" in result
+        assert len(list(_reference.pandoc_html(result, self.pandoc).iter("tr"))) == 1
 
     def test_toc_page_reference_fields_are_dropped_from_their_links(self) -> None:
         for simple in (False, True):
@@ -2734,15 +2684,14 @@ class ConversionTests(unittest.TestCase):
                 )
 
                 parsed = _reference.pandoc_html(result, self.pandoc)
-                self.assertEqual(
-                    [(node.get("href"), "".join(node.itertext())) for node in parsed.iter("a")],
-                    [("#first", "First"), ("#second", "Second")],
+                assert [
+                    (node.get("href"), "".join(node.itertext())) for node in parsed.iter("a")
+                ] == [("#first", "First"), ("#second", "Second")]
+                assert (
+                    report.records["fields"].applied["table-of-contents page number(s) dropped"]
+                    == 2
                 )
-                self.assertEqual(
-                    report.records["fields"].applied["table-of-contents page number(s) dropped"],
-                    2,
-                )
-                self.assertIn("## Second\n", result)
+                assert "## Second\n" in result
 
     def test_word_table_of_contents_keeps_entry_numbers_and_links_without_pages(self) -> None:
         result, report, _warnings = self.convert_reported(
@@ -2757,10 +2706,10 @@ class ConversionTests(unittest.TestCase):
             ]
         )
 
-        self.assertIn("[1 Introduction](#introduction)\n\n[2 Setup](#setup)\n", result)
-        self.assertEqual(report.status("links"), "applied")
-        self.assertEqual(report.status("checks"), "applied")
-        self.assertFalse(report.records["checks"].skipped)
+        assert "[1 Introduction](#introduction)\n\n[2 Setup](#setup)\n" in result
+        assert report.status("links") == "applied"
+        assert report.status("checks") == "applied"
+        assert not report.records["checks"].skipped
 
     def test_literal_word_placeholders_entities_and_tables_keep_their_text(self) -> None:
         split = paragraph("<sp", bold=True)
@@ -2793,12 +2742,12 @@ class ConversionTests(unittest.TestCase):
             "<width> &copy;",
             "<height> &copy;",
         ):
-            self.assertIn(literal, visible)
-        self.assertFalse(list(parsed.iter("speeds")))
-        self.assertFalse(list(parsed.iter("blockquote")))
-        self.assertEqual(_validation.collect_references(parsed).links, ["#mode-copy"])
+            assert literal in visible
+        assert not list(parsed.iter("speeds"))
+        assert not list(parsed.iter("blockquote"))
+        assert _validation.collect_references(parsed).links == ["#mode-copy"]
         # The heading loses its period, not the semicolon of its entity-like text.
-        self.assertEqual("".join(next(parsed.iter("h3")).itertext()), "<Mode> &copy;")
+        assert "".join(next(parsed.iter("h3")).itertext()) == "<Mode> &copy;"
 
     def test_rich_table_heading_is_not_a_split_page_heading(self) -> None:
         self.convert(
@@ -2810,12 +2759,12 @@ class ConversionTests(unittest.TestCase):
         )
         child = self.root / "Synthetic Guide" / "01-chapter.md"
         content = child.read_text(encoding="utf-8")
-        self.assertIn("<h1>In-cell heading</h1>", content)
-        self.assertEqual(
+        assert "<h1>In-cell heading</h1>" in content
+        assert (
             _validation.collect_references(
                 _reference.pandoc_html(content, self.pandoc)
-            ).headings.count(1),
-            1,
+            ).headings.count(1)
+            == 1
         )
 
     def test_urls_as_link_text_stay_one_link(self) -> None:
@@ -2832,24 +2781,21 @@ class ConversionTests(unittest.TestCase):
                 ("www", "hyperlink", "https://www.example.test/a_b", "External"),
             ),
         )
-        self.assertNotIn("[[", result)
-        self.assertNotIn("&#92;", result)
+        assert "[[" not in result
+        assert "&#92;" not in result
         links = [
             (node.get("href"), "".join(node.itertext()))
             for node in _reference.pandoc_html(result, self.pandoc).iter("a")
         ]
-        self.assertEqual(
-            links,
-            [
-                (url, url),
-                ("https://www.example.test/a_b", "www.example.test/a_b"),
-                # A bare URL in prose becomes an autolink of its own.
-                ("https://example.test/plain_path", "https://example.test/plain_path"),
-            ],
-        )
-        self.assertIn("See <https://example.test/plain_path> for details.", result)
-        self.assertEqual(report.status("checks"), "applied")
-        self.assertFalse(report.records["checks"].skipped)
+        assert links == [
+            (url, url),
+            ("https://www.example.test/a_b", "www.example.test/a_b"),
+            # A bare URL in prose becomes an autolink of its own.
+            ("https://example.test/plain_path", "https://example.test/plain_path"),
+        ]
+        assert "See <https://example.test/plain_path> for details." in result
+        assert report.status("checks") == "applied"
+        assert not report.records["checks"].skipped
 
     def test_hyperlink_field_preserves_destination_label_and_screen_tip(self) -> None:
         content = ET.Element(W + "p")
@@ -2862,7 +2808,7 @@ class ConversionTests(unittest.TestCase):
         )
         field.append(_ooxml.word_run("Source label"))
         result, _stats = self.convert([content])
-        self.assertEqual(result, '[Source label](https://example.test/item "Say \\"hi\\"")\n')
+        assert result == '[Source label](https://example.test/item "Say \\"hi\\"")\n'
 
     def test_complex_hyperlink_field_and_tooltip_preserve_link(self) -> None:
         content = ET.Element(W + "p")
@@ -2877,7 +2823,7 @@ class ConversionTests(unittest.TestCase):
             else:
                 ET.SubElement(run, W + "fldChar", {W + "fldCharType": kind})
         result, _stats = self.convert([content])
-        self.assertEqual(result, '[Cached label](https://example.test/a "Tip")\n')
+        assert result == '[Cached label](https://example.test/a "Tip")\n'
 
     def test_field_boundary_run_content_survives_real_conversion(self) -> None:
         for bold in (False, True):
@@ -2901,17 +2847,17 @@ class ConversionTests(unittest.TestCase):
                 )
                 parsed = _reference.pandoc_html(result, self.pandoc)
                 visible = "".join(parsed.itertext())
-                self.assertIn("Before", visible)
-                self.assertIn("Cached label", visible)
-                self.assertIn("After", visible)
-                self.assertEqual(
-                    _validation.collect_references(parsed).links, ["https://example.test/plain"]
-                )
+                assert "Before" in visible
+                assert "Cached label" in visible
+                assert "After" in visible
+                assert _validation.collect_references(parsed).links == [
+                    "https://example.test/plain"
+                ]
                 if bold:
                     strong = ["".join(node.itertext()) for node in parsed.iter("strong")]
-                    self.assertTrue(any("Before" in text for text in strong))
-                    self.assertTrue(any("After" in text for text in strong))
-                    self.assertEqual(len(_validation.collect_references(parsed).images), 2)
+                    assert any("Before" in text for text in strong)
+                    assert any("After" in text for text in strong)
+                    assert len(_validation.collect_references(parsed).images) == 2
 
     def test_hyperlink_url_containing_toc_is_not_a_toc_field(self) -> None:
         target = "https://example.test/TOC"
@@ -2928,12 +2874,9 @@ class ConversionTests(unittest.TestCase):
                     field = ET.SubElement(content, W + "fldSimple", {W + "instr": instruction})
                     field.append(_ooxml.word_run("Cached label"))
                 result, _stats = self.convert([content], output=self.root / f"toc-url-{kind}.md")
-                self.assertEqual(
-                    _validation.collect_references(
-                        _reference.pandoc_html(result, self.pandoc)
-                    ).links,
-                    [target],
-                )
+                assert _validation.collect_references(
+                    _reference.pandoc_html(result, self.pandoc)
+                ).links == [target]
 
     def test_custom_style_outline_level_is_preserved(self) -> None:
         source = paragraph("Custom heading.")
@@ -2941,13 +2884,13 @@ class ConversionTests(unittest.TestCase):
         ET.SubElement(properties, W + "outlineLvl", {W + "val": "4"})
         source.insert(0, properties)
         result, _stats = self.convert([source])
-        self.assertIn("##### Custom heading\n", result)
+        assert "##### Custom heading\n" in result
 
     def test_encrypted_container_is_rejected_without_bypass(self) -> None:
         self.source.write_bytes(bytes.fromhex("d0cf11e0a1b11ae1") + b"encrypted office container")
         with (
             patch.object(_reference, "run_command") as run,
-            self.assertRaisesRegex(_models.ConversionError, "not bypassed"),
+            pytest.raises(_models.ConversionError, match="not bypassed"),
         ):
             _pipeline.convert_docx(self.source)
         run.assert_not_called()
@@ -2963,7 +2906,7 @@ class ConversionTests(unittest.TestCase):
         diagnostics = self.root / "diagnostics"
         _pipeline.convert_docx(self.source, keep_intermediates=diagnostics)
         with zipfile.ZipFile(diagnostics / "reference.docx") as archive:
-            self.assertEqual(archive.read("word/settings.xml"), protection)
+            assert archive.read("word/settings.xml") == protection
 
     def test_one_level_lists_in_table_cells_become_lines(self) -> None:
         result, report, warnings = self.convert_reported(
@@ -2978,13 +2921,13 @@ class ConversionTests(unittest.TestCase):
             ],
             extras={"word/numbering.xml": numbering_xml("decimal", 1, second="bullet")},
         )
-        self.assertIn("| A | 1. first<br>2. second |", result)
-        self.assertIn("| B | \u2022 bullet |", result)
-        self.assertIn("| C | 1. typed<br>3. listed |", result)
-        self.assertNotIn("<table", result)
-        self.assertNotIn("remains HTML", warnings)
+        assert "| A | 1. first<br>2. second |" in result
+        assert "| B | • bullet |" in result
+        assert "| C | 1. typed<br>3. listed |" in result
+        assert "<table" not in result
+        assert "remains HTML" not in warnings
         # The final-table check expects the markers before Word's list items only.
-        self.assertEqual(report.status("checks"), "applied")
+        assert report.status("checks") == "applied"
 
     def test_indented_and_unnumbered_cell_paragraphs_become_lines(self) -> None:
         indented = paragraph("Indented note")
@@ -3008,11 +2951,11 @@ class ConversionTests(unittest.TestCase):
             ],
             extras={"word/numbering.xml": numbering_xml("decimal", 1)},
         )
-        self.assertIn("| A | Lead<br>Indented note |", result)
-        self.assertIn("| B | 1. first<br>more about first<br>2. second |", result)
-        self.assertNotIn("<table", result)
-        self.assertNotIn("remains HTML", warnings)
-        self.assertEqual(report.status("checks"), "applied")
+        assert "| A | Lead<br>Indented note |" in result
+        assert "| B | 1. first<br>more about first<br>2. second |" in result
+        assert "<table" not in result
+        assert "remains HTML" not in warnings
+        assert report.status("checks") == "applied"
 
     def test_sub_sup_mark_and_u_keep_tables_and_links_markdown(self) -> None:
         def run(text: str, name: str = "", value: str = "") -> ET.Element:
@@ -3055,15 +2998,15 @@ class ConversionTests(unittest.TestCase):
             ],
             relations=(("site", "hyperlink", "https://example.test/Spec.pptx", "External"),),
         )
-        self.assertIn(
-            r"| x<sup>2</sup> | H<sub>2</sub>O, <mark>new</mark> and <u>a\|b \*c\*</u> |", result
+        assert (
+            r"| x<sup>2</sup> | H<sub>2</sub>O, <mark>new</mark> and <u>a\|b \*c\*</u> |" in result
         )
         # Links show as underlined, so their text drops Word's underline.
-        self.assertIn("[Spec.pptx](https://example.test/Spec.pptx)", result)
-        self.assertNotIn("<table", result)
-        self.assertNotIn("<a href", result)
-        self.assertNotIn("remains HTML", warnings)
-        self.assertEqual(report.status("checks"), "applied")
+        assert "[Spec.pptx](https://example.test/Spec.pptx)" in result
+        assert "<table" not in result
+        assert "<a href" not in result
+        assert "remains HTML" not in warnings
+        assert report.status("checks") == "applied"
 
     def test_brackets_stay_escaped_only_where_they_could_be_read_differently(self) -> None:
         result, report, _warnings = self.convert_reported(
@@ -3078,10 +3021,10 @@ class ConversionTests(unittest.TestCase):
             ],
             extras={"word/numbering.xml": numbering_xml("decimal", 1)},
         )
-        self.assertIn(r"Bits [3:0] of ctrl[7]; the text \[a\](b) is not a link.", result)
-        self.assertIn(r"1. \[1:0\]: low bits", result)
-        self.assertIn("| mode[1:0] | 7) seven |", result)
-        self.assertEqual(report.records["cleanup"].applied["unneeded escape(s) removed"], 7)
+        assert r"Bits [3:0] of ctrl[7]; the text \[a\](b) is not a link." in result
+        assert r"1. \[1:0\]: low bits" in result
+        assert "| mode[1:0] | 7) seven |" in result
+        assert report.records["cleanup"].applied["unneeded escape(s) removed"] == 7
 
     def test_list_items_without_text_are_omitted_keeping_word_numbers(self) -> None:
         result, report, _warnings = self.convert_reported(
@@ -3100,20 +3043,21 @@ class ConversionTests(unittest.TestCase):
         )
         # Word numbers the empty first item 1, so the list starts at 2; the empty item
         # between two others keeps its place so that "b" stays 4.
-        self.assertRegex(result, r"(?m)^2\. a$")
-        self.assertRegex(result, r"(?m)^3\.$")
-        self.assertRegex(result, r"(?m)^4\. b$")
-        self.assertNotRegex(result, r"(?m)^(1|5)\.")
-        self.assertRegex(result, r"(?m)^- x$")
-        self.assertRegex(result, r"(?m)^- y$")
-        self.assertNotRegex(result, r"(?m)^-$")
-        self.assertEqual(report.records["lists"].applied["empty Word list item(s) omitted"], 3)
+        assert re.search(r"(?m)^2\. a$", result)
+        assert re.search(r"(?m)^3\.$", result)
+        assert re.search(r"(?m)^4\. b$", result)
+        assert not re.search(r"(?m)^(1|5)\.", result)
+        assert re.search(r"(?m)^- x$", result)
+        assert re.search(r"(?m)^- y$", result)
+        assert not re.search(r"(?m)^-$", result)
+        assert report.records["lists"].applied["empty Word list item(s) omitted"] == 3
 
     def test_deleted_list_items_and_tables_are_not_written(self) -> None:
         # Track Changes deletions: a list item's text and paragraph mark, and a table's rows.
         item = numbered("")
         run, properties = item.find(W + "r"), item.find(W + "pPr")
-        assert run is not None and properties is not None
+        assert run is not None
+        assert properties is not None
         item.remove(run)
         ET.SubElement(ET.SubElement(properties, W + "rPr"), W + "del", {W + "id": "1"})
         deleted = ET.SubElement(ET.SubElement(item, W + "del", {W + "id": "2"}), W + "r")
@@ -3135,9 +3079,9 @@ class ConversionTests(unittest.TestCase):
             ],
             extras={"word/numbering.xml": numbering_xml("decimal", 1)},
         )
-        self.assertNotIn("<table", result)
-        self.assertNotIn("Removed", result)
-        self.assertIn("1. one\n\n2. two", result)
+        assert "<table" not in result
+        assert "Removed" not in result
+        assert "1. one\n\n2. two" in result
 
     def test_accepted_view_and_package_metadata_are_consistent(self) -> None:
         content = ET.Element(W + "p")
@@ -3151,11 +3095,11 @@ class ConversionTests(unittest.TestCase):
         diagnostics = self.root / "debug"
         _pipeline.convert_docx(self.source, keep_intermediates=diagnostics)
         result = self.source.with_suffix(".md").read_text(encoding="utf-8")
-        self.assertIn("Accepted text", result)
-        self.assertNotIn("Deleted text", result)
-        self.assertEqual(self.source.read_bytes(), original)
+        assert "Accepted text" in result
+        assert "Deleted text" not in result
+        assert self.source.read_bytes() == original
         with zipfile.ZipFile(diagnostics / "reference.docx") as archive:
-            self.assertEqual(archive.read("docProps/custom.xml"), custom)
+            assert archive.read("docProps/custom.xml") == custom
 
     def test_source_local_hyperlink_is_rebased_and_validated(self) -> None:
         asset = self.root / "Other File.txt"
@@ -3166,7 +3110,7 @@ class ConversionTests(unittest.TestCase):
             output=output,
             relations=(("local", "hyperlink", "Other%20File.txt", "External"),),
         )
-        self.assertIn("../Other%20File.txt", result)
+        assert "../Other%20File.txt" in result
 
     def test_replaced_page_tree_cannot_supply_stale_link_targets(self) -> None:
         output = self.root / "guide.md"
@@ -3196,12 +3140,10 @@ class ConversionTests(unittest.TestCase):
             )
 
         publish.assert_called_once()
-        self.assertIn(
-            "a link into the page tree has no prepared page", report.records["checks"].skipped
-        )
-        self.assertIn("Link into the replaced page tree has no prepared page", stderr.getvalue())
-        self.assertFalse(old_page.exists())
-        self.assertTrue((old_pages / "01-new.md").is_file())
+        assert "a link into the page tree has no prepared page" in report.records["checks"].skipped
+        assert "Link into the replaced page tree has no prepared page" in stderr.getvalue()
+        assert not old_page.exists()
+        assert (old_pages / "01-new.md").is_file()
 
     def test_prepared_page_replaces_stale_content_for_fragment_validation(self) -> None:
         pages = self.root / "guide"
@@ -3227,9 +3169,9 @@ class ConversionTests(unittest.TestCase):
             self.source, self.root / "guide.md", split_depth=1, replace_generated=True
         )
 
-        self.assertIn("# New", child.read_text(encoding="utf-8"))
-        self.assertNotIn("_Fresh", child.read_text(encoding="utf-8"))
-        self.assertEqual(outside.read_text(encoding="utf-8"), "# Outside\n")
+        assert "# New" in child.read_text(encoding="utf-8")
+        assert "_Fresh" not in child.read_text(encoding="utf-8")
+        assert outside.read_text(encoding="utf-8") == "# Outside\n"
 
     def test_depth_zero_allows_links_to_retained_old_pages(self) -> None:
         old_pages = self.root / "guide"
@@ -3244,8 +3186,8 @@ class ConversionTests(unittest.TestCase):
 
         _pipeline.convert_docx(self.source, self.root / "guide.md")
 
-        self.assertEqual(old_page.read_text(encoding="utf-8"), "# Old\n")
-        self.assertIn("guide/old.md#old", (self.root / "guide.md").read_text(encoding="utf-8"))
+        assert old_page.read_text(encoding="utf-8") == "# Old\n"
+        assert "guide/old.md#old" in (self.root / "guide.md").read_text(encoding="utf-8")
 
     def test_replaced_image_tree_cannot_supply_stale_link_targets(self) -> None:
         output = self.root / "guide.md"
@@ -3270,9 +3212,9 @@ class ConversionTests(unittest.TestCase):
             _pipeline.convert_docx(self.source, output, replace_generated=True, report=report)
 
         publish.assert_called_once()
-        self.assertIn("a linked image file is missing", report.records["checks"].skipped)
-        self.assertIn("Missing linked asset in guide.md: .images/guide/old.svg", stderr.getvalue())
-        self.assertFalse(old_image.exists())
+        assert "a linked image file is missing" in report.records["checks"].skipped
+        assert "Missing linked asset in guide.md: .images/guide/old.svg" in stderr.getvalue()
+        assert not old_image.exists()
 
     def test_external_url_escaping_survives_real_conversion_and_tables(self) -> None:
         for index, (target, expected) in enumerate(
@@ -3314,8 +3256,8 @@ class ConversionTests(unittest.TestCase):
                 rendered = _validation.collect_references(
                     _reference.pandoc_html(result, self.pandoc)
                 ).links
-                self.assertEqual(rendered[:2], [expected, expected])
-                self.assertEqual(rendered[2], target)
+                assert rendered[:2] == [expected, expected]
+                assert rendered[2] == target
 
     def test_pandoc_generated_docx_preserves_unicode_parenthesized_external_url(self) -> None:
         target = "https://example.test/R\u00e9sum\u00e9_(detail)"
@@ -3333,24 +3275,22 @@ class ConversionTests(unittest.TestCase):
             text=True,
         )
 
-        self.assertEqual(result.returncode, 0, result.stderr)
+        assert result.returncode == 0, result.stderr
         links = _validation.collect_references(
             _reference.pandoc_html(output.read_text(encoding="utf-8"), self.pandoc)
         ).links
-        self.assertEqual(links, ["https://example.test/R%C3%A9sum%C3%A9_%28detail%29"])
+        assert links == ["https://example.test/R%C3%A9sum%C3%A9_%28detail%29"]
 
     def test_broken_local_hyperlink_is_kept_and_reported(self) -> None:
         result, report, warnings = self.convert_reported(
             [hyperlink("Missing", relation="local")],
             relations=(("local", "hyperlink", "missing.txt", "External"),),
         )
-        self.assertIn("[Missing](missing.txt)", result)
-        self.assertIn(
-            "checks: Broken retained local link in Synthetic Guide.md: missing.txt", warnings
-        )
+        assert "[Missing](missing.txt)" in result
+        assert "checks: Broken retained local link in Synthetic Guide.md: missing.txt" in warnings
         summary = report.summary()
-        self.assertIn("  checks: 1 issue(s)", summary)
-        self.assertIn("    issue (1): a local link target does not exist", summary)
+        assert "  checks: 1 issue(s)" in summary
+        assert "    issue (1): a local link target does not exist" in summary
 
     def test_malformed_uri_is_kept_and_reported(self) -> None:
         write_docx(
@@ -3363,7 +3303,7 @@ class ConversionTests(unittest.TestCase):
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
             _pipeline.convert_docx(self.source, keep_intermediates=diagnostics, report=report)
-        self.assertIn("Broken", self.source.with_suffix(".md").read_text(encoding="utf-8"))
-        self.assertIn("Invalid retained URI", stderr.getvalue())
+        assert "Broken" in self.source.with_suffix(".md").read_text(encoding="utf-8")
+        assert "Invalid retained URI" in stderr.getvalue()
         saved = json.loads((diagnostics / "diagnostics.json").read_text(encoding="utf-8"))
-        self.assertEqual(saved["status"], "published")
+        assert saved["status"] == "published"

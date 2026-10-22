@@ -37,7 +37,7 @@ class PackageLayoutTest(unittest.TestCase):
             for name in result.stdout.splitlines()
             if Path(name).parent == Path(".") and not name.startswith(".")
         }
-        self.assertEqual(files, {"Makefile", "README.md", "pyproject.toml", "uv.lock"})
+        assert files == {"Makefile", "README.md", "pyproject.toml", "uv.lock"}
 
     def test_all_cli_help_is_available_without_site_packages_or_external_tools(self) -> None:
         cases: tuple[list[str], ...] = (
@@ -63,11 +63,11 @@ class PackageLayoutTest(unittest.TestCase):
                     text=True,
                     check=False,
                 )
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                assert result.returncode == 0, result.stdout + result.stderr
                 expected = (
                     "md-doc-converter" if arguments == ["--version"] else "usage: md-doc-converter"
                 )
-                self.assertIn(expected, result.stdout)
+                assert expected in result.stdout
 
     def test_resource_paths_are_durable_and_independent_of_caller_directory(self) -> None:
         assets = (
@@ -100,22 +100,22 @@ class PackageLayoutTest(unittest.TestCase):
                 check=True,
             )
         actual = [Path(path) for path in json.loads(result.stdout)]
-        self.assertEqual(actual, [PACKAGE_DIR / "assets" / name for name in assets])
-        self.assertTrue(all(path.is_file() for path in actual))
-        self.assertTrue(PDF_PRINTER.is_file())
-        self.assertTrue(all((MANIFEST_DIR / name).is_file() for name in MANIFESTS))
+        assert actual == [PACKAGE_DIR / "assets" / name for name in assets]
+        assert all(path.is_file() for path in actual)
+        assert PDF_PRINTER.is_file()
+        assert all((MANIFEST_DIR / name).is_file() for name in MANIFESTS)
 
     def test_npm_manifests_agree_and_resolve_from_the_public_registry(self) -> None:
         package = json.loads((MANIFEST_DIR / "package.json").read_text(encoding="utf-8"))
         lock = json.loads((MANIFEST_DIR / "package-lock.json").read_text(encoding="utf-8"))
-        self.assertEqual(lock["name"], package["name"])
-        self.assertEqual(lock["packages"][""]["dependencies"], package["dependencies"])
+        assert lock["name"] == package["name"]
+        assert lock["packages"][""]["dependencies"] == package["dependencies"]
         resolved = {
             entry["resolved"].split("/")[2]
             for entry in lock["packages"].values()
             if "resolved" in entry
         }
-        self.assertEqual(resolved, {"registry.npmjs.org"})
+        assert resolved == {"registry.npmjs.org"}
 
     def test_runtime_import_graph_is_acyclic_and_layered(self) -> None:
         modules = {}
@@ -124,13 +124,9 @@ class PackageLayoutTest(unittest.TestCase):
             module = ".".join(parts[:-1] if parts[-1] == "__init__" else parts)
             modules[module] = ast.parse(path.read_text(encoding="utf-8"))
             if path.name == "__init__.py":
-                self.assertFalse(
-                    any(
-                        isinstance(node, (ast.Import, ast.ImportFrom))
-                        for node in modules[module].body
-                    ),
-                    f"Package initializer eagerly imports dependencies: {module}",
-                )
+                assert not any(
+                    isinstance(node, (ast.Import, ast.ImportFrom)) for node in modules[module].body
+                ), f"Package initializer eagerly imports dependencies: {module}"
         graph: dict[str, set[str]] = {name: set() for name in modules}
         for name, tree in modules.items():
             for node in ast.walk(tree):
@@ -143,35 +139,25 @@ class PackageLayoutTest(unittest.TestCase):
                 elif isinstance(node, ast.Import):
                     graph[name].update(alias.name for alias in node.names if alias.name in modules)
             if name.startswith(SHARED_LAYERS):
-                self.assertFalse(
-                    any(
-                        target.startswith((*FEATURES, "md_doc_converter.toolchain"))
-                        for target in graph[name]
-                    ),
-                    f"Shared layer imports a feature: {name}",
-                )
+                assert not any(
+                    target.startswith((*FEATURES, "md_doc_converter.toolchain"))
+                    for target in graph[name]
+                ), f"Shared layer imports a feature: {name}"
             if name.startswith("md_doc_converter.toolchain"):
-                self.assertFalse(
-                    any(
-                        target.startswith((*FEATURES, "md_doc_converter.markdown"))
-                        for target in graph[name]
-                    ),
-                    f"Toolchain imports a feature or the Markdown layer: {name}",
-                )
+                assert not any(
+                    target.startswith((*FEATURES, "md_doc_converter.markdown"))
+                    for target in graph[name]
+                ), f"Toolchain imports a feature or the Markdown layer: {name}"
             if name.startswith("md_doc_converter.converters.docx.") and not name.endswith(
                 (".cli", ".pipeline")
             ):
-                self.assertFalse(
-                    graph[name]
-                    & {
-                        "md_doc_converter.converters.docx.cli",
-                        "md_doc_converter.converters.docx.pipeline",
-                    },
-                    f"Domain module imports orchestration: {name}",
-                )
+                assert not graph[name] & {
+                    "md_doc_converter.converters.docx.cli",
+                    "md_doc_converter.converters.docx.pipeline",
+                }, f"Domain module imports orchestration: {name}"
 
         def visit(name: str, stack: tuple[str, ...]) -> None:
-            self.assertNotIn(name, stack, " -> ".join((*stack, name)))
+            assert name not in stack, " -> ".join((*stack, name))
             for dependency in graph[name]:
                 visit(dependency, (*stack, name))
 

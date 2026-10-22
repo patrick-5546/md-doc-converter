@@ -49,7 +49,7 @@ class DocumentWorkflowTest(unittest.TestCase):
             text=True,
             check=False,
         )
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        assert result.returncode == 0, result.stdout + result.stderr
 
     def test_word_to_html_and_pdf_next_to_the_canonical_markdown(self) -> None:
         with tempfile.TemporaryDirectory(prefix="md-doc-converter-workflow-") as temporary:
@@ -75,7 +75,7 @@ class DocumentWorkflowTest(unittest.TestCase):
             word_rows = len(
                 word.findall(".//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}tr")
             )
-            self.assertEqual(word_rows, 3)
+            assert word_rows == 3
             word_before = source.read_bytes()
             self.command(workspace, *CLI, "docx-to-md", str(source.relative_to(workspace)))
             canonical = source.with_suffix(".md")
@@ -86,34 +86,31 @@ class DocumentWorkflowTest(unittest.TestCase):
                 for path in images.rglob("*")
                 if path.is_file()
             }
-            self.assertTrue(images_before)
-            self.assertIn("## 2. Status\n", markdown_before.decode())
-            self.assertIn("**Step 1.**\n\nKeep", markdown_before.decode())
-            self.assertIn("- Alpha\n- Beta", markdown_before.decode())
-            self.assertIn("[Status section](#2-status)", markdown_before.decode())
-            self.assertNotIn("<a ", markdown_before.decode())
-            self.assertNotIn("<table", markdown_before.decode())
+            assert images_before
+            assert "## 2. Status\n" in markdown_before.decode()
+            assert "**Step 1.**\n\nKeep" in markdown_before.decode()
+            assert "- Alpha\n- Beta" in markdown_before.decode()
+            assert "[Status section](#2-status)" in markdown_before.decode()
+            assert "<a " not in markdown_before.decode()
+            assert "<table" not in markdown_before.decode()
 
             relative = str(canonical.relative_to(workspace))
             self.command(workspace, *CLI, "md-to-html", relative)
             html = canonical.with_suffix(".html")
             rendered = html.read_text()
             # The blank Word row shows nothing, so it is omitted.
-            self.assertEqual(len(re.findall(r"<tr(?:\s|>)", rendered)), word_rows - 1)
-            self.assertIn('id="1-cache"', rendered)
-            self.assertIn('id="2-status"', rendered)
-            self.assertIn('href="#2-status"', rendered)
-            self.assertIn(
-                external_url,
-                [unquote(url) for url in re.findall(r'href="([^"]+)"', rendered)],
-            )
+            assert len(re.findall(r"<tr(?:\s|>)", rendered)) == word_rows - 1
+            assert 'id="1-cache"' in rendered
+            assert 'id="2-status"' in rendered
+            assert 'href="#2-status"' in rendered
+            assert external_url in [unquote(url) for url in re.findall(r'href="([^"]+)"', rendered)]
             # The shared styles are inlined, so the HTML does not depend on the installation.
-            self.assertIn(".table-cols table", rendered)
-            self.assertNotIn("style-overrides.css", rendered)
+            assert ".table-cols table" in rendered
+            assert "style-overrides.css" not in rendered
 
             self.command(workspace, *CLI, "md-to-pdf", relative)
             pdf = canonical.with_suffix(".pdf")
-            self.assertTrue(pdf.read_bytes().startswith(b"%PDF-"))
+            assert pdf.read_bytes().startswith(b"%PDF-")
             review = workspace / "reviews" / "cache review.pdf"
             self.command(
                 workspace,
@@ -123,23 +120,23 @@ class DocumentWorkflowTest(unittest.TestCase):
                 "-o",
                 str(review.relative_to(workspace)),
             )
-            self.assertTrue(review.read_bytes().startswith(b"%PDF-"))
-            self.assertEqual([path.name for path in review.parent.iterdir()], [review.name])
+            assert review.read_bytes().startswith(b"%PDF-")
+            assert [path.name for path in review.parent.iterdir()] == [review.name]
 
-            self.assertEqual(canonical.read_bytes(), markdown_before)
-            self.assertEqual(source.read_bytes(), word_before)
-            self.assertEqual(
-                {
-                    path.relative_to(images): path.read_bytes()
-                    for path in images.rglob("*")
-                    if path.is_file()
-                },
-                images_before,
-            )
-            self.assertEqual(
-                {path.name for path in source_dir.iterdir()},
-                {source.name, canonical.name, html.name, pdf.name, ".images"},
-            )
+            assert canonical.read_bytes() == markdown_before
+            assert source.read_bytes() == word_before
+            assert {
+                path.relative_to(images): path.read_bytes()
+                for path in images.rglob("*")
+                if path.is_file()
+            } == images_before
+            assert {path.name for path in source_dir.iterdir()} == {
+                source.name,
+                canonical.name,
+                html.name,
+                pdf.name,
+                ".images",
+            }
 
     def test_reference_folder_renders_linked_html_and_pdf_with_images(self) -> None:
         with tempfile.TemporaryDirectory(prefix="md-doc-converter-references-") as temporary:
@@ -164,21 +161,21 @@ class DocumentWorkflowTest(unittest.TestCase):
             page_text = ("--header", "Package layout validation", "--footer", "Draft")
             self.command(workspace, *CLI, "md-to-html", docs.name, *page_text)
             html = (docs / f"{docs.name}.html").read_text(encoding="utf-8")
-            self.assertIn('id="page"', html)
-            self.assertIn('id="page-1"', html)
-            self.assertEqual(html.count('href="#page-1"'), 2)
+            assert 'id="page"' in html
+            assert 'id="page-1"' in html
+            assert html.count('href="#page-1"') == 2
             image_sources = re.findall(r'<img\s[^>]*src="([^"]+)"', html)
-            self.assertEqual(
-                [unquote(urlsplit(source).path) for source in image_sources].count(str(image)), 1
-            )
-            self.assertIn("mermaid-diagram", html)
-            self.assertIn('class="katex"', html)
-            self.assertIn('class="katex-display"', html)
-            self.assertIn('class="katex-error"', html)
+            assert [unquote(urlsplit(source).path) for source in image_sources].count(
+                str(image)
+            ) == 1
+            assert "mermaid-diagram" in html
+            assert 'class="katex"' in html
+            assert 'class="katex-display"' in html
+            assert 'class="katex-error"' in html
             version = katex_version(toolchain())
-            self.assertIn(f"npm/katex@{version}/dist/katex.min.css", html)
-            self.assertIn('content: "Package layout validation"', html)
-            self.assertIn('content: "Draft"', html)
+            assert f"npm/katex@{version}/dist/katex.min.css" in html
+            assert 'content: "Package layout validation"' in html
+            assert 'content: "Draft"' in html
 
             kept = workspace / "intermediates"
             self.command(
@@ -191,17 +188,16 @@ class DocumentWorkflowTest(unittest.TestCase):
                 str(kept),
             )
             pdf = (docs / f"{docs.name}.pdf").read_bytes()
-            self.assertTrue(pdf.startswith(b"%PDF-"))
-            self.assertRegex(pdf, rb"/Subtype\s*/Image\b")
-            self.assertTrue((kept / "markdown" / f"{docs.name}.md").is_file())
-            self.assertIn(
-                "Package layout validation",
-                (kept / "render" / f"{docs.name}.html").read_text(encoding="utf-8"),
+            assert pdf.startswith(b"%PDF-")
+            assert re.search(rb"/Subtype\s*/Image\b", pdf)
+            assert (kept / "markdown" / f"{docs.name}.md").is_file()
+            assert "Package layout validation" in (kept / "render" / f"{docs.name}.html").read_text(
+                encoding="utf-8"
             )
             for path, text in sources.items():
-                self.assertEqual(path.read_text(encoding="utf-8"), text)
-            self.assertEqual(image.read_bytes(), pixel_png())
-            self.assertEqual(sorted(path.name for path in docs.glob("*.md")), ["a.md", "b page.md"])
+                assert path.read_text(encoding="utf-8") == text
+            assert image.read_bytes() == pixel_png()
+            assert sorted(path.name for path in docs.glob("*.md")) == ["a.md", "b page.md"]
 
 
 if __name__ == "__main__":

@@ -1,205 +1,200 @@
+"""The test suites' policies: tests/support/suites.py and the hooks in tests/conftest.py."""
+
 from __future__ import annotations
 
-import contextlib
-import io
 import os
-import unittest
-from unittest import mock
+import subprocess
+import sys
+
+import pytest
 
 from md_doc_converter.toolchain.checks import Check
 from md_doc_converter.toolchain.environment import PANDOC_VERSION
-from tests import __main__ as suites
+from tests.support import suites
 from tests.support.project import PROJECT_ROOT
 
 TOOLCHAIN_CHECKS = ("check_packages", "check_browser")
 
 
-def toolchain_checks(status: str = "ok") -> contextlib.ExitStack:
-    stack = contextlib.ExitStack()
+def tools(monkeypatch: pytest.MonkeyPatch, *available: str, toolchain: str = "ok") -> None:
+    """Make only *available* commands exist, and every toolchain check report *toolchain*."""
+
+    def which(name: str) -> str | None:
+        return f"/bin/{name}" if name in available else None
+
+    monkeypatch.setattr(suites.shutil, "which", which)
     for name in TOOLCHAIN_CHECKS:
-        label = name.removeprefix("check_")
-        stack.enter_context(
-            mock.patch.object(
-                suites, name, return_value=Check(label, status, "detail", "Run setup")
-            )
-        )
-    return stack
+        check = Check(name.removeprefix("check_"), toolchain, "detail", "Run setup")
+
+        def reported(_tools: object, check: Check = check) -> Check:
+            return check
+
+        monkeypatch.setattr(suites, name, reported)
 
 
-def pandoc_check(
-    status: str = "ok", detail: str = "detail"
-) -> contextlib.AbstractContextManager[object]:
-    return mock.patch.object(
-        suites, "check_pandoc", return_value=Check("pandoc", status, detail, "Run setup")
+@pytest.fixture
+def pinned_pandoc(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(suites, "check_pandoc", lambda: Check("pandoc", "ok", PANDOC_VERSION))
+
+
+@pytest.mark.usefixtures("pinned_pandoc")
+def test_the_core_suite_needs_git_but_no_render_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tools(monkeypatch, "git")
+    monkeypatch.setattr(suites, "toolchain", lambda: pytest.fail("render toolchain checked"))
+    assert suites.missing_prerequisites(render=False) == []
+    tools(monkeypatch)
+    assert suites.missing_prerequisites(render=False) == ["git"]
+
+
+@pytest.mark.parametrize(
+    ("status", "detail"), [("error", "not installed"), ("warn", "3.1.9 (/usr/bin/pandoc)")]
+)
+def test_every_suite_needs_the_pinned_pandoc(
+    monkeypatch: pytest.MonkeyPatch, status: str, detail: str
+) -> None:
+    tools(monkeypatch, "git")
+    monkeypatch.setattr(suites, "check_pandoc", lambda: Check("pandoc", status, detail))
+    assert suites.missing_prerequisites(render=False) == [
+        f"pandoc {PANDOC_VERSION}: {detail} (run `make setup-pandoc`)"
+    ]
+
+
+@pytest.mark.usefixtures("pinned_pandoc")
+def test_the_render_suite_needs_its_native_tools(monkeypatch: pytest.MonkeyPatch) -> None:
+    tools(monkeypatch, "git", "node")
+    assert suites.missing_prerequisites(render=True) == [
+        "pdftocairo",
+        "libreoffice/soffice (EMF regression coverage)",
+    ]
+
+
+@pytest.mark.parametrize("office", ["libreoffice", "soffice"])
+@pytest.mark.usefixtures("pinned_pandoc")
+def test_either_office_command_will_do(monkeypatch: pytest.MonkeyPatch, office: str) -> None:
+    tools(monkeypatch, "git", "node", "pdftocairo", office)
+    assert suites.missing_prerequisites(render=True) == []
+
+
+@pytest.mark.usefixtures("pinned_pandoc")
+def test_the_render_suite_names_each_missing_toolchain_part(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tools(monkeypatch, "git", "node", "pdftocairo", "soffice", toolchain="error")
+    assert suites.missing_prerequisites(render=True) == [
+        "packages: detail (Run setup)",
+        "browser: detail (Run setup)",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("home", "expected"),
+    [(None, str(PROJECT_ROOT / ".toolchain")), ("/elsewhere", "/elsewhere")],
+)
+def test_tests_use_the_checkout_toolchain_unless_another_is_set(
+    monkeypatch: pytest.MonkeyPatch, home: str | None, expected: str
+) -> None:
+    preferred: list[dict[str, str]] = []
+
+    def prefer(environment: dict[str, str]) -> None:
+        preferred.append(dict(environment))
+
+    monkeypatch.setattr(suites, "prefer_installed_tools", prefer)
+    environment = {"PATH": "/usr/bin"}
+    if home is not None:
+        environment["MD_DOC_CONVERTER_HOME"] = home
+    suites.use_project_toolchain(environment)
+    assert environment["MD_DOC_CONVERTER_HOME"] == expected
+    assert preferred == [environment]
+
+
+@pytest.mark.parametrize(
+    ("arguments", "render"),
+    [
+        ([], False),
+        (["tests/unit", "tests/integration"], False),
+        (["tests/unit/test_suites.py::test_x"], False),
+        (["tests/rendering"], True),
+        (["tests/rendering/test_emf.py::EmfWorkflowTest::test_x"], True),
+        (["tests/unit", "tests/rendering/test_emf.py"], True),
+        (["tests"], True),
+        (["."], True),
+    ],
+)
+def test_the_rendering_suite_is_selected_by_any_path_that_includes_it(
+    arguments: list[str], render: bool
+) -> None:
+    assert suites.selects_rendering(arguments, PROJECT_ROOT) is render
+
+
+@pytest.fixture
+def project(pytester: pytest.Pytester) -> pytest.Pytester:
+    """A pytester directory with the suites' conftest.py."""
+    pytester.makeconftest((PROJECT_ROOT / "tests" / "conftest.py").read_text(encoding="utf-8"))
+    return pytester
+
+
+def test_a_skipped_test_fails_the_run(project: pytest.Pytester) -> None:
+    project.makepyfile(
+        """
+        import pytest
+
+        def test_skipped():
+            pytest.skip("missing tool")
+
+        @pytest.mark.xfail(reason="known")
+        def test_expected_failure():
+            assert False
+        """
     )
+    result = project.runpytest("-p", "no:cacheprovider")
+    result.assert_outcomes(failed=1, xfailed=1)
+    result.stdout.fnmatch_lines(["*tests must not skip: Skipped: missing tool*"])
 
 
-class TestSuiteSelection(unittest.TestCase):
-    def test_core_does_not_require_render_dependencies(self) -> None:
-        def which(name: str) -> str | None:
-            self.assertEqual(name, "git", f"Unexpected render dependency probe: {name}")
-            return f"/bin/{name}"
+def test_missing_prerequisites_stop_the_run_before_collection(
+    project: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    selected: list[bool] = []
 
-        with (
-            mock.patch.object(suites.shutil, "which", side_effect=which),
-            pandoc_check(),
-            mock.patch.object(suites, "toolchain", side_effect=AssertionError("render toolchain")),
-        ):
-            self.assertEqual(suites.missing_dependencies("core"), [])
+    def missing(*, render: bool) -> list[str]:
+        selected.append(render)
+        return ["git", "pdftocairo"]
 
-    def test_core_reports_required_native_dependencies(self) -> None:
-        with (
-            mock.patch.object(suites.shutil, "which", return_value=None),
-            pandoc_check("error", "not installed"),
-        ):
-            self.assertEqual(
-                suites.missing_dependencies("core"),
-                [
-                    "git",
-                    f"pandoc {PANDOC_VERSION}: not installed (run `make setup-pandoc`)",
-                ],
-            )
-
-    def test_core_requires_the_pinned_pandoc(self) -> None:
-        with (
-            mock.patch.object(suites.shutil, "which", return_value="/bin/git"),
-            pandoc_check("warn", "3.1.9 (/usr/bin/pandoc)"),
-        ):
-            missing = suites.missing_dependencies("core")
-        expected = f"pandoc {PANDOC_VERSION}: 3.1.9 (/usr/bin/pandoc) ({suites.SETUP_PANDOC})"
-        self.assertEqual(missing, [expected])
-
-    def test_tests_use_the_checkout_toolchain_unless_another_is_set(self) -> None:
-        for home, expected in ((None, PROJECT_ROOT / ".toolchain"), ("/elsewhere", "/elsewhere")):
-            environment = {"PATH": "/usr/bin"}
-            if home is not None:
-                environment["MD_DOC_CONVERTER_HOME"] = home
-            with (
-                self.subTest(home=home),
-                mock.patch.dict(os.environ, environment, clear=True),
-                mock.patch.object(suites, "prefer_installed_tools") as prefer,
-            ):
-                suites.use_project_toolchain()
-                self.assertEqual(os.environ["MD_DOC_CONVERTER_HOME"], str(expected))
-            prefer.assert_called_once_with()
-
-    def test_render_and_all_require_native_conversion_tools(self) -> None:
-        available = {name: f"/bin/{name}" for name in ("git", "node")}
-        for selection in ("render", "all"):
-            with (
-                self.subTest(selection=selection),
-                mock.patch.object(suites.shutil, "which", side_effect=available.get),
-                pandoc_check(),
-                toolchain_checks(),
-            ):
-                self.assertEqual(
-                    suites.missing_dependencies(selection),
-                    ["pdftocairo", "libreoffice/soffice (EMF regression coverage)"],
-                )
-
-    def test_render_accepts_both_office_executable_names(self) -> None:
-        for office in ("libreoffice", "soffice"):
-            available = {name: f"/bin/{name}" for name in ("git", "node", "pdftocairo", office)}
-            with (
-                self.subTest(office=office),
-                mock.patch.object(suites.shutil, "which", side_effect=available.get),
-                pandoc_check(),
-                toolchain_checks(),
-            ):
-                self.assertEqual(suites.missing_dependencies("render"), [])
-
-    def test_render_reports_each_missing_toolchain_part(self) -> None:
-        with (
-            mock.patch.object(suites.shutil, "which", return_value="/bin/tool"),
-            pandoc_check(),
-            toolchain_checks("error"),
-        ):
-            missing = suites.missing_dependencies("render")
-        self.assertEqual(
-            missing,
-            [
-                "packages: detail (Run setup)",
-                "browser: detail (Run setup)",
-            ],
-        )
-
-    def test_missing_dependencies_fail_before_discovery(self) -> None:
-        with (
-            mock.patch.object(suites, "missing_dependencies", return_value=["pandoc"]),
-            mock.patch.object(suites, "load_suite") as load,
-            contextlib.redirect_stderr(io.StringIO()) as messages,
-        ):
-            self.assertEqual(suites.main(["core"]), 2)
-        load.assert_not_called()
-        self.assertIn("prerequisites missing: pandoc", messages.getvalue())
-
-    def test_empty_suite_is_not_success(self) -> None:
-        with (
-            mock.patch.object(suites, "missing_dependencies", return_value=[]),
-            mock.patch.object(suites, "load_suite", return_value=unittest.TestSuite()),
-            contextlib.redirect_stderr(io.StringIO()) as messages,
-        ):
-            self.assertEqual(suites.main(["core"]), 2)
-        self.assertIn("no core tests discovered", messages.getvalue())
-
-    def test_selected_skips_are_failures(self) -> None:
-        class SkippedCase(unittest.TestCase):
-            def runTest(self) -> None:
-                self.skipTest("missing required tool")
-
-        with (
-            mock.patch.object(suites, "missing_dependencies", return_value=[]),
-            mock.patch.object(
-                suites, "load_suite", return_value=unittest.TestSuite([SkippedCase()])
-            ),
-            contextlib.redirect_stdout(io.StringIO()),
-            contextlib.redirect_stderr(io.StringIO()) as messages,
-        ):
-            self.assertEqual(suites.main(["core"]), 1)
-        self.assertIn("selected suites must not skip", messages.getvalue())
-
-    def test_passing_selected_suite_succeeds(self) -> None:
-        with (
-            mock.patch.object(suites, "missing_dependencies", return_value=[]),
-            mock.patch.object(
-                suites,
-                "load_suite",
-                return_value=unittest.TestSuite([unittest.FunctionTestCase(lambda: None)]),
-            ),
-            contextlib.redirect_stdout(io.StringIO()),
-            contextlib.redirect_stderr(io.StringIO()),
-        ):
-            self.assertEqual(suites.main(["core"]), 0)
-
-    def test_discovery_partitions_are_explicit_and_disjoint(self) -> None:
-        self.assertEqual(suites.SUITES["core"], ("unit", "integration"))
-        self.assertEqual(suites.SUITES["render"], ("rendering",))
-        self.assertEqual(suites.SUITES["all"], (*suites.SUITES["core"], *suites.SUITES["render"]))
-
-    def test_real_native_cases_are_discovered_only_by_render_suites(self) -> None:
-        def case_ids(suite: unittest.TestSuite) -> list[str]:
-            result: list[str] = []
-            for case in suite:
-                if isinstance(case, unittest.TestSuite):
-                    result.extend(case_ids(case))
-                else:
-                    self.assertIsInstance(case, unittest.TestCase)
-                    result.append(case.id())
-            return result
-
-        core = case_ids(suites.load_suite("core"))
-        render = case_ids(suites.load_suite("render"))
-        combined = case_ids(suites.load_suite("all"))
-        self.assertFalse(set(core) & set(render))
-        self.assertCountEqual(combined, [*core, *render])
-        for name in (
-            "test_real_synthetic_emf_conversion",
-            "test_real_synthetic_emf_pdf_fallback",
-            "test_zero_timeout_is_accepted",
-        ):
-            self.assertFalse(any(case.endswith("." + name) for case in core))
-            self.assertEqual(sum(case.endswith("." + name) for case in render), 1)
+    monkeypatch.setattr(suites, "missing_prerequisites", missing)
+    project.makepyfile("def test_never_run(): pass")
+    result = project.runpytest("-p", "no:cacheprovider")
+    assert result.ret == pytest.ExitCode.INTERRUPTED
+    result.stdout.fnmatch_lines(["*prerequisites missing: git, pdftocairo*"])
+    assert "passed" not in result.stdout.str()
+    project.runpytest("-p", "no:cacheprovider", str(suites.RENDERING))
+    assert selected == [False, True]
+    collected = project.runpytest("-p", "no:cacheprovider", "--collect-only")
+    assert collected.ret == pytest.ExitCode.OK
+    assert selected == [False, True]
 
 
-if __name__ == "__main__":
-    unittest.main()
+def collected(*paths: str) -> set[str]:
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider", *paths],
+        cwd=PROJECT_ROOT,
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return {line for line in result.stdout.splitlines() if "::" in line}
+
+
+def test_real_native_cases_are_collected_only_by_the_render_suite() -> None:
+    core, render = collected(), collected("tests/rendering")
+    assert core
+    assert not core & render
+    for name in (
+        "test_real_synthetic_emf_conversion",
+        "test_real_synthetic_emf_pdf_fallback",
+        "test_zero_timeout_is_accepted",
+    ):
+        assert not any(case.endswith("::" + name) for case in core)
+        assert sum(case.endswith("::" + name) for case in render) == 1

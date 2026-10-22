@@ -7,7 +7,8 @@ export MD_DOC_CONVERTER_HOME ?= $(CURDIR)/.toolchain
 UV_RUN := uv run
 
 .DEFAULT_GOAL := help
-.PHONY: help setup setup-pandoc doctor format lint test test-render test-all build lock-npm
+.PHONY: help setup setup-pandoc doctor format lint test test-render test-all coverage build \
+	lock-npm
 
 help: ## List the tasks
 	@awk 'BEGIN { FS = ":.*## " } /^[a-z-]+:.*## / { printf "  %-13s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -30,14 +31,16 @@ lint: ## Ruff format check, Ruff, ty and Pyrefly
 	$(UV_RUN) ty check src tests
 	$(UV_RUN) pyrefly check
 
-test: setup-pandoc ## Core suite: unit and integration tests
-	$(UV_RUN) python -m tests core
+test: setup-pandoc ## Core suite: unit and integration tests, in parallel
+	$(UV_RUN) pytest -n auto
 
 test-render: setup ## Real rendering suite; also needs LibreOffice and Poppler
-	$(UV_RUN) python -m tests render
+	$(UV_RUN) pytest tests/rendering
 
-test-all: setup ## Both suites
-	$(UV_RUN) python -m tests all
+test-all: test test-render ## Both suites
+
+coverage: setup-pandoc ## Core suite's line and branch coverage, with the lines it misses
+	$(UV_RUN) pytest -n auto --cov --cov-report=term-missing:skip-covered
 
 build: ## Build the wheel and sdist into dist/
 	uv build

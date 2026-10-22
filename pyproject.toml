@@ -26,6 +26,9 @@ md-doc-converter = "md_doc_converter.__main__:main"
 [dependency-groups]
 dev = [
     "pyrefly>=1.1.1",
+    "pytest>=9.1",
+    "pytest-cov>=7.1",
+    "pytest-xdist>=3.8",
     "ruff>=0.15.20",
     "ty>=0.0.56",
 ]
@@ -38,6 +41,26 @@ build-backend = "uv_build"
 # setup supports Linux x86_64 only, so the lock resolves for it alone.
 environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
 
+[tool.pytest]
+minversion = "9.1"
+strict = true
+# The core suite; the rendering suite, tests/rendering, needs the full toolchain.
+testpaths = ["tests/unit", "tests/integration"]
+addopts = ["-ra", "-p", "pytester"]
+filterwarnings = ["error"]
+
+[tool.coverage.run]
+branch = true
+source_pkgs = ["md_doc_converter"]
+# Also measure the command line that tests run in a subprocess.
+patch = ["subprocess"]
+parallel = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+precision = 1
+
 [tool.pyrefly]
 preset = "strict"
 search-path = ["src", "."]
@@ -48,7 +71,7 @@ line-length = 100
 src = ["src", "tests"]
 
 [tool.ruff.lint]
-extend-select = ["B", "E501", "I", "SIM", "UP", "ANN", "PYI"]
+extend-select = ["B", "E501", "I", "SIM", "UP", "ANN", "PYI", "PT"]
 preview = true
 
 [tool.ty.rules]

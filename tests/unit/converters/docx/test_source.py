@@ -46,10 +46,10 @@ class BookmarkSectionTests(unittest.TestCase):
                 contained_heading: _models.SourceHeading("cell-heading", 2, True),
             },
         )
-        self.assertEqual(sections["_Preamble"], _models.BookmarkSection(None, False))
-        self.assertEqual(sections["_Heading"], _models.BookmarkSection("section", True))
+        assert sections["_Preamble"] == _models.BookmarkSection(None, False)
+        assert sections["_Heading"] == _models.BookmarkSection("section", True)
         for name in ("_Body", "_Cell", "_After"):
-            self.assertEqual(sections[name], _models.BookmarkSection("section", False))
+            assert sections[name] == _models.BookmarkSection("section", False)
 
     def test_ranges_with_first_visible_content_in_heading_target_that_heading(self) -> None:
         for paragraph_container in (False, True):
@@ -64,7 +64,7 @@ class BookmarkSectionTests(unittest.TestCase):
                 sections = self.sections(
                     [start, title, end], {title: _models.SourceHeading("target", 3, False)}
                 )
-                self.assertEqual(sections["_Range"], _models.BookmarkSection("target", True))
+                assert sections["_Range"] == _models.BookmarkSection("target", True)
 
     def test_range_containing_prose_before_heading_stays_in_its_original_section(self) -> None:
         first = paragraph("First", "Heading1")
@@ -82,7 +82,7 @@ class BookmarkSectionTests(unittest.TestCase):
                 next_heading: _models.SourceHeading("next", 1, False),
             },
         )
-        self.assertEqual(sections["_Range"], _models.BookmarkSection("first", False))
+        assert sections["_Range"] == _models.BookmarkSection("first", False)
 
     def test_bookmarks_with_nothing_visible_before_a_heading_go_to_it(self) -> None:
         first = paragraph("First", "Heading1")
@@ -112,10 +112,10 @@ class BookmarkSectionTests(unittest.TestCase):
             },
         )
         for name in ("_Toc", "_Empty"):
-            self.assertEqual(sections[name], _models.BookmarkSection("target", True))
+            assert sections[name] == _models.BookmarkSection("target", True)
         for name in ("_Text", "_Table", "_Body"):
-            self.assertEqual(sections[name], _models.BookmarkSection("target", False))
-        self.assertEqual(sections["_End"], _models.BookmarkSection("last", True))
+            assert sections[name] == _models.BookmarkSection("target", False)
+        assert sections["_End"] == _models.BookmarkSection("last", True)
 
 
 class HeadingContentTests(unittest.TestCase):
@@ -126,9 +126,9 @@ class HeadingContentTests(unittest.TestCase):
         ET.SubElement(formula, math + "t").text = "x"
         symbol = paragraph("", "Heading2")
         ET.SubElement(ET.SubElement(symbol, W + "r"), W + "sym", {W + "char": "F0FC"})
-        self.assertTrue(_source._shows_text(equation))
-        self.assertTrue(_source._shows_text(symbol))
-        self.assertFalse(_source._shows_text(paragraph("\u00a0 ", "Heading2")))
+        assert _source._shows_text(equation)
+        assert _source._shows_text(symbol)
+        assert not _source._shows_text(paragraph("\xa0 ", "Heading2"))
 
 
 class CodeStyleTests(unittest.TestCase):
@@ -143,12 +143,12 @@ class CodeStyleTests(unittest.TestCase):
         name = existing.find(W + "name")
         assert name is not None
         name.set(W + "val", "Verbatim Char")
-        self.assertEqual(_source._code_style(package(existing)), ("MyCode", None))
+        assert _source._code_style(package(existing)) == ("MyCode", None)
         identity, definition = _source._code_style(package(word_style("VerbatimChar")))
-        self.assertEqual(identity, "VerbatimChar1")
+        assert identity == "VerbatimChar1"
         assert definition is not None
-        self.assertEqual(definition.get(W + "type"), "character")
-        self.assertEqual(definition.get(W + "styleId"), "VerbatimChar1")
+        assert definition.get(W + "type") == "character"
+        assert definition.get(W + "styleId") == "VerbatimChar1"
         added = definition.find(W + "name")
         assert added is not None
-        self.assertEqual(added.get(W + "val"), "Verbatim Char")
+        assert added.get(W + "val") == "Verbatim Char"

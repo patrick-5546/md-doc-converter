@@ -44,14 +44,14 @@ class PdfTimeoutTest(unittest.TestCase):
 
     def test_zero_timeout_is_accepted(self) -> None:
         result, pdf = self.print_pdf("0")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue(pdf.read_bytes().startswith(b"%PDF-"))
+        assert result.returncode == 0, result.stderr
+        assert pdf.read_bytes().startswith(b"%PDF-")
 
     def test_stalled_layout_names_the_setting_to_raise(self) -> None:
         result, pdf = self.print_pdf("1", STALL)
-        self.assertEqual(result.returncode, 1, result.stderr)
-        self.assertIn("exceeded 1 seconds; raise --pdf-timeout", result.stderr)
-        self.assertFalse(pdf.exists())
+        assert result.returncode == 1, result.stderr
+        assert "exceeded 1 seconds; raise --pdf-timeout" in result.stderr
+        assert not pdf.exists()
 
     def test_invalid_arguments_are_usage_errors(self) -> None:
         cases = [(timeout, True) for timeout in ("", "-1", "1.5", "2147484")]
@@ -59,9 +59,9 @@ class PdfTimeoutTest(unittest.TestCase):
         for timeout, node_modules in cases:
             with self.subTest(timeout=timeout, node_modules=node_modules):
                 result, pdf = self.print_pdf(timeout, node_modules=node_modules)
-                self.assertEqual(result.returncode, 2, result.stderr)
-                self.assertIn("pagedjs-print:", result.stderr)
-                self.assertFalse(pdf.exists())
+                assert result.returncode == 2, result.stderr
+                assert "pagedjs-print:" in result.stderr
+                assert not pdf.exists()
 
 
 if __name__ == "__main__":

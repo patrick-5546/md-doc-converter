@@ -15,7 +15,8 @@ src/md_doc_converter/
     package.json, package-lock.json   # pinned npm packages installed by setup
   assets/                   # stylesheets, HTML fragments, Pandoc/Mermaid config, Lua filters
 tests/
-  support/                  # synthetic document builders and fake native tools
+  conftest.py               # the suites' policies (tests/support/suites.py)
+  support/                  # synthetic document builders, fake native tools, suite policies
   unit/                     # mirrors runtime responsibilities
   integration/              # command-line, conversion and publication workflows
   rendering/                # real browser-backed HTML/PDF and LibreOffice workflows
@@ -58,9 +59,10 @@ make         # lists the tasks
 | `doctor` | Check the prerequisites |
 | `format` | Format Python with Ruff |
 | `lint` | Ruff format check, Ruff, ty and Pyrefly |
-| `test` | Core suite: unit and integration tests; runs `setup-pandoc` first |
+| `test` | Core suite: unit and integration tests, in parallel; runs `setup-pandoc` first |
 | `test-render` | Real rendering suite; runs `setup` first |
-| `test-all` | Both suites; runs `setup` first |
+| `test-all` | Both suites |
+| `coverage` | Core suite's line and branch coverage, listing the lines it misses |
 | `build` | Build the wheel and sdist into `dist/` |
 | `lock-npm` | Refresh `package-lock.json` after editing the bundled `package.json` |
 
@@ -68,14 +70,20 @@ make         # lists the tasks
 
 ## Test suites
 
-Both suites are discovered explicitly through `python -m tests core|render|all`.
-Missing prerequisites, empty discovery and skipped tests fail rather than
-reducing coverage. Like the tasks, the test runner uses `.toolchain/` unless
-`MD_DOC_CONVERTER_HOME` is set, and puts its `bin/` first on `PATH`, as the
-command does.
+The tests run with [pytest](https://docs.pytest.org/): the core suite in
+`tests/unit` and `tests/integration`, which plain `uv run pytest` runs, and the
+render suite in `tests/rendering`. `make test` runs the core suite in parallel
+with pytest-xdist; `uv run pytest -k NAME` runs matching tests on their own.
+
+`tests/conftest.py` applies the suites' policies, defined in
+`tests/support/suites.py`. Tests use `.toolchain/` unless `MD_DOC_CONVERTER_HOME`
+is set, with its `bin/` first on `PATH`, as the command does. A run stops before
+collecting when the selected suites miss a prerequisite, and a skipped test
+fails, so a missing tool never quietly reduces coverage. pytest runs in strict
+mode, and a warning fails the test that raises it.
 
 The core suite needs Git and the pinned Pandoc 3.12.1, because some converter
-tests compare exact Pandoc output; the runner stops with a hint to run
+tests compare exact Pandoc output; a run stops with a hint to run
 `make setup-pandoc` when that Pandoc is missing. The core suite does not
 need Node.js, the rest of the toolchain, browsers or LibreOffice: command-line
 and pipeline tests use disposable fake `pandoc`, `node` and `npm` executables
@@ -97,6 +105,10 @@ to test the oldest, 3.11:
 ```sh
 UV_PYTHON=3.11 UV_PROJECT_ENVIRONMENT=.venv-3.11 make test
 ```
+
+`make coverage` measures the core suite's line and branch coverage, including
+the command-line processes that tests start, and lists the lines it misses. No
+minimum is enforced; use it to find untested code.
 
 ## Updating dependencies
 

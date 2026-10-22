@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import unittest
 from xml.etree import ElementTree as ET
 
@@ -29,14 +30,14 @@ class LiteralTextTests(unittest.TestCase):
         result = _recovery.restore_literal_text(markdown, source, pandoc)
         parsed = _reference.pandoc_html(result, pandoc)
 
-        self.assertNotIn("SOURCE", result)
-        self.assertFalse(list(parsed.iter("speeds")))
-        self.assertEqual("".join(parsed.itertext()).count("<speeds> &copy;"), 4)
-        self.assertEqual(
-            ["".join(node.itertext()).strip() for node in parsed.iter("code")],
-            ["<speeds> &copy;", "<speeds> &copy;"],
-        )
-        self.assertTrue(list(parsed.iter("div")))
+        assert "SOURCE" not in result
+        assert not list(parsed.iter("speeds"))
+        assert "".join(parsed.itertext()).count("<speeds> &copy;") == 4
+        assert ["".join(node.itertext()).strip() for node in parsed.iter("code")] == [
+            "<speeds> &copy;",
+            "<speeds> &copy;",
+        ]
+        assert list(parsed.iter("div"))
 
     def test_literal_backticks_backslashes_and_hashes_stay_text(self) -> None:
         source = _models.SourceDocument(
@@ -54,17 +55,14 @@ class LiteralTextTests(unittest.TestCase):
         result = _recovery.restore_literal_text(markdown, source, pandoc)
         parsed = _reference.pandoc_html(result, pandoc)
 
-        self.assertNotIn("SOURCE", result)
-        self.assertEqual(
-            [" ".join("".join(node.itertext()).split()) for node in parsed.iter("p")],
-            [
-                "Use `uvm_info and `uvm_error.",
-                "# of entries",
-                "Path C:\\tools\\a and \\*b, \\\\server",
-            ],
-        )
-        self.assertFalse(list(parsed.iter("code")))
-        self.assertFalse(list(parsed.iter("h1")))
+        assert "SOURCE" not in result
+        assert [" ".join("".join(node.itertext()).split()) for node in parsed.iter("p")] == [
+            "Use `uvm_info and `uvm_error.",
+            "# of entries",
+            "Path C:\\tools\\a and \\*b, \\\\server",
+        ]
+        assert not list(parsed.iter("code"))
+        assert not list(parsed.iter("h1"))
 
     def test_word_line_breaks_become_paragraph_breaks_inside_blocks(self) -> None:
         source = _models.SourceDocument(
@@ -82,12 +80,12 @@ class LiteralTextTests(unittest.TestCase):
 
         result = _recovery.restore_literal_text(markdown, source, pandoc)
 
-        self.assertIn("first line\n\nsecond line\n", result)
-        self.assertIn("# head two\n", result)
-        self.assertIn("\nedge\n", result)
-        self.assertRegex(result, r"\| a b +\| c +\|")
-        self.assertNotIn("SOURCE", result)
-        self.assertEqual((source.restored_breaks, source.heading_breaks), (1, 1))
+        assert "first line\n\nsecond line\n" in result
+        assert "# head two\n" in result
+        assert "\nedge\n" in result
+        assert re.search(r"\| a b +\| c +\|", result)
+        assert "SOURCE" not in result
+        assert (source.restored_breaks, source.heading_breaks) == (1, 1)
 
 
 class BackslashTests(unittest.TestCase):
@@ -107,5 +105,5 @@ class BackslashTests(unittest.TestCase):
                     input_text=json.dumps(_reference.protect_backslashes(document)),
                 )
                 parsed = _reference.pandoc_html(written, pandoc)
-                self.assertEqual("".join(parsed.itertext()).strip(), text)
-                self.assertEqual("&#92;" in written, text != "C:\\tools")
+                assert "".join(parsed.itertext()).strip() == text
+                assert ("&#92;" in written) == (text != "C:\\tools")

@@ -65,8 +65,8 @@ class LiteralTableTests(unittest.TestCase):
                 )
                 parser = TableContents()
                 parser.feed(result.stdout)
-                self.assertEqual(parser.cells, expected)
-                self.assertEqual(parser.markup, [])
+                assert parser.cells == expected
+                assert parser.markup == []
 
     def test_literal_cells_do_not_create_markup_or_extra_columns(self) -> None:
         values = [
@@ -84,7 +84,7 @@ class LiteralTableTests(unittest.TestCase):
         markdown = table_row(["Value"]) + "\n" + table_row(["---"]) + "\n"
         markdown += "\n".join(table_row([literal_cell(value)]) for value in values)
         markdown += "\n\n[ref]: https://example.test\n[0]: target\n"
-        self.assertIn("| _ctl_s_ready |", markdown)
+        assert "| _ctl_s_ready |" in markdown
         self.assert_cells(markdown, values)
 
     def test_excel_csv_markdown_retains_literal_values(self) -> None:
@@ -119,10 +119,10 @@ class CSVValidationTests(unittest.TestCase):
                 text=True,
                 check=False,
             )
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("row 2 has 2 cells but the header has 1", result.stderr)
-            self.assertNotIn("Traceback", result.stderr)
-            self.assertEqual(output.read_text(), "existing markdown")
+            assert result.returncode != 0
+            assert "row 2 has 2 cells but the header has 1" in result.stderr
+            assert "Traceback" not in result.stderr
+            assert output.read_text() == "existing markdown"
 
     def test_short_rows_are_padded_and_dry_run_creates_no_output_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -132,8 +132,8 @@ class CSVValidationTests(unittest.TestCase):
             output = Path(temporary) / "not-created"
             with contextlib.redirect_stdout(io.StringIO()):
                 csv_to_md.convert(str(source), str(output), dry_run=True)
-            self.assertFalse(output.exists())
-            self.assertIn("| signal | |", csv_to_md.csv_to_md(source))
+            assert not output.exists()
+            assert "| signal | |" in csv_to_md.csv_to_md(source)
 
 
 if __name__ == "__main__":

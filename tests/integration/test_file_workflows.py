@@ -34,8 +34,8 @@ class ReviewFixTest(unittest.TestCase):
             )
 
             result = output.read_text(encoding="utf-8")
-            self.assertIn(r"* \[1:0\]: prose definition", result)
-            self.assertIn("[3:0]: fenced code", result)
+            assert r"* \[1:0\]: prose definition" in result
+            assert "[3:0]: fenced code" in result
 
     def test_gitignored_sibling_title_files_are_not_collected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -76,7 +76,7 @@ class ReviewFixTest(unittest.TestCase):
             )
 
             result = output.read_text(encoding="utf-8")
-            self.assertEqual(result, "# Included page\n")
+            assert result == "# Included page\n"
 
     def test_recursive_csv_output_preserves_relative_directories(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -106,9 +106,9 @@ class ReviewFixTest(unittest.TestCase):
                 text=True,
             )
 
-            self.assertIn("one", (output / "first/signals.md").read_text(encoding="utf-8"))
-            self.assertIn("two", (output / "second/signals.md").read_text(encoding="utf-8"))
-            self.assertFalse((output / "signals.md").exists())
+            assert "one" in (output / "first/signals.md").read_text(encoding="utf-8")
+            assert "two" in (output / "second/signals.md").read_text(encoding="utf-8")
+            assert not (output / "signals.md").exists()
 
 
 if __name__ == "__main__":
