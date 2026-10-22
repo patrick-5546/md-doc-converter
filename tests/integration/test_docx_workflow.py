@@ -2067,6 +2067,26 @@ def test_legacy_picture_and_object_previews_keep_metadata(
     assert next(parsed.iter("img")).get("alt") == "Legacy preview"
 
 
+def test_images_pandoc_cannot_place_stay_where_markitdown_put_them_with_word_alt_text(
+    convert: Converter,
+) -> None:
+    # Pandoc shows one image for a VML picture of two shapes. MarkItDown writes both, without
+    # their alt text, which comes from Word instead.
+    content = legacy_image()
+    picture = content.find(f"./{W}r/{W}pict")
+    assert picture is not None
+    picture.append(copy.deepcopy(picture[0]))
+    result, report, warnings = convert.reported(
+        [content],
+        relations=(("image", "image", "media/image.png", "Internal"),),
+        media={"image.png": PNG},
+    )
+    url = ".images/Synthetic%20Guide/image.png"
+    assert result == f"![Legacy preview]({url})![Legacy preview]({url})\n"
+    assert report.status("images") == "not applied"
+    assert "Pandoc shows 1 image(s) where Word has 2; left where MarkItDown put it" in warnings
+
+
 def test_packaged_picture_fallback_is_used_for_unsupported_native_drawing(
     convert: Converter,
 ) -> None:

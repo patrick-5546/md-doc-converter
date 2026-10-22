@@ -119,7 +119,7 @@ def _source_checks(report: TransformReport) -> frozenset[str]:
         checks.add("bookmarks")
     if clean("tables", "lists", "headings") and not records["tables"].skipped:
         checks.add("tables")
-    if clean("images", "floating-previews") and not report.baseline_images:
+    if clean("images") and not report.baseline_images:
         checks.add("images")
     if clean("links", "bookmarks", "pages") and not records["pages"].skipped:
         checks.add("links")

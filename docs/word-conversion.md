@@ -161,7 +161,7 @@ this order:
 
 | Transform | Effect |
 | --- | --- |
-| `alignment` | Aligns the MarkItDown and Pandoc conversions through private markers. The transforms from `literal-text` to `floating-previews`, except `image-conversion`, need it. |
+| `alignment` | Aligns the MarkItDown and Pandoc conversions through private markers. The transforms from `literal-text` to `code`, except `image-conversion`, need it. |
 | `fields` | Keeps the cached text of Word simple fields, such as caption numbers, which MarkItDown and Pandoc would otherwise drop. Fields that Pandoc cannot close, which would move the text of later list items out of their lists, keep only their cached text: fields spanning paragraphs, such as a table of contents, and fields without an instruction or an end. Fields inside another field's instruction, which Word does not show, and stray field marks, which Word ignores, are removed. Page numbers in table-of-contents links are dropped. |
 | `symbols` | Writes characters set in the Symbol, Wingdings, and Webdings fonts, such as a Wingdings check mark typed as `ü`, as the Unicode symbols they show. |
 | `hidden-text` | Drops text formatted as Hidden, directly or through its character style, paragraph style, or the document defaults. |
@@ -177,7 +177,6 @@ this order:
 | `lists` | Restores list structure and numbering; lettered and Roman levels are numbered. A paragraph whose numbering was removed, such as a list item's second paragraph, stays in the list item before it. List items that show nothing in Word are omitted, keeping Word's numbers for the rest. A list whose items are each one paragraph has no blank lines between items; one with an item of several paragraphs keeps them, as does one with a nested list numbered from other than 1, which Markdown cannot start right after an item's text. |
 | `tables` | Rebuilds tables from the Word source as Markdown or minimal HTML. Rows that show nothing are omitted. A one-level list, a list item's further paragraphs, or an indented paragraph in a cell becomes lines, without empty lines at the cell's start or end; header line breaks become spaces. `<sub>`, `<sup>`, `<mark>`, and `<u>` stay tags. |
 | `code` | Writes text in a monospace font as code. Consecutive body paragraphs that are entirely monospace, with the empty paragraphs between them, become a fenced `text` block with tabs as four spaces, as does a one-cell table that holds only such paragraphs. Other monospace text, outside headings, links, and fields, becomes inline code, in which a table cell's pipes are escaped with a backslash. Curly quotes, dashes, and ellipses in code become ASCII. |
-| `floating-previews` | Removes MarkItDown's extra copies of images that are already placed. |
 | `cleanup` | Normalizes list markers, trims trailing whitespace, repairs tooltip links, removes leftover markers, and removes escapes that are not needed. |
 | `duplicate-headings` | Qualifies repeated headings when `--qualify-duplicate-headings` is set. |
 | `pages` | Resolves final heading IDs and links, splitting pages for `--split-depth`. |
@@ -214,7 +213,6 @@ docx-to-md: transforms (baseline: MarkItDown)
   headings: applied (85)
   lists: applied (20)
   tables: applied (3 HTML, 25 Markdown)
-  floating-previews: not needed
   cleanup: applied (4 list marker(s) normalized)
   duplicate-headings: not requested (--qualify-duplicate-headings)
   pages: applied (1)
@@ -275,7 +273,7 @@ on its own; **after** is the output of `docx-to-md`.
 
 Nothing visible on its own: it lets the transforms below match MarkItDown's and
 Pandoc's conversions of the same element. Without it, for example when Pandoc is
-missing, the transforms from `literal-text` to `floating-previews`, except
+missing, the transforms from `literal-text` to `code`, except
 `image-conversion`, are not applied, and images stay where MarkItDown put them.
 
 ### `fields`
@@ -364,6 +362,10 @@ beside the Markdown, at its Word position, with the title of its caption,
 Before: ![A diagram of a computer](data:image/png;base64...)
 After:  ![Block diagram](.images/Example/image1.png)
 ```
+
+An image that Pandoc shows differently from Word, such as a legacy VML picture
+of several shapes, stays where MarkItDown put it and is still published with
+its alt text, which MarkItDown omits for VML pictures.
 
 ### `image-conversion`
 
@@ -508,20 +510,6 @@ off; a nested list keeps the table HTML:
 | --- | --- |
 | MODE | 1. Off<br>2. On<br>Takes effect after a reset. |
 ```
-
-### `floating-previews`
-
-MarkItDown writes some floating pictures after their paragraph:
-
-```text
-Before: Text before text after.
-
-        ![](data:image/png;base64...)
-After:  Text before ![Legacy preview](.images/Example/image1.png) text after.
-```
-
-`docx-to-md` places the picture where Word has it, and `floating-previews`
-removes any copy MarkItDown still leaves elsewhere.
 
 ### `cleanup`
 

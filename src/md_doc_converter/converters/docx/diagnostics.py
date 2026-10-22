@@ -37,7 +37,6 @@ TRANSFORMS = (
     "lists",
     "tables",
     "code",
-    "floating-previews",
     "cleanup",
     "duplicate-headings",
     "pages",
@@ -56,7 +55,6 @@ ALIGNED_TRANSFORMS = (
     "lists",
     "tables",
     "code",
-    "floating-previews",
 )
 
 

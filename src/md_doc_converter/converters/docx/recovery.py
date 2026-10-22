@@ -90,6 +90,21 @@ def _strip_pair(text: str, token: str) -> str:
     return text.replace(token + "BEGIN", "").replace(token + "END", "")
 
 
+def _mark_alt_text(markdown: str, token: str) -> str:
+    """Label MarkItDown's images of *token* with its alt text marker, for its Word alt text.
+
+    MarkItDown writes a VML picture without alt text: Mammoth does not read its o:title.
+    """
+    try:
+        start, end, fragment = _region(markdown, token)
+    except ConversionError:
+        return markdown
+    marked = _MARKDOWN_IMAGE.sub(
+        lambda match: f"![{token}ALT]({match.group(2)}{match.group(3)})", fragment
+    )
+    return f"{markdown[:start]}{token}BEGIN{marked}{token}END{markdown[end:]}"
+
+
 def _replace_block_region(text: str, token: str, replacement: str) -> str:
     start, end, _old = _region(text, token)
     line_start = text.rfind("\n", 0, start) + 1
@@ -227,6 +242,7 @@ def _recover_images(
                 if report.explaining
                 else None,
             )
+            markdown = _mark_alt_text(markdown, token)
             markdown, reference = _strip_pair(markdown, token), _strip_pair(reference, token)
             continue
         source.published_urls.update(urls)
@@ -687,7 +703,7 @@ def resolve_data_images(
     report: TransformReport,
     stager: ImageStager,
 ) -> str:
-    """Publish images left at MarkItDown positions; drop previews of recovered images."""
+    """Publish the images left where MarkItDown put them, with their Word alt text."""
     prefix = re.escape(source.prefix)
     unit_alt = re.compile(prefix + r"(I\d+)ALT")
     data_token = re.compile(prefix + r"D\d+DATA")
@@ -707,11 +723,7 @@ def resolve_data_images(
         alt, target, title = match.groups()
         unit = unit_alt.fullmatch(alt)
         if unit is not None:
-            token = source.prefix + unit.group(1)
-            if token in source.recovered_images:
-                report.applied("floating-previews")
-                return ""
-            alt = _media.escape_image_alt_text(alts.get(token, ""))
+            alt = _media.escape_image_alt_text(alts.get(source.prefix + unit.group(1), ""))
         elif target not in source.data_images:
             return match.group(0)
         if target in source.data_images:
@@ -719,10 +731,7 @@ def resolve_data_images(
         return f"![{alt}]({target}{title})"
 
     def bare_alt(match: re.Match[str]) -> str:
-        token = source.prefix + match.group(1)
-        if token in source.recovered_images:
-            return ""
-        return html.escape(alts.get(token, ""), quote=True)
+        return html.escape(alts.get(source.prefix + match.group(1), ""), quote=True)
 
     def leftover(match: re.Match[str]) -> str:
         return publish(match.group(0)) if match.group(0) in source.data_images else ""
