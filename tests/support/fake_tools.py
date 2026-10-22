@@ -59,6 +59,7 @@ if os.environ.get("FAKE_TOOL_FAIL") == tool:
     sys.exit(3)
 record = {{
     "tool": tool,
+    "path": sys.argv[0],
     "arguments": arguments,
     "cwd": os.getcwd(),
     "environment": {{name: os.environ.get(name) for name in {variables!r}}},
@@ -107,7 +108,7 @@ def write_fake_tools(
 
 
 def install_fake_toolchain(root: Path, log: Path) -> Toolchain:
-    """Create a complete, current renderer toolchain whose executables are fakes."""
+    """Create a complete, current toolchain, with the pinned Pandoc, whose executables are fakes."""
     tools = Toolchain(root)
     for name in ("mermaid-filter", "mmdc"):
         executable = tools.node_executable(name)
@@ -117,7 +118,7 @@ def install_fake_toolchain(root: Path, log: Path) -> Toolchain:
     (tools.node_modules / "pagedjs-cli").mkdir()
     (tools.node_modules / "pagedjs-cli" / "package.json").write_text("{}")
     (tools.puppeteer_cache / "chrome").mkdir(parents=True)
-    write_fake_tools(tools.bin_dir, log, ("pandoc-katex",))
+    write_fake_tools(tools.bin_dir, log, ("pandoc", "pandoc-katex"))
     write_stamp(tools)
     return tools
 

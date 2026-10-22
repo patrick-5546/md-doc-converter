@@ -1,7 +1,7 @@
-"""Where the renderer toolchain lives and the environment its subprocesses need.
+"""Where the toolchain lives and the environment its subprocesses need.
 
-``md-doc-converter setup`` installs the pinned npm packages (with the browsers that
-Puppeteer downloads) and pandoc-katex under one directory, by default
+``md-doc-converter setup`` installs the pinned Pandoc, the pinned npm packages (with the
+browsers that Puppeteer downloads) and pandoc-katex under one directory, by default
 ``$XDG_DATA_HOME/md-doc-converter`` (``~/.local/share/md-doc-converter``).
 ``MD_DOC_CONVERTER_HOME`` selects another directory.
 """
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import os
-from collections.abc import Mapping
+from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -21,6 +21,8 @@ MANIFEST_DIR = Path(__file__).resolve().parent
 MANIFESTS = ("package.json", "package-lock.json")
 STAMP_NAME = ".md-doc-converter-stamp"
 NODE_MINIMUM = (22, 12, 0)
+# Converted Markdown depends on the Pandoc version; the tests expect this one.
+PANDOC_VERSION = "3.12.1"
 PANDOC_KATEX_VERSION = "0.1.11"
 
 
@@ -63,6 +65,10 @@ class Toolchain:
         return self.node_dir / STAMP_NAME
 
     @property
+    def pandoc(self) -> Path:
+        return self.bin_dir / "pandoc"
+
+    @property
     def pandoc_katex(self) -> Path:
         return self.bin_dir / "pandoc-katex"
 
@@ -72,6 +78,18 @@ class Toolchain:
 
 def toolchain(environment: Mapping[str, str] | None = None) -> Toolchain:
     return Toolchain(default_home(environment))
+
+
+def prefer_installed_tools(environment: MutableMapping[str, str] | None = None) -> None:
+    """Put the toolchain's ``bin/`` first on PATH, so its pinned Pandoc is the one used."""
+    environment = os.environ if environment is None else environment
+    bin_dir = toolchain(environment).bin_dir
+    if not bin_dir.is_dir():
+        return
+    entries = [entry for entry in environment.get("PATH", "").split(os.pathsep) if entry]
+    environment["PATH"] = os.pathsep.join(
+        [str(bin_dir), *(entry for entry in entries if entry != str(bin_dir))]
+    )
 
 
 def manifest_digest() -> str:

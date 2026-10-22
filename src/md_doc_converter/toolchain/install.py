@@ -1,4 +1,4 @@
-"""Install the pinned renderer toolchain: npm packages, their browsers and pandoc-katex."""
+"""Install the pinned toolchain: Pandoc, the npm packages and their browsers, pandoc-katex."""
 
 from __future__ import annotations
 
@@ -12,31 +12,65 @@ import sys
 import tarfile
 import tempfile
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from md_doc_converter.toolchain.checks import NODE_FIX, check_node, check_pandoc_katex
+from md_doc_converter.toolchain.checks import NODE_FIX, check_node, installed_version
 from md_doc_converter.toolchain.environment import (
     MANIFEST_DIR,
     MANIFESTS,
     PANDOC_KATEX_VERSION,
+    PANDOC_VERSION,
     Toolchain,
     packages_current,
     toolchain,
     write_stamp,
 )
 
-PANDOC_KATEX_ARCHIVE = f"pandoc-katex-{PANDOC_KATEX_VERSION}-x86_64-unknown-linux-musl.tar.gz"
-PANDOC_KATEX_URL = (
-    "https://github.com/xu-cheng/pandoc-katex/releases/download/"
-    f"{PANDOC_KATEX_VERSION}/{PANDOC_KATEX_ARCHIVE}"
-)
-PANDOC_KATEX_SHA256 = "5c7b5b45df27d3fe2af2fd48ef9408b43844a59c8229cfdf5f8379a388e7052a"
-PANDOC_KATEX_MEMBER = PurePosixPath("bin/pandoc-katex")
 DOWNLOAD_TIMEOUT = 120
 
 
+@dataclass(frozen=True)
+class Archive:
+    """A pinned release archive holding one executable that `setup` installs into bin/."""
+
+    name: str
+    version: str
+    file: str
+    url: str
+    sha256: str
+    member: PurePosixPath
+
+    @property
+    def executable(self) -> str:
+        return self.member.name
+
+
+PANDOC = Archive(
+    "Pandoc",
+    PANDOC_VERSION,
+    f"pandoc-{PANDOC_VERSION}-linux-amd64.tar.gz",
+    f"https://github.com/jgm/pandoc/releases/download/{PANDOC_VERSION}/"
+    f"pandoc-{PANDOC_VERSION}-linux-amd64.tar.gz",
+    "d0c90410e90204c9ca83b8539fac5c7aed01fd537207e4585849f8abc5df20b8",
+    PurePosixPath(f"pandoc-{PANDOC_VERSION}/bin/pandoc"),
+)
+PANDOC_KATEX = Archive(
+    "pandoc-katex",
+    PANDOC_KATEX_VERSION,
+    f"pandoc-katex-{PANDOC_KATEX_VERSION}-x86_64-unknown-linux-musl.tar.gz",
+    "https://github.com/xu-cheng/pandoc-katex/releases/download/"
+    f"{PANDOC_KATEX_VERSION}/pandoc-katex-{PANDOC_KATEX_VERSION}-x86_64-unknown-linux-musl.tar.gz",
+    "5c7b5b45df27d3fe2af2fd48ef9408b43844a59c8229cfdf5f8379a388e7052a",
+    PurePosixPath("bin/pandoc-katex"),
+)
+NO_RENDER_HINT = (
+    "or run `md-doc-converter setup --no-render` to install only Pandoc, for conversion"
+)
+
+
 class SetupError(Exception):
-    """The renderer toolchain could not be installed."""
+    """The toolchain could not be installed."""
 
 
 def supported_platform() -> bool:
@@ -66,8 +100,8 @@ def install_packages(tools: Toolchain, npm: str, *, force: bool) -> bool:
     return True
 
 
-def _download(url: str, destination: Path) -> None:
-    request = urllib.request.Request(url, headers={"User-Agent": "md-doc-converter-setup"})
+def _download(archive: Archive, destination: Path) -> None:
+    request = urllib.request.Request(archive.url, headers={"User-Agent": "md-doc-converter-setup"})
     try:
         with (
             urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT) as response,
@@ -76,8 +110,8 @@ def _download(url: str, destination: Path) -> None:
             shutil.copyfileobj(response, output)
     except OSError as error:  # Includes URLError and timeouts.
         raise SetupError(
-            f"cannot download {url}: {error}. Download it another way and run "
-            "`md-doc-converter setup --pandoc-katex-archive PATH`"
+            f"cannot download {archive.url}: {error}. Download {archive.file} another way, put "
+            "it in a folder and run `md-doc-converter setup --downloads FOLDER`"
         ) from error
 
 
@@ -89,12 +123,12 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _extract_binary(archive: Path, destination: Path) -> None:
+def _extract_executable(archive: Archive, tarball: Path, destination: Path) -> None:
     """Copy only the expected executable out of the archive, whatever else it contains."""
     try:
-        with tarfile.open(archive, "r:gz") as bundle:
+        with tarfile.open(tarball, "r:gz") as bundle:
             for member in bundle.getmembers():
-                if member.isfile() and PurePosixPath(member.name) == PANDOC_KATEX_MEMBER:
+                if member.isfile() and PurePosixPath(member.name) == archive.member:
                     stream = bundle.extractfile(member)
                     if stream is None:
                         break
@@ -102,39 +136,42 @@ def _extract_binary(archive: Path, destination: Path) -> None:
                         shutil.copyfileobj(stream, output)
                     return
     except (OSError, tarfile.TarError) as error:
-        raise SetupError(f"cannot read {archive}: {error}") from error
-    raise SetupError(f"{archive} does not contain {PANDOC_KATEX_MEMBER}")
+        raise SetupError(f"cannot read {tarball}: {error}") from error
+    raise SetupError(f"{archive.file} does not contain {archive.member}")
 
 
-def install_pandoc_katex(tools: Toolchain, *, force: bool, archive: Path | None = None) -> bool:
-    """Install the checksum-pinned pandoc-katex binary; return whether it was installed."""
-    if check_pandoc_katex(tools).status == "ok" and not force and archive is None:
-        print(f"pandoc-katex: up to date at {tools.pandoc_katex}")
+def install_executable(
+    tools: Toolchain, archive: Archive, *, force: bool, downloads: Path | None = None
+) -> bool:
+    """Install the checksum-pinned executable of *archive*; return whether it was installed."""
+    target = tools.bin_dir / archive.executable
+    label = archive.name.lower()
+    if installed_version(target) == archive.version and not force:
+        print(f"{label}: up to date at {target}")
         return False
     tools.bin_dir.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix=".pandoc-katex-", dir=tools.bin_dir) as scratch:
-        tarball = Path(scratch) / PANDOC_KATEX_ARCHIVE
-        if archive is None:
-            print(f"pandoc-katex: downloading {PANDOC_KATEX_URL}")
-            _download(PANDOC_KATEX_URL, tarball)
-        else:
+    local = downloads / archive.file if downloads is not None else None
+    with tempfile.TemporaryDirectory(prefix=f".{archive.executable}-", dir=tools.bin_dir) as work:
+        tarball = Path(work) / archive.file
+        if local is not None and local.is_file():
+            print(f"{label}: using {local}")
             try:
-                shutil.copyfile(archive, tarball)
+                shutil.copyfile(local, tarball)
             except OSError as error:
-                raise SetupError(f"cannot read {archive}: {error}") from error
+                raise SetupError(f"cannot read {local}: {error}") from error
+        else:
+            print(f"{label}: downloading {archive.url}")
+            _download(archive, tarball)
         digest = _sha256(tarball)
-        if digest != PANDOC_KATEX_SHA256:
-            raise SetupError(
-                f"{PANDOC_KATEX_ARCHIVE} has SHA-256 {digest}, expected {PANDOC_KATEX_SHA256}"
-            )
-        staged = Path(scratch) / "pandoc-katex"
-        _extract_binary(tarball, staged)
+        if digest != archive.sha256:
+            raise SetupError(f"{archive.file} has SHA-256 {digest}, expected {archive.sha256}")
+        staged = Path(work) / archive.executable
+        _extract_executable(archive, tarball, staged)
         staged.chmod(0o755)
-        staged.replace(tools.pandoc_katex)
-    installed = check_pandoc_katex(tools)
-    if installed.status != "ok":
-        raise SetupError(f"installed pandoc-katex does not run: {installed.detail}")
-    print(f"pandoc-katex: installed {PANDOC_KATEX_VERSION} at {tools.pandoc_katex}")
+        staged.replace(target)
+    if installed_version(target) != archive.version:
+        raise SetupError(f"the installed {target} does not report version {archive.version}")
+    print(f"{label}: installed {archive.version} at {target}")
     return True
 
 
@@ -142,40 +179,59 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="md-doc-converter setup",
         description=(
-            "Install the renderer toolchain (Mermaid, Paged.js and their browsers from npm, "
-            "and pandoc-katex) into MD_DOC_CONVERTER_HOME, by default "
-            "~/.local/share/md-doc-converter. Requires Node.js 22.12+ with npm."
+            "Install the pinned toolchain into MD_DOC_CONVERTER_HOME, by default "
+            "~/.local/share/md-doc-converter: Pandoc, and for rendering, Mermaid, Paged.js and "
+            "their browsers from npm, and pandoc-katex. Rendering needs Node.js 22.12+ with npm."
         ),
     )
     parser.add_argument(
         "--force", action="store_true", help="Reinstall even when the toolchain is up to date"
     )
     parser.add_argument(
-        "--pandoc-katex-archive",
+        "--no-render",
+        action="store_true",
+        help="Install only Pandoc, for Word conversion without Node.js",
+    )
+    parser.add_argument(
+        "--downloads",
         type=Path,
-        metavar="PATH",
-        help=f"Install from a local copy of {PANDOC_KATEX_ARCHIVE} (checksum still verified)",
+        metavar="DIR",
+        help=(
+            f"Use the pinned archives ({PANDOC.file}, {PANDOC_KATEX.file}) from DIR when "
+            "present instead of downloading them; their checksums are still verified"
+        ),
     )
     arguments = parser.parse_args(argv)
     tools = toolchain()
+    render = not arguments.no_render
     try:
         if not supported_platform():
             raise SetupError(
                 f"setup supports Linux x86_64 only, not {sys.platform} {platform.machine()}"
             )
-        node = check_node()
-        if node.status != "ok":
-            raise SetupError(f"node: {node.detail}. {node.fix}")
-        npm = shutil.which("npm")
-        if npm is None:
-            raise SetupError(f"npm was not found on PATH. {NODE_FIX}")
-        print(f"Renderer toolchain: {tools.root}")
-        install_packages(tools, npm, force=arguments.force)
-        install_pandoc_katex(tools, force=arguments.force, archive=arguments.pandoc_katex_archive)
+        downloads = arguments.downloads
+        if downloads is not None and not downloads.is_dir():
+            raise SetupError(f"--downloads must be a folder: {downloads}")
+        npm = None
+        if render:
+            node = check_node()
+            if node.status != "ok":
+                raise SetupError(f"node: {node.detail}. {node.fix}, {NO_RENDER_HINT}.")
+            npm = shutil.which("npm")
+            if npm is None:
+                raise SetupError(f"npm was not found on PATH. {NODE_FIX}, {NO_RENDER_HINT}.")
+        print(f"Toolchain: {tools.root}")
+        install_executable(tools, PANDOC, force=arguments.force, downloads=downloads)
+        if npm is not None:
+            install_packages(tools, npm, force=arguments.force)
+            install_executable(tools, PANDOC_KATEX, force=arguments.force, downloads=downloads)
     except SetupError as error:
         print(f"md-doc-converter setup: {error}", file=sys.stderr)
         return 1
-    print("Done. Run `md-doc-converter doctor` to check every prerequisite.")
+    if render:
+        print("Done. Run `md-doc-converter doctor` to check every prerequisite.")
+    else:
+        print("Done: Pandoc is installed for conversion. Rendering needs a full `setup`.")
     return 0
 
 

@@ -1,1 +1,1 @@
-"""Renderer toolchain: install location, subprocess environment, setup and checks."""
+"""Toolchain: install location, subprocess environment, setup and checks."""

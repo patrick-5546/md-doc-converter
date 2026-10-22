@@ -11,7 +11,7 @@ src/md_doc_converter/
     excel.py, csv.py
     docx/                   # responsibility-based Word conversion stages
   rendering/                # HTML/PDF orchestration, page text CSS, PDF printer
-  toolchain/                # setup, doctor, renderer locations and environment
+  toolchain/                # setup, doctor, toolchain locations and environment
     package.json, package-lock.json   # pinned npm packages installed by setup
   assets/                   # stylesheets, HTML fragments, Pandoc/Mermaid config, Lua filters
 tests/
@@ -83,8 +83,8 @@ folder with images, Mermaid and math, and the PDF time limit. It needs the
 installed toolchain, `pdftocairo` and LibreOffice (`libreoffice` or `soffice`)
 on `PATH`.
 
-Some converter tests compare exact Pandoc output and expect the Pandoc 3.12.1
-that pixi pins. The converter writes code fences itself, because Pandoc's GFM
+Some converter tests compare exact Pandoc output and expect Pandoc 3.12.1,
+the version that `setup` installs and pixi provides. The converter writes code fences itself, because Pandoc's GFM
 writer drops labels, such as `text`, that are not among its highlighting
 languages (since Pandoc 3.10.1). Python 3.10 is the oldest supported version:
 
@@ -101,12 +101,14 @@ UV_PYTHON=3.10 UV_PROJECT_ENVIRONMENT=.venv-3.10 pixi run test
   manifests' digest changes. A test checks that every locked package resolves
   from `registry.npmjs.org`.
 - **pandoc-katex:** update `PANDOC_KATEX_VERSION` in
-  `toolchain/environment.py`, `PANDOC_KATEX_SHA256` in `toolchain/install.py`
-  (the `sha256sum` of the release's `x86_64-unknown-linux-musl` archive), and the
-  KaTeX stylesheet version in `assets/pandoc-defaults.yaml`
-  (`pandoc-katex --katex-version`).
-- **Pandoc:** change the pin in `pixi.toml` and update tests that compare exact
-  Pandoc output.
+  `toolchain/environment.py`, the `PANDOC_KATEX` checksum in
+  `toolchain/install.py` (the `sha256sum` of the release's
+  `x86_64-unknown-linux-musl` archive), and the KaTeX stylesheet version in
+  `assets/pandoc-defaults.yaml` (`pandoc-katex --katex-version`).
+- **Pandoc:** update `PANDOC_VERSION` in `toolchain/environment.py`, the
+  `PANDOC` checksum in `toolchain/install.py` (the `sha256sum` of the release's
+  `linux-amd64` archive) and the pin in `pixi.toml`, then update tests that
+  compare exact Pandoc output.
 
 ## Continuous integration
 

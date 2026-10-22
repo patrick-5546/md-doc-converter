@@ -5,8 +5,9 @@ md-doc-converter docx-to-md path/to/input.docx [-o path/to/output.md]
 ```
 
 Word conversion writes Markdown beside the DOCX unless `-o` selects another
-file, and writes the document's images beside that Markdown. It needs Pandoc for
-everything beyond the MarkItDown baseline, and LibreOffice for EMF/WMF drawings;
+file, and writes the document's images beside that Markdown. It needs Pandoc,
+which `md-doc-converter setup --no-render` installs, for everything beyond the
+MarkItDown baseline, and LibreOffice for EMF/WMF drawings;
 `md-doc-converter doctor` reports both.
 
 `docx-to-md` starts from a MarkItDown conversion and layers transforms on top

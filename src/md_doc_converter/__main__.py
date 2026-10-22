@@ -6,6 +6,7 @@ import argparse
 import sys
 
 from md_doc_converter.resources import package_version
+from md_doc_converter.toolchain.environment import prefer_installed_tools
 
 COMMANDS = {
     "excel-to-csv": "write each worksheet of an Excel workbook as a CSV file",
@@ -13,13 +14,15 @@ COMMANDS = {
     "docx-to-md": "convert a Word document to Markdown, with its images",
     "md-to-html": "render Markdown to a standalone HTML file",
     "md-to-pdf": "render Markdown to a paged PDF",
-    "setup": "install the renderer toolchain (Mermaid, Paged.js, pandoc-katex)",
+    "setup": "install the toolchain (Pandoc; for rendering Mermaid, Paged.js, pandoc-katex)",
     "doctor": "check the prerequisites for conversion and rendering",
 }
 
 
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
+    # Conversion and rendering then use the Pandoc that `setup` pinned, when it is installed.
+    prefer_installed_tools()
     width = max(len(name) for name in COMMANDS)
     parser = argparse.ArgumentParser(
         prog="md-doc-converter",

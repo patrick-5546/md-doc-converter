@@ -6,8 +6,8 @@ md-doc-converter md-to-pdf  INPUT [-o FILE.pdf]  [options]
 ```
 
 `INPUT` is one Markdown file or a folder of Markdown files. Rendering needs
-Pandoc, Node.js and the renderer toolchain that `md-doc-converter setup`
-installs; `md-doc-converter doctor` checks all of them, and a render that is
+Node.js and the toolchain that `md-doc-converter setup` installs, including
+Pandoc; `md-doc-converter doctor` checks all of them, and a render that is
 missing one fails before it writes anything.
 
 ## Output

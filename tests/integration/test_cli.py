@@ -10,6 +10,8 @@ from pathlib import Path
 from typing_extensions import override
 
 from md_doc_converter.rendering.header import css_string
+from md_doc_converter.toolchain.environment import PANDOC_VERSION
+from md_doc_converter.toolchain.install import PANDOC
 from tests.support.fake_tools import install_fake_toolchain, read_log, write_fake_tools
 
 
@@ -91,6 +93,8 @@ class CommandLineTest(unittest.TestCase):
         assert isinstance(environment, dict)
         self.assertEqual(environment["PUPPETEER_CACHE_DIR"], str(self.tools.puppeteer_cache))
         self.assertTrue(str(environment["PATH"]).startswith(str(self.tools.node_bin)))
+        # The fake PATH also has a pandoc; the toolchain's pinned one comes first.
+        self.assertEqual({call["path"] for call in self.calls("pandoc")}, {str(self.tools.pandoc)})
 
     def test_paths_preserve_spaces_quotes_and_apostrophes(self) -> None:
         source = self.docs / 'input file\'s "review".md'
@@ -238,23 +242,23 @@ class CommandLineTest(unittest.TestCase):
     def test_doctor_and_setup_report_through_the_command_line(self) -> None:
         ready = self.run_cli("doctor")
         self.assertIn("Ready:", ready.stdout)
+        self.assertIn(f"{PANDOC_VERSION} ({self.tools.pandoc})", ready.stdout)
         empty = {"MD_DOC_CONVERTER_HOME": str(self.root / "empty")}
         missing = self.run_cli("doctor", environment=empty, check=False)
         self.assertEqual(missing.returncode, 1)
         self.assertIn("-> Run `md-doc-converter setup`", missing.stdout)
 
-        archive = self.root / "not-pandoc-katex.tar.gz"
-        archive.write_bytes(b"not the pinned archive")
+        downloads = self.root / "downloads"
+        downloads.mkdir()
+        (downloads / PANDOC.file).write_bytes(b"not the pinned archive")
         result = self.run_cli(
-            "setup", "--pandoc-katex-archive", str(archive), environment=empty, check=False
+            "setup", "--downloads", str(downloads), environment=empty, check=False
         )
         self.assertEqual(result.returncode, 1)
-        self.assertIn("SHA-256", result.stderr)
-        self.assertIn("npm packages: installing", result.stdout)
-        self.assertEqual(
-            [call["arguments"] for call in self.calls("npm")], [["ci", "--no-audit", "--no-fund"]]
-        )
-        self.assertFalse((self.root / "empty" / "bin" / "pandoc-katex").exists())
+        self.assertIn(f"{PANDOC.file} has SHA-256", result.stderr)
+        self.assertIn(f"pandoc: using {downloads / PANDOC.file}", result.stdout)
+        self.assertEqual(self.calls("npm"), [])
+        self.assertEqual(list((self.root / "empty" / "bin").iterdir()), [])
 
 
 if __name__ == "__main__":

@@ -17,14 +17,15 @@ and PDF.
 
 - Linux x86_64.
 - Python 3.10 or newer. uv installs one if needed.
-- [Pandoc](https://pandoc.org/installing.html) 3.12 or newer, for rendering
-  and for Word conversion beyond the MarkItDown baseline. md-doc-converter is
-  tested with Pandoc 3.12.1; other versions may format some converted
-  Markdown slightly differently.
 - [Node.js](https://nodejs.org/) 22.12 or newer, with npm, for rendering.
 - Optional: LibreOffice (`libreoffice` or `soffice`) and Poppler
   (`pdftocairo`) to convert EMF and WMF drawings in Word documents to SVG, and
   Git to skip Git-ignored files when converting or rendering a folder.
+
+`md-doc-converter setup` installs the rest, including
+[Pandoc](https://pandoc.org/) 3.12.1 for Word conversion and rendering; see
+[Toolchain](#toolchain). Excel and CSV conversion need neither Pandoc nor
+Node.js.
 
 ## Installation
 
@@ -36,23 +37,19 @@ uv tool install ./md-doc-converter
 # or: uv tool install md_doc_converter-0.1.0-py3-none-any.whl
 ```
 
-Install Pandoc, Node.js and, optionally, Poppler with your package manager, or
-with [pixi](https://pixi.sh):
-
-```sh
-pixi global install pandoc nodejs poppler
-```
-
-Then install the renderer toolchain and check every prerequisite:
+Install Node.js for rendering, and optionally LibreOffice and Poppler, from your
+distribution's packages; [nvm](https://github.com/nvm-sh/nvm) also installs
+Node.js without root. Then install the toolchain and check every prerequisite:
 
 ```sh
 md-doc-converter setup
 md-doc-converter doctor
 ```
 
-`setup` installs the pinned Mermaid and Paged.js npm packages, the browsers
-that their Puppeteer dependencies download (about 2 GB in total), and
-pandoc-katex. See [Renderer toolchain](#renderer-toolchain).
+`setup` installs Pandoc and, for rendering, the pinned Mermaid and Paged.js npm
+packages, the browsers that their Puppeteer dependencies download (about 2 GB
+in total), and pandoc-katex. For Word conversion only, `setup --no-render`
+installs just Pandoc and needs no Node.js. See [Toolchain](#toolchain).
 
 ## Quick start
 
@@ -76,7 +73,7 @@ command's options.
 | `csv-to-md PATH [-o DIR] [--dry-run]` | Convert a CSV file, or every CSV in a folder, to Markdown |
 | `md-to-html INPUT [-o FILE.html]` | Render a Markdown file or folder to standalone HTML; see [Rendering](docs/rendering.md) |
 | `md-to-pdf INPUT [-o FILE.pdf]` | Render a Markdown file or folder to a paged PDF |
-| `setup [--force]` | Install or reinstall the renderer toolchain |
+| `setup [--no-render] [--downloads DIR] [--force]` | Install the pinned toolchain; `--no-render` installs only Pandoc |
 | `doctor` | Check the prerequisites and show how to fix what is missing |
 
 ## Excel and CSV
@@ -139,21 +136,29 @@ Command-line options override these environment variables.
 
 | Variable | Purpose |
 | --- | --- |
-| `MD_DOC_CONVERTER_HOME` | Renderer toolchain directory (default `~/.local/share/md-doc-converter`) |
+| `MD_DOC_CONVERTER_HOME` | Toolchain directory (default `~/.local/share/md-doc-converter`) |
 | `MD_DOC_CONVERTER_HEADER` | Default `--header` text |
 | `MD_DOC_CONVERTER_FOOTER` | Default `--footer` text |
 | `MD_DOC_CONVERTER_PDF_TIMEOUT` | Default `--pdf-timeout`, in seconds (600; `0` = no limit) |
 
-## Renderer toolchain
+## Toolchain
 
 `setup` installs into `$MD_DOC_CONVERTER_HOME`, by default
 `$XDG_DATA_HOME/md-doc-converter` or `~/.local/share/md-doc-converter`:
 
+- `bin/pandoc`: Pandoc 3.12.1, the version md-doc-converter is tested with;
 - `node/`: the npm packages from the lockfile bundled with md-doc-converter,
   installed with `npm ci`;
 - `puppeteer/`: the browsers that Puppeteer downloads during that installation;
-- `bin/pandoc-katex`: pandoc-katex 0.1.11, downloaded from its GitHub release
-  and verified against a pinned SHA-256 checksum.
+- `bin/pandoc-katex`: pandoc-katex 0.1.11.
+
+Pandoc and pandoc-katex come from their GitHub releases and are verified
+against pinned SHA-256 checksums. `setup --no-render` installs only Pandoc.
+
+md-doc-converter looks in the toolchain's `bin/` first, so it uses this Pandoc
+even when another one is installed. Without it, md-doc-converter uses the
+Pandoc on `PATH`, and `doctor` warns when that is another version, which may
+format some converted Markdown slightly differently.
 
 `setup` skips what is already current, and reinstalls the npm packages when a
 new md-doc-converter version changes them. `setup --force` reinstalls
@@ -161,19 +166,22 @@ everything. To remove the toolchain, delete its directory; to remove the
 command, run `uv tool uninstall md-doc-converter`.
 
 npm uses your npm configuration, including proxies and registry mirrors. On a
-host that cannot reach GitHub, download
-`pandoc-katex-0.1.11-x86_64-unknown-linux-musl.tar.gz` from the
-[pandoc-katex releases](https://github.com/xu-cheng/pandoc-katex/releases)
-another way and run:
+host that cannot reach GitHub, download these archives another way into one
+folder and pass it to `setup`, which still verifies their checksums:
+
+- `pandoc-3.12.1-linux-amd64.tar.gz` from the
+  [Pandoc 3.12.1 release](https://github.com/jgm/pandoc/releases/tag/3.12.1);
+- `pandoc-katex-0.1.11-x86_64-unknown-linux-musl.tar.gz` from the
+  [pandoc-katex 0.1.11 release](https://github.com/xu-cheng/pandoc-katex/releases/tag/0.1.11).
 
 ```sh
-md-doc-converter setup --pandoc-katex-archive pandoc-katex-0.1.11-x86_64-unknown-linux-musl.tar.gz
+md-doc-converter setup --downloads ~/downloads
 ```
 
 ## Network access
 
-Only `setup` downloads software: npm packages from your npm registry, browsers
-through Puppeteer, and pandoc-katex from GitHub. Conversion and rendering run
+Only `setup` downloads software: Pandoc and pandoc-katex from GitHub, npm
+packages from your npm registry, and browsers through Puppeteer. Conversion and rendering run
 locally and do not upload documents. Rendered HTML links the GitHub Markdown
 and KaTeX stylesheets on `cdn.jsdelivr.net`, which the PDF printer, and any
 browser that opens the HTML, fetches.

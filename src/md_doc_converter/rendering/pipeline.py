@@ -242,7 +242,7 @@ def render_markdown(
             ]
             if filter_gitignored:
                 command.append("--respect-gitignore")
-            subprocess.run(command, check=True)
+            subprocess.run(command, env=environment, check=True)
 
             styles_file = work / "page-styles.html"
             styles_file.write_text(styles, encoding="utf-8")

@@ -15,19 +15,15 @@ from md_doc_converter.resources import package_version
 from md_doc_converter.toolchain.environment import (
     NODE_MINIMUM,
     PANDOC_KATEX_VERSION,
+    PANDOC_VERSION,
     Toolchain,
     packages_current,
     toolchain,
 )
 
-PANDOC_TESTED = (3, 12)
-PANDOC_FIX = (
-    "Install Pandoc 3.12 or newer: https://pandoc.org/installing.html "
-    "(or `pixi global install pandoc`)"
-)
+PANDOC_FIX = "Run `md-doc-converter setup`, or `setup --no-render` for conversion only"
 NODE_FIX = (
-    "Install Node.js 22.12 or newer, which includes npm: https://nodejs.org/ "
-    "(or `pixi global install nodejs`)"
+    "Install Node.js 22.12 or newer with npm, from your distribution, nvm or https://nodejs.org/"
 )
 SETUP_FIX = "Run `md-doc-converter setup`"
 REINSTALL_FIX = "Run `md-doc-converter setup --force`"
@@ -61,6 +57,14 @@ def _text(version: tuple[int, ...]) -> str:
     return ".".join(str(part) for part in version)
 
 
+def installed_version(executable: Path) -> str | None:
+    """The version an installed executable reports, or None when it is missing or silent."""
+    if not _executable(executable):
+        return None
+    version = _version([str(executable), "--version"])
+    return None if version is None else _text(version)
+
+
 def _executable(path: Path) -> bool:
     return path.is_file() and shutil.which(path.name, path=str(path.parent)) is not None
 
@@ -77,20 +81,22 @@ def check_platform() -> Check:
 
 
 def check_pandoc() -> Check:
+    """The Pandoc that conversion and rendering use: setup's pinned copy, first on PATH."""
     pandoc = shutil.which("pandoc")
     if pandoc is None:
-        return Check("pandoc", "error", "not found on PATH", PANDOC_FIX)
-    version = _version([pandoc, "--version"])
+        return Check("pandoc", "error", "not installed", PANDOC_FIX)
+    version = installed_version(Path(pandoc))
     if version is None:
         return Check("pandoc", "error", f"{pandoc} did not report a version", PANDOC_FIX)
-    if version[:2] < PANDOC_TESTED:
+    if version != PANDOC_VERSION:
         return Check(
             "pandoc",
             "warn",
-            f"{_text(version)} is older than the tested 3.12 ({pandoc})",
+            f"{version} ({pandoc}); md-doc-converter is tested with {PANDOC_VERSION}, "
+            "so converted Markdown may differ",
             PANDOC_FIX,
         )
-    return Check("pandoc", "ok", f"{_text(version)} ({pandoc})")
+    return Check("pandoc", "ok", f"{version} ({pandoc})")
 
 
 def check_node() -> Check:
@@ -141,15 +147,13 @@ def check_pandoc_katex(tools: Toolchain, *, verify_version: bool = True) -> Chec
     binary = tools.pandoc_katex
     if not _executable(binary):
         return Check("pandoc-katex", "error", f"not installed at {binary}", SETUP_FIX)
-    if verify_version:
-        version = _version([str(binary), "--version"])
-        if version is None or _text(version) != PANDOC_KATEX_VERSION:
-            return Check(
-                "pandoc-katex",
-                "error",
-                f"{binary} is not version {PANDOC_KATEX_VERSION}",
-                REINSTALL_FIX,
-            )
+    if verify_version and installed_version(binary) != PANDOC_KATEX_VERSION:
+        return Check(
+            "pandoc-katex",
+            "error",
+            f"{binary} is not version {PANDOC_KATEX_VERSION}",
+            REINSTALL_FIX,
+        )
     return Check("pandoc-katex", "ok", f"{PANDOC_KATEX_VERSION} ({binary})")
 
 
@@ -181,7 +185,7 @@ def check_pdftocairo() -> Check:
         "pdftocairo",
         ("pdftocairo",),
         "the PDF fallback for EMF/WMF drawings is unavailable",
-        "Install Poppler (or `pixi global install poppler`)",
+        "Install Poppler (`poppler-utils` in most distributions)",
     )
 
 

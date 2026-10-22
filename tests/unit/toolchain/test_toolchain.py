@@ -9,6 +9,7 @@ import tarfile
 import tempfile
 import unittest
 import urllib.error
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
@@ -19,9 +20,11 @@ from md_doc_converter.toolchain import checks, install
 from md_doc_converter.toolchain.environment import (
     MANIFEST_DIR,
     MANIFESTS,
+    PANDOC_VERSION,
     Toolchain,
     default_home,
     packages_current,
+    prefer_installed_tools,
     render_environment,
     write_stamp,
 )
@@ -122,9 +125,9 @@ class ChecksTest(TemporaryTest):
         ):
             self.assertEqual(checks.main([]), 1)
         report = output.getvalue()
-        self.assertIn("Install Pandoc 3.12 or newer", report)
+        self.assertIn("-> Run `md-doc-converter setup`, or `setup --no-render`", report)
         self.assertIn("Install Node.js 22.12 or newer", report)
-        self.assertIn("-> Run `md-doc-converter setup`", report)
+        self.assertIn("-> Run `md-doc-converter setup`\n", report)
         self.assertIn("Not ready to render", report)
 
     def test_versions_are_checked(self) -> None:
@@ -137,7 +140,31 @@ class ChecksTest(TemporaryTest):
         self.assertEqual(node.status, "error")
         self.assertIn("20.11.1 is older than 22.12", node.detail)
         self.assertEqual(pandoc.status, "warn")
-        self.assertIn("older than the tested 3.12", pandoc.detail)
+        self.assertIn(
+            f"3.1.9 ({self.bin / 'pandoc'}); md-doc-converter is tested with", pandoc.detail
+        )
+        self.assertIn(PANDOC_VERSION, pandoc.detail)
+        self.assertIn("setup --no-render", pandoc.fix)
+
+    def test_the_pinned_pandoc_comes_before_any_other(self) -> None:
+        write_fake_tools(self.bin, self.log, versions={"pandoc": "pandoc 3.1.9"})
+        tools = install_fake_toolchain(self.root / "home", self.log)
+        with (
+            self.path_with(self.bin),
+            mock.patch.dict(os.environ, {"MD_DOC_CONVERTER_HOME": str(tools.root)}),
+        ):
+            prefer_installed_tools()
+            prefer_installed_tools()
+            search = os.environ["PATH"].split(os.pathsep)
+            pandoc = checks.check_pandoc()
+        self.assertEqual(search, [str(tools.bin_dir), str(self.bin)])
+        self.assertEqual(pandoc.status, "ok")
+        self.assertEqual(pandoc.detail, f"{PANDOC_VERSION} ({tools.pandoc})")
+
+    def test_preferring_a_missing_toolchain_changes_nothing(self) -> None:
+        environment = {"MD_DOC_CONVERTER_HOME": str(self.root / "none"), "PATH": "/usr/bin"}
+        prefer_installed_tools(environment)
+        self.assertEqual(environment["PATH"], "/usr/bin")
 
     def test_render_problems_name_each_missing_part_and_html_needs_no_printer(self) -> None:
         write_fake_tools(self.bin, self.log)
@@ -155,19 +182,31 @@ class ChecksTest(TemporaryTest):
             self.assertEqual(checks.render_problems(tools, pdf=False), [])
             self.assertIn("pagedjs-cli", checks.render_problems(tools, pdf=True)[0])
 
+    def test_rendering_needs_pandoc(self) -> None:
+        write_fake_tools(self.bin, self.log, ("node", "npm"))
+        tools = install_fake_toolchain(self.root / "home", self.log)
+        tools.pandoc.unlink()
+        with self.path_with(self.bin):
+            problems = checks.render_problems(tools, pdf=False)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("pandoc: not installed. Run `md-doc-converter setup`", problems[0])
+
 
 class InstallTest(TemporaryTest):
-    def archive(self, *, binary: bool = True) -> tuple[Path, str]:
-        tool = write_fake_tools(self.root / "archive", self.log, ("pandoc-katex",)) / "pandoc-katex"
-        archive = self.root / "pandoc-katex.tar.gz"
-        with tarfile.open(archive, "w:gz") as bundle:
+    def archive(self, archive: install.Archive, *, binary: bool = True) -> install.Archive:
+        """Write a fake release of *archive* into the downloads folder; return it re-pinned."""
+        tool = write_fake_tools(self.root / "archive", self.log, (archive.executable,))
+        downloads = self.root / "downloads"
+        downloads.mkdir(exist_ok=True)
+        tarball = downloads / archive.file
+        with tarfile.open(tarball, "w:gz") as bundle:
             if binary:
-                bundle.add(tool, arcname="./bin/pandoc-katex")
-            license_file = self.root / "LICENSE-MIT"
+                bundle.add(tool / archive.executable, arcname="./" + str(archive.member))
+            license_file = self.root / "LICENSE"
             license_file.write_text("license")
-            bundle.add(license_file, arcname="./LICENSE-MIT")
+            bundle.add(license_file, arcname="./LICENSE")
             bundle.add(license_file, arcname="../escaped")
-        return archive, hashlib.sha256(archive.read_bytes()).hexdigest()
+        return replace(archive, sha256=hashlib.sha256(tarball.read_bytes()).hexdigest())
 
     def test_npm_packages_install_from_the_bundled_lockfile_once(self) -> None:
         write_fake_tools(self.bin, self.log)
@@ -203,55 +242,70 @@ class InstallTest(TemporaryTest):
         self.assertFalse(tools.stamp.exists())
         self.assertFalse(packages_current(tools))
 
-    def test_pandoc_katex_installs_only_the_verified_binary(self) -> None:
-        archive, digest = self.archive()
-        tools = Toolchain(self.root / "home")
-        with (
-            mock.patch.object(install, "PANDOC_KATEX_SHA256", digest),
-            mock.patch.object(install.urllib.request, "urlopen") as download,
-            contextlib.redirect_stdout(io.StringIO()),
-        ):
-            self.assertTrue(install.install_pandoc_katex(tools, force=False, archive=archive))
-            self.assertFalse(install.install_pandoc_katex(tools, force=False))
-        download.assert_not_called()
-        self.assertEqual(checks.check_pandoc_katex(tools).status, "ok")
-        self.assertEqual([path.name for path in tools.bin_dir.iterdir()], ["pandoc-katex"])
-        self.assertFalse((self.root / "escaped").exists())
-        self.assertFalse((tools.root / "escaped").exists())
+    def test_pinned_archives_install_only_their_verified_executable(self) -> None:
+        for pinned in (install.PANDOC, install.PANDOC_KATEX):
+            with self.subTest(archive=pinned.name):
+                archive = self.archive(pinned)
+                tools = Toolchain(self.root / pinned.executable)
+                downloads = self.root / "downloads"
+                with (
+                    mock.patch.object(install.urllib.request, "urlopen") as download,
+                    contextlib.redirect_stdout(io.StringIO()),
+                ):
+                    self.assertTrue(
+                        install.install_executable(tools, archive, force=False, downloads=downloads)
+                    )
+                    self.assertFalse(install.install_executable(tools, archive, force=False))
+                download.assert_not_called()
+                self.assertEqual(
+                    [path.name for path in tools.bin_dir.iterdir()], [pinned.executable]
+                )
+                self.assertEqual(
+                    checks.installed_version(tools.bin_dir / pinned.executable), pinned.version
+                )
+                self.assertFalse((self.root / "escaped").exists())
+                self.assertFalse((tools.root / "escaped").exists())
 
     def test_checksum_mismatch_installs_nothing(self) -> None:
-        archive, _ = self.archive()
-        tools = Toolchain(self.root / "home")
-        with self.assertRaisesRegex(install.SetupError, install.PANDOC_KATEX_SHA256):
-            install.install_pandoc_katex(tools, force=False, archive=archive)
-        self.assertFalse(tools.pandoc_katex.exists())
-        self.assertEqual(list(tools.bin_dir.iterdir()), [])
-
-    def test_archive_without_the_binary_is_rejected(self) -> None:
-        archive, digest = self.archive(binary=False)
+        archive = replace(self.archive(install.PANDOC), sha256="0" * 64)
         tools = Toolchain(self.root / "home")
         with (
-            mock.patch.object(install, "PANDOC_KATEX_SHA256", digest),
-            self.assertRaisesRegex(install.SetupError, "does not contain bin/pandoc-katex"),
+            contextlib.redirect_stdout(io.StringIO()),
+            self.assertRaisesRegex(install.SetupError, "expected 0{64}"),
         ):
-            install.install_pandoc_katex(tools, force=False, archive=archive)
-        self.assertFalse(tools.pandoc_katex.exists())
+            install.install_executable(
+                tools, archive, force=False, downloads=self.root / "downloads"
+            )
+        self.assertFalse(tools.pandoc.exists())
+        self.assertEqual(list(tools.bin_dir.iterdir()), [])
 
-    def test_download_failure_suggests_a_local_archive(self) -> None:
+    def test_archive_without_the_executable_is_rejected(self) -> None:
+        archive = self.archive(install.PANDOC, binary=False)
+        tools = Toolchain(self.root / "home")
+        with (
+            contextlib.redirect_stdout(io.StringIO()),
+            self.assertRaisesRegex(install.SetupError, f"does not contain {archive.member}"),
+        ):
+            install.install_executable(
+                tools, archive, force=False, downloads=self.root / "downloads"
+            )
+        self.assertFalse(tools.pandoc.exists())
+
+    def test_download_failure_suggests_a_downloads_folder(self) -> None:
         tools = Toolchain(self.root / "home")
         failure = urllib.error.URLError("network unreachable")
         with (
             mock.patch.object(install.urllib.request, "urlopen", side_effect=failure),
             contextlib.redirect_stdout(io.StringIO()),
-            self.assertRaisesRegex(install.SetupError, "--pandoc-katex-archive"),
+            self.assertRaisesRegex(install.SetupError, "--downloads FOLDER"),
         ):
-            install.install_pandoc_katex(tools, force=False)
-        self.assertFalse(tools.pandoc_katex.exists())
+            install.install_executable(tools, install.PANDOC, force=False)
+        self.assertFalse(tools.pandoc.exists())
 
     def test_setup_checks_the_platform_and_node_before_installing(self) -> None:
         write_fake_tools(self.bin, self.log, versions={"node": "v20.11.1"})
         home = {"MD_DOC_CONVERTER_HOME": str(self.root / "home")}
-        for supported, message in ((False, "Linux x86_64 only"), (True, "older than 22.12")):
+        for supported, message in ((False, "Linux x86_64 only"), (True, "--no-render")):
             with (
                 self.subTest(supported=supported),
                 self.path_with(self.bin),
@@ -264,20 +318,48 @@ class InstallTest(TemporaryTest):
         self.assertEqual(read_log(self.log), [])
         self.assertFalse((self.root / "home").exists())
 
-    def test_setup_installs_a_complete_toolchain(self) -> None:
-        write_fake_tools(self.bin, self.log)
-        archive, digest = self.archive()
+    def test_no_render_installs_only_pandoc_without_node(self) -> None:
+        pandoc = self.archive(install.PANDOC)
         tools = Toolchain(self.root / "home")
         with (
             self.path_with(self.bin),
             mock.patch.dict(os.environ, {"MD_DOC_CONVERTER_HOME": str(tools.root)}),
             mock.patch.object(install, "supported_platform", return_value=True),
-            mock.patch.object(install, "PANDOC_KATEX_SHA256", digest),
+            mock.patch.object(install, "PANDOC", pandoc),
             contextlib.redirect_stdout(io.StringIO()) as output,
         ):
-            self.assertEqual(install.main(["--pandoc-katex-archive", str(archive)]), 0)
+            arguments = ["--no-render", "--downloads", str(self.root / "downloads")]
+            self.assertEqual(install.main(arguments), 0)
+        self.assertEqual([path.name for path in tools.bin_dir.iterdir()], ["pandoc"])
+        self.assertFalse(tools.node_dir.exists())
+        self.assertIn("Rendering needs a full `setup`", output.getvalue())
+
+    def test_setup_installs_a_complete_toolchain(self) -> None:
+        write_fake_tools(self.bin, self.log)
+        pandoc = self.archive(install.PANDOC)
+        katex = self.archive(install.PANDOC_KATEX)
+        tools = Toolchain(self.root / "home")
+        with (
+            self.path_with(self.bin),
+            mock.patch.dict(os.environ, {"MD_DOC_CONVERTER_HOME": str(tools.root)}),
+            mock.patch.object(install, "supported_platform", return_value=True),
+            mock.patch.object(install, "PANDOC", pandoc),
+            mock.patch.object(install, "PANDOC_KATEX", katex),
+            contextlib.redirect_stdout(io.StringIO()) as output,
+        ):
+            self.assertEqual(install.main(["--downloads", str(self.root / "downloads")]), 0)
+            prefer_installed_tools()
             self.assertEqual(checks.render_problems(tools, pdf=True), [])
+            self.assertEqual(checks.check_pandoc().detail, f"{PANDOC_VERSION} ({tools.pandoc})")
         self.assertIn("md-doc-converter doctor", output.getvalue())
+
+    def test_downloads_must_be_a_folder(self) -> None:
+        with (
+            mock.patch.object(install, "supported_platform", return_value=True),
+            contextlib.redirect_stderr(io.StringIO()) as errors,
+        ):
+            self.assertEqual(install.main(["--downloads", str(self.root / "missing")]), 1)
+        self.assertIn("--downloads must be a folder", errors.getvalue())
 
 
 if __name__ == "__main__":
