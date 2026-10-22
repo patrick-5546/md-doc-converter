@@ -33,9 +33,9 @@ class EmfWorkflowTest(unittest.TestCase):
             media={"diagram.emf": synthetic_emf()},
         )
 
-    def assert_cropped_to_the_drawing(self) -> None:
+    def assert_cropped_to_the_drawing(self, drawing: str = "diagram") -> None:
         """LibreOffice draws the synthetic EMF, 10 mm square, on a whole page."""
-        path = self.root / ".images" / "Synthetic Guide" / "diagram.svg"
+        path = self.root / ".images" / "Synthetic Guide" / f"{drawing}.svg"
         _media.validate_svg(path)
         root = ET.parse(path).getroot()
         for name in ("width", "height"):
@@ -48,6 +48,34 @@ class EmfWorkflowTest(unittest.TestCase):
         self.assertIn("diagram.svg", self.source.with_suffix(".md").read_text(encoding="utf-8"))
         self.assertEqual(stats["unique_images"], 1)
         self.assert_cropped_to_the_drawing()
+
+    def test_real_drawings_of_a_document_convert_in_one_run(self) -> None:
+        names = ("first", "second", "third")
+        write_docx(
+            self.source,
+            [image(name) for name in names],
+            relations=tuple((name, "image", f"media/{name}.emf", "Internal") for name in names),
+            media={f"{name}.emf": synthetic_emf(variant) for variant, name in enumerate(names)},
+        )
+        original = _reference.run_command
+        descriptions: list[str] = []
+
+        def record(
+            command: list[str],
+            description: str,
+            *,
+            input_text: str | None = None,
+        ) -> str:
+            descriptions.append(description)
+            return original(command, description, input_text=input_text)
+
+        with patch.object(_reference, "run_command", record):
+            stats = _pipeline.convert_docx(self.source)
+        self.assertEqual(stats["unique_images"], 3)
+        self.assertEqual(descriptions.count("EMF-to-SVG conversion"), 1)
+        self.assertNotIn("EMF-to-PDF fallback conversion", descriptions)
+        for name in names:
+            self.assert_cropped_to_the_drawing(name)
 
     def test_real_synthetic_emf_pdf_fallback(self) -> None:
         original = _reference.run_command

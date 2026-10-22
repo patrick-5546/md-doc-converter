@@ -363,7 +363,9 @@ After:  ![Timing diagram](.images/Example/image1.svg)
 LibreOffice, which converts them, draws each one in the middle of a whole page,
 such as US Letter. The SVG is cropped to the drawing's frame, the area Word
 shows for it; when LibreOffice does not report the frame, the page is kept and
-a warning says so.
+a warning says so. LibreOffice starts once for all of a document's drawings;
+those it cannot export as SVG are exported as PDF, together, and converted to
+SVG with Poppler's `pdftocairo`.
 
 ### `links`
 

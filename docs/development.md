@@ -83,10 +83,11 @@ and pipeline tests use disposable fake `pandoc`, `node` and `npm` executables
 and a fake toolchain, and EMF conversion logic is covered with mocked native
 tools. Converter fixtures are synthetic documents built by `tests/support`.
 
-The render suite exercises real EMF-to-SVG conversion (including its PDF
-fallback), a synthetic Word-to-Markdown-to-HTML/PDF workflow, a reference-linked
-folder with images, Mermaid and math, and the PDF time limit. It needs the
-installed toolchain, Node.js, `pdftocairo` and LibreOffice (`libreoffice` or
+The render suite exercises real EMF-to-SVG conversion (one LibreOffice run for
+a document's drawings, and the PDF fallback), a synthetic
+Word-to-Markdown-to-HTML/PDF workflow, a reference-linked folder with images,
+Mermaid and math, and the PDF time limit. It needs the installed toolchain,
+Node.js, `pdftocairo` and LibreOffice (`libreoffice` or
 `soffice`) on `PATH`.
 
 The converter writes code fences itself, because Pandoc's GFM writer drops

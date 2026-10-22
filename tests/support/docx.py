@@ -369,11 +369,12 @@ def write_docx(
             archive.writestr(name, data)
 
 
-def synthetic_emf() -> bytes:
+def synthetic_emf(variant: int = 0) -> bytes:
+    """A 10 mm square EMF drawing; each *variant*, up to 39, draws a different rectangle."""
     records = [
         struct.pack("<IIii", 27, 16, 0, 0),
         struct.pack("<IIii", 54, 16, 100, 100),
-        struct.pack("<IIiiii", 43, 24, 10, 10, 90, 90),
+        struct.pack("<IIiiii", 43, 24, 10 + variant, 10 + variant, 90 - variant, 90 - variant),
         struct.pack("<IIIII", 14, 20, 0, 0, 20),
     ]
     header = b"".join(

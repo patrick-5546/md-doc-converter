@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import contextlib
-import io
 import shutil
 import tempfile
 import unittest
 import zipfile
+from collections.abc import Collection
 from pathlib import Path
 from unittest.mock import patch
 from xml.etree import ElementTree as ET
@@ -17,7 +16,6 @@ from md_doc_converter.converters.docx import models as _models
 from md_doc_converter.converters.docx import ooxml as _ooxml
 from md_doc_converter.converters.docx import reference as _reference
 from tests.support.docx import (
-    SVG,
     W,
     cell,
     image,
@@ -74,180 +72,210 @@ def _write_odg(path: Path) -> None:
         )
 
 
-def _convert_with(
-    outputs: dict[str, str | None], *, odg: bool = True
-) -> tuple[str, list[str], list[list[str]]]:
-    """Run _convert_emf with LibreOffice and pdftocairo mocked: *outputs* maps "svg" (the
-    direct export) and "cairo" to the SVG each writes, or None for none. Return the result,
-    the findings, and the commands."""
-    calls: list[list[str]] = []
-    findings: list[str] = []
-    with tempfile.TemporaryDirectory(prefix="docx-emf-crop-") as directory:
-        root = Path(directory)
-        slot = root / "slot"
+INVALID_SVG = '<svg xmlns="http://www.w3.org/2000/svg"><path clip-path="url(#none)"/></svg>'
+# What each step writes for a drawing: "svg" (the direct export) and "cairo" an SVG or nothing,
+# "pdf" and "odg" whether LibreOffice exports them.
+Outputs = dict[str, str | bool | None]
 
-        def command(args: list[str], description: str) -> str:
-            calls.append(args)
-            written = {
-                "svg": (slot / "source.svg", outputs.get("svg")),
-                "pdf": (slot / "source.pdf", "synthetic mocked PDF"),
-                "-svg": (slot / "source.svg", outputs.get("cairo")),
-            }
-            kind = next((name for name in ("-svg", "svg", "pdf", "odg") if name in args), "")
-            if kind == "odg":
-                if odg:
-                    _write_odg(slot / "source.odg")
-            elif written[kind][1] is not None:
-                written[kind][0].write_text(str(written[kind][1]), encoding="utf-8")
+
+class FakeTools:
+    """LibreOffice and pdftocairo stand-ins that write each drawing's outputs and record calls."""
+
+    def __init__(self, outputs: dict[str, Outputs], failing: str | None = None) -> None:
+        self.outputs = outputs
+        self.failing = failing
+        self.calls: list[list[str]] = []
+
+    def __call__(self, args: list[str], description: str) -> str:
+        self.calls.append(args)
+        if args[1] == "-svg":
+            written = self.outputs[Path(args[2]).stem].get("cairo")
+            if isinstance(written, str):
+                Path(args[3]).write_text(written, encoding="utf-8")
             return ""
+        kind = args[args.index("--convert-to") + 1]
+        folder = Path(args[args.index("--outdir") + 1])
+        for source in args[args.index("--outdir") + 2 :]:
+            name = Path(source).stem
+            written = self.outputs[name].get(kind, kind != "svg")
+            if kind == "svg" and isinstance(written, str):
+                (folder / f"{name}.svg").write_text(written, encoding="utf-8")
+            elif kind == "pdf" and written:
+                (folder / f"{name}.pdf").write_bytes(b"synthetic mocked PDF")
+            elif kind == "odg" and written:
+                _write_odg(folder / f"{name}.odg")
+        if kind == self.failing:
+            raise _models.ConversionError(f"{description} failed: synthetic crash")
+        return ""
 
-        def which(name: str) -> str:
-            return "/test/" + name
+    def kinds(self) -> list[str]:
+        return [
+            "cairo" if call[1] == "-svg" else call[call.index("--convert-to") + 1]
+            for call in self.calls
+        ]
 
-        with (
-            patch.object(shutil, "which", which),
-            patch.object(_reference, "run_command", command),
-        ):
-            _media._convert_emf(synthetic_emf(), root / "out.svg", slot, findings)
-        return (root / "out.svg").read_text(encoding="utf-8"), findings, calls
+    def inputs(self, index: int) -> list[str]:
+        call = self.calls[index]
+        return [Path(source).stem for source in call[call.index("--outdir") + 2 :]]
+
+
+def _convert(
+    outputs: dict[str, Outputs],
+    *,
+    missing: Collection[str] = (),
+    failing: str | None = None,
+) -> tuple[dict[str, tuple[str, list[str]]], FakeTools]:
+    """Convert one synthetic drawing per name in *outputs* with the native tools mocked;
+    *missing* names tools that are not installed. Return each result, as text, and the fakes."""
+    tools = FakeTools(outputs, failing)
+
+    def which(name: str) -> str | None:
+        return None if name in missing else "/test/" + name
+
+    drawings = {name: (synthetic_emf(), ".emf") for name in outputs}
+    with (
+        tempfile.TemporaryDirectory(prefix="docx-emf-") as directory,
+        patch.object(shutil, "which", which),
+        patch.object(_reference, "run_command", tools),
+    ):
+        results = _media._convert_vectors(drawings, Path(directory) / "work")
+    decoded = {
+        name: (result.decode() if isinstance(result, bytes) else result, findings)
+        for name, (result, findings) in results.items()
+    }
+    return decoded, tools
+
+
+CROPPED_PAGE = LIBREOFFICE_PAGE.replace(
+    'width="215.9mm" height="279.4mm" viewBox="0 0 21590 27940"',
+    'width="97.16mm" height="116.55mm" viewBox="5937 8142 9716 11655"',
+)
+# The ODG frame is at 10.294 cm, 13.469 cm on a 21.59 cm by 27.94 cm page of 612 by 792 pt.
+CROPPED_CAIRO_PAGE = CAIRO_PAGE.replace(
+    'width="612pt" height="792pt" viewBox="0 0 612 792"',
+    'width="28.3465pt" height="28.3465pt" viewBox="291.7984 381.7984 28.3465 28.3465"',
+)
 
 
 class EmfCropTests(unittest.TestCase):
     def test_libreoffice_page_is_cropped_to_the_drawing(self) -> None:
-        result, findings, calls = _convert_with({"svg": LIBREOFFICE_PAGE})
-        self.assertEqual(
-            result,
-            LIBREOFFICE_PAGE.replace(
-                'width="215.9mm" height="279.4mm" viewBox="0 0 21590 27940"',
-                'width="97.16mm" height="116.55mm" viewBox="5937 8142 9716 11655"',
-            ),
-        )
-        self.assertEqual(findings, [])
-        self.assertEqual(len(calls), 1)
+        results, tools = _convert({"drawing": {"svg": LIBREOFFICE_PAGE}})
+        self.assertEqual(results, {"drawing": (CROPPED_PAGE, [])})
+        self.assertEqual(tools.kinds(), ["svg"])
 
     def test_fallback_page_is_cropped_to_the_frame_of_an_odg_export(self) -> None:
-        result, findings, calls = _convert_with({"svg": None, "cairo": CAIRO_PAGE})
-        # The frame is at 10.294 cm, 13.469 cm on a 21.59 cm by 27.94 cm page of 612 by 792 pt.
-        self.assertEqual(
-            result,
-            CAIRO_PAGE.replace(
-                'width="612pt" height="792pt" viewBox="0 0 612 792"',
-                'width="28.3465pt" height="28.3465pt" viewBox="291.7984 381.7984 28.3465 28.3465"',
-            ),
-        )
+        results, tools = _convert({"drawing": {"svg": None, "cairo": CAIRO_PAGE}})
+        result, findings = results["drawing"]
+        self.assertEqual(result, CROPPED_CAIRO_PAGE)
         self.assertEqual(len(findings), 1)
         self.assertIn("trying the PDF/pdftocairo vector fallback", findings[0])
-        self.assertEqual(
-            [call[call.index("--convert-to") + 1] for call in calls[::3]], ["svg", "odg"]
-        )
+        self.assertEqual(tools.kinds(), ["svg", "pdf", "cairo", "odg"])
 
     def test_page_is_kept_whole_when_the_drawing_frame_is_unknown(self) -> None:
         two = LIBREOFFICE_PAGE.replace(
             "<path", '<rect class="BoundingBox" x="1" y="1" width="1" height="1"/><path'
         )
         off_page = LIBREOFFICE_PAGE.replace('x="5937"', 'x="21000"')
-        cases: dict[str, tuple[dict[str, str | None], bool, str]] = {
-            "LibreOffice did not mark one drawing on it": ({"svg": two}, True, two),
-            "the drawing's frame is not on the page": ({"svg": off_page}, True, off_page),
+        cases: dict[str, tuple[Outputs, str]] = {
+            "LibreOffice did not mark one drawing on it": ({"svg": two}, two),
+            "the drawing's frame is not on the page": ({"svg": off_page}, off_page),
             "LibreOffice did not report the drawing's frame": (
-                {"svg": None, "cairo": CAIRO_PAGE},
-                False,
+                {"svg": None, "cairo": CAIRO_PAGE, "odg": False},
                 CAIRO_PAGE,
             ),
         }
-        for reason, (outputs, odg, expected) in cases.items():
+        for reason, (outputs, expected) in cases.items():
             with self.subTest(reason=reason):
-                result, findings, _calls = _convert_with(outputs, odg=odg)
+                results, _tools = _convert({"drawing": outputs})
+                result, findings = results["drawing"]
                 self.assertEqual(result, expected)
                 self.assertEqual(
                     findings[-1], f"kept LibreOffice's whole page around the drawing: {reason}"
                 )
 
 
+class EmfBatchTests(unittest.TestCase):
+    def test_all_drawings_convert_in_one_libreoffice_run(self) -> None:
+        results, tools = _convert({name: {"svg": LIBREOFFICE_PAGE} for name in ("a", "b", "c")})
+        self.assertEqual(results, {name: (CROPPED_PAGE, []) for name in ("a", "b", "c")})
+        self.assertEqual(tools.kinds(), ["svg"])
+        self.assertEqual(tools.inputs(0), ["a", "b", "c"])
+
+    def test_only_drawings_that_svg_export_missed_take_the_fallback_together(self) -> None:
+        results, tools = _convert(
+            {
+                "a": {"svg": LIBREOFFICE_PAGE},
+                "b": {"svg": None, "cairo": CAIRO_PAGE},
+                "c": {"svg": INVALID_SVG, "cairo": CAIRO_PAGE},
+            }
+        )
+        self.assertEqual(results["a"], (CROPPED_PAGE, []))
+        for name, reason in (
+            ("b", "LibreOffice SVG export produced no nonempty SVG"),
+            ("c", "Unresolved SVG resource"),
+        ):
+            result, findings = results[name]
+            self.assertEqual(result, CROPPED_CAIRO_PAGE)
+            [finding] = findings
+            self.assertIn(reason, finding)
+            self.assertTrue(finding.endswith("; trying the PDF/pdftocairo vector fallback"))
+        self.assertEqual(tools.kinds(), ["svg", "pdf", "cairo", "cairo", "odg"])
+        self.assertEqual(
+            [tools.inputs(index) for index in (0, 1, 4)], [["a", "b", "c"], ["b", "c"], ["b", "c"]]
+        )
+        profiles = {call[1] for call in tools.calls if call[1] != "-svg"}
+        self.assertEqual(len(profiles), 1)
+
+    def test_a_failed_fallback_affects_only_its_drawing(self) -> None:
+        results, tools = _convert(
+            {
+                "a": {"svg": None, "pdf": False},
+                "b": {"svg": None, "cairo": CAIRO_PAGE},
+            }
+        )
+        result, findings = results["a"]
+        self.assertRegex(result, r"; EMF fallback did not produce .*a\.pdf$")
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(results["b"][0], CROPPED_CAIRO_PAGE)
+        self.assertEqual(tools.kinds(), ["svg", "pdf", "cairo", "odg"])
+        self.assertEqual(tools.inputs(3), ["b"])
+
+    def test_a_failed_run_keeps_the_drawings_it_exported(self) -> None:
+        results, _tools = _convert(
+            {
+                "a": {"svg": LIBREOFFICE_PAGE},
+                "b": {"svg": None, "cairo": CAIRO_PAGE},
+            },
+            failing="svg",
+        )
+        self.assertEqual(results["a"], (CROPPED_PAGE, []))
+        result, [finding] = results["b"]
+        self.assertEqual(result, CROPPED_CAIRO_PAGE)
+        self.assertEqual(
+            finding,
+            "EMF-to-SVG conversion failed: synthetic crash; "
+            "trying the PDF/pdftocairo vector fallback",
+        )
+
+
 class MediaFailureTests(unittest.TestCase):
-    def test_emf_pdf_fallback_is_used_only_when_svg_export_needs_it(self) -> None:
-        calls: list[list[str]] = []
-        with tempfile.TemporaryDirectory(prefix="docx-emf-fallback-") as directory:
-            root = Path(directory)
-            slot = root / "slot"
-            destination = root / "output.svg"
-
-            def command(args: list[str], description: str) -> str:
-                calls.append(args)
-                if "pdf" in args:
-                    (slot / "source.pdf").write_bytes(b"synthetic mocked PDF")
-                if "-svg" in args:
-                    (slot / "source.svg").write_bytes(SVG)
-                return ""
-
-            def which(name: str) -> str | None:
-                return "/test/" + name
-
-            with (
-                patch.object(shutil, "which", which),
-                patch.object(_reference, "run_command", command),
-                contextlib.redirect_stderr(io.StringIO()),
-            ):
-                _media._convert_emf(synthetic_emf(), destination, slot, [])
-            self.assertEqual(destination.read_bytes(), SVG)
-        self.assertEqual(len(calls), 4)
-        self.assertIn("svg", calls[0])
-        self.assertIn("pdf", calls[1])
-        self.assertIn("-svg", calls[2])
-        self.assertIn("odg", calls[3])
-
     def test_missing_office_is_a_clear_conditional_failure(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="docx-emf-missing-") as directory:
-            root = Path(directory)
-            with (
-                patch.object(shutil, "which", return_value=None),
-                self.assertRaisesRegex(_models.ConversionError, "requires LibreOffice"),
-            ):
-                _media._convert_emf(synthetic_emf(), root / "out.svg", root / "slot", [])
-            self.assertFalse((root / "out.svg").exists())
+        results, tools = _convert(
+            {"a": {"svg": LIBREOFFICE_PAGE}, "b": {}}, missing=("libreoffice", "soffice")
+        )
+        for result, findings in results.values():
+            self.assertIn("requires LibreOffice", result)
+            self.assertEqual(findings, [])
+        self.assertEqual(tools.calls, [])
 
-    def test_pdftocairo_is_not_required_after_successful_svg_export(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="docx-emf-direct-") as directory:
-            root = Path(directory)
-            slot = root / "slot"
-
-            def which(name: str) -> str | None:
-                self.assertNotEqual(name, "pdftocairo")
-                return "/test/office"
-
-            def command(args: list[str], description: str) -> str:
-                self.assertIn("svg", args)
-                (slot / "source.svg").write_bytes(SVG)
-                return ""
-
-            with (
-                patch.object(shutil, "which", which),
-                patch.object(_reference, "run_command", command),
-            ):
-                _media._convert_emf(synthetic_emf(), root / "out.svg", slot, [])
-            self.assertEqual((root / "out.svg").read_bytes(), SVG)
-
-    def test_missing_cairo_is_reported_for_only_the_fallback_path(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="docx-cairo-missing-") as directory:
-            root = Path(directory)
-            slot = root / "slot"
-
-            def which(name: str) -> str | None:
-                return None if name == "pdftocairo" else "/test/office"
-
-            def command(args: list[str], description: str) -> str:
-                if "pdf" in args:
-                    (slot / "source.pdf").write_bytes(b"synthetic mocked PDF")
-                return ""
-
-            with (
-                patch.object(shutil, "which", which),
-                patch.object(_reference, "run_command", command),
-                contextlib.redirect_stderr(io.StringIO()),
-                self.assertRaisesRegex(_models.ConversionError, "requires pdftocairo"),
-            ):
-                _media._convert_emf(synthetic_emf(), root / "out.svg", slot, [])
-            self.assertFalse((root / "out.svg").exists())
+    def test_pdftocairo_is_needed_only_by_the_fallback(self) -> None:
+        results, tools = _convert(
+            {"a": {"svg": LIBREOFFICE_PAGE}, "b": {"svg": None, "cairo": CAIRO_PAGE}},
+            missing=("pdftocairo",),
+        )
+        self.assertEqual(results["a"], (CROPPED_PAGE, []))
+        self.assertIn("this EMF requires pdftocairo for PDF-to-SVG", results["b"][0])
+        self.assertEqual(tools.kinds(), ["svg"])
 
     def test_svg_css_resource_fragments_must_exist(self) -> None:
         with tempfile.TemporaryDirectory(prefix="docx-svg-fragment-") as directory:

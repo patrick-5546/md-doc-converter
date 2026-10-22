@@ -1874,13 +1874,13 @@ class ConversionTests(unittest.TestCase):
         )
 
     def test_emf_svg_publication_collision_gets_a_distinct_name(self) -> None:
-        def convert_emf(
-            _data: bytes, destination: Path, _slot: Path, _findings: list[str], *, suffix: str
-        ) -> None:
-            self.assertEqual(suffix, ".emf")
-            destination.write_bytes(SVG)
+        def convert_vectors(
+            drawings: dict[str, tuple[bytes, str]], _work: Path
+        ) -> dict[str, _media.VectorResult]:
+            self.assertEqual([suffix for _data, suffix in drawings.values()], [".emf"])
+            return {name: (SVG, []) for name in drawings}
 
-        with patch.object(_media, "_convert_emf", convert_emf):
+        with patch.object(_media, "_convert_vectors", convert_vectors):
             result, report, warnings = self.convert_reported(
                 [image("emf"), image("svg")],
                 relations=(
@@ -1985,11 +1985,14 @@ class ConversionTests(unittest.TestCase):
 
     def test_unconverted_vector_image_is_published_as_is(self) -> None:
         def fail(
-            _data: bytes, _destination: Path, _slot: Path, _findings: list[str], *, suffix: str
-        ) -> None:
-            raise _models.ConversionError(f"synthetic {suffix} converter failure")
+            drawings: dict[str, tuple[bytes, str]], _work: Path
+        ) -> dict[str, _media.VectorResult]:
+            return {
+                name: (f"synthetic {suffix} converter failure", [])
+                for name, (_data, suffix) in drawings.items()
+            }
 
-        with patch.object(_media, "_convert_emf", fail):
+        with patch.object(_media, "_convert_vectors", fail):
             result, report, warnings = self.convert_reported(
                 [image("emf")],
                 relations=(("emf", "image", "media/diagram.emf", "Internal"),),
@@ -2005,12 +2008,12 @@ class ConversionTests(unittest.TestCase):
 
     def test_wmf_drawings_are_converted_like_emf(self) -> None:
         def convert_wmf(
-            _data: bytes, destination: Path, _slot: Path, _findings: list[str], *, suffix: str
-        ) -> None:
-            self.assertEqual(suffix, ".wmf")
-            destination.write_bytes(SVG)
+            drawings: dict[str, tuple[bytes, str]], _work: Path
+        ) -> dict[str, _media.VectorResult]:
+            self.assertEqual([suffix for _data, suffix in drawings.values()], [".wmf"])
+            return {name: (SVG, []) for name in drawings}
 
-        with patch.object(_media, "_convert_emf", convert_wmf):
+        with patch.object(_media, "_convert_vectors", convert_wmf):
             result, report, _warnings = self.convert_reported(
                 [image("wmf")],
                 relations=(("wmf", "image", "media/diagram.wmf", "Internal"),),
@@ -2019,6 +2022,42 @@ class ConversionTests(unittest.TestCase):
         self.assertIn("](.images/Synthetic%20Guide/diagram.svg)", result)
         self.assertEqual(dict(report.records["image-conversion"].applied), {"WMF to SVG": 1})
         self.assertEqual(report.status("images"), "applied")
+
+    def test_a_documents_drawings_convert_together_and_report_separately(self) -> None:
+        calls: list[list[str]] = []
+
+        def convert_vectors(
+            drawings: dict[str, tuple[bytes, str]], _work: Path
+        ) -> dict[str, _media.VectorResult]:
+            calls.append(sorted(suffix for _data, suffix in drawings.values()))
+            return {
+                name: (SVG, ["synthetic note"] if suffix == ".wmf" else [])
+                for name, (_data, suffix) in drawings.items()
+            }
+
+        names = ("first", "second", "third")
+        with patch.object(_media, "_convert_vectors", convert_vectors):
+            result, report, warnings = self.convert_reported(
+                [image(name) for name in names],
+                relations=(
+                    ("first", "image", "media/first.emf", "Internal"),
+                    ("second", "image", "media/second.emf", "Internal"),
+                    ("third", "image", "media/third.wmf", "Internal"),
+                ),
+                media={
+                    "first.emf": synthetic_emf(),
+                    "second.emf": synthetic_emf(1),
+                    "third.wmf": b"synthetic WMF",
+                },
+            )
+        self.assertEqual(calls, [[".emf", ".emf", ".wmf"]])
+        for name in names:
+            self.assertIn(f"](.images/Synthetic%20Guide/{name}.svg)", result)
+        self.assertEqual(
+            dict(report.records["image-conversion"].applied), {"EMF to SVG": 2, "WMF to SVG": 1}
+        )
+        self.assertIn("third.wmf: synthetic note", warnings)
+        self.assertEqual(warnings.count("synthetic note"), 1)
 
     def test_picture_in_a_drawing_group_is_published(self) -> None:
         result, report, _warnings = self.convert_reported(

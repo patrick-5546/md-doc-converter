@@ -356,29 +356,16 @@ def _svg_frame(root: ET.Element) -> Frame | None:
     return x, y, width, height
 
 
-def _office_frame(office: str, source: Path, slot: Path) -> Frame | None:
+def _odg_frame(path: Path) -> Frame | None:
     """The frame of the drawing on LibreOffice's page, as fractions of the page.
 
     The PDF export has no shape information, so an ODG export of the same page supplies it.
     """
     try:
-        _reference.run_command(
-            [
-                office,
-                f"-env:UserInstallation={(slot / 'odg-profile').as_uri()}",
-                "--headless",
-                "--convert-to",
-                "odg",
-                "--outdir",
-                str(slot),
-                str(source),
-            ],
-            "EMF frame lookup",
-        )
-        with zipfile.ZipFile(slot / "source.odg") as archive:
+        with zipfile.ZipFile(path) as archive:
             content = ET.fromstring(archive.read("content.xml"))
             styles = ET.fromstring(archive.read("styles.xml"))
-    except (ConversionError, OSError, KeyError, zipfile.BadZipFile, ET.ParseError):
+    except (OSError, KeyError, zipfile.BadZipFile, ET.ParseError):
         return None
     page = next(content.iter(_ODF_DRAW + "page"), None)
     frames: list[ET.Element] = [] if page is None else page.findall(_ODF_DRAW + "frame")
@@ -474,78 +461,125 @@ def _crop_svg(path: Path, frame: Frame, *, fraction: bool = False) -> str | None
     return None
 
 
-def _convert_emf(
-    data: bytes, destination: Path, slot: Path, findings: list[str], *, suffix: str = ".emf"
-) -> None:
-    """Convert EMF/WMF to SVG cropped to the drawing; notes are appended to *findings*."""
+# A converted drawing's SVG, or why it could not be converted, and notes on the conversion.
+VectorResult = tuple[bytes | str, list[str]]
+
+
+def _convert_vectors(drawings: dict[str, tuple[bytes, str]], work: Path) -> dict[str, VectorResult]:
+    """Convert EMF/WMF drawings, by name, to SVGs cropped to each drawing.
+
+    One LibreOffice run with one profile exports every drawing as SVG. The drawings it could not
+    export take the PDF fallback together: one PDF run, one ODG run for their frames, and
+    pdftocairo for each.
+    """
     office = shutil.which("libreoffice") or shutil.which("soffice")
     if office is None:
-        raise ConversionError("EMF conversion requires LibreOffice/soffice; other images do not")
-    slot.mkdir()
-    source = slot / f"source{suffix}"
-    source.write_bytes(data)
-    profile = slot / "profile"
-    svg = slot / "source.svg"
-    direct_error: ConversionError | None = None
-    frame: Frame | None = None
-    unknown = "LibreOffice did not mark one drawing on it"
-    try:
-        _reference.run_command(
-            [
-                office,
-                f"-env:UserInstallation={profile.as_uri()}",
-                "--headless",
-                "--convert-to",
-                "svg",
-                "--outdir",
-                str(slot),
-                str(source),
-            ],
-            "EMF-to-SVG conversion",
-        )
-        if not svg.is_file() or not svg.stat().st_size:
-            raise ConversionError("LibreOffice SVG export produced no nonempty SVG")
-        validate_svg(svg)
-        frame = _svg_frame(ET.parse(svg).getroot())
-    except ConversionError as error:
-        direct_error = error
-    if direct_error is not None:
-        findings.append(f"{direct_error}; trying the PDF/pdftocairo vector fallback")
-        if svg.exists():
-            svg.unlink()
-        _reference.run_command(
-            [
-                office,
-                f"-env:UserInstallation={(slot / 'pdf-profile').as_uri()}",
-                "--headless",
-                "--convert-to",
-                "pdf",
-                "--outdir",
-                str(slot),
-                str(source),
-            ],
-            "EMF-to-PDF fallback conversion",
-        )
-        pdf = slot / "source.pdf"
-        if not pdf.is_file() or not pdf.stat().st_size:
-            raise ConversionError(f"{direct_error}; EMF fallback did not produce {pdf}")
+        missing = "EMF conversion requires LibreOffice/soffice; other images do not"
+        return {name: (missing, []) for name in drawings}
+    sources = work / "sources"
+    sources.mkdir(parents=True)
+    paths: dict[str, Path] = {}
+    for name, (data, suffix) in drawings.items():
+        paths[name] = sources / f"{name}{suffix}"
+        paths[name].write_bytes(data)
+    profile = (work / "profile").as_uri()
+
+    def export(
+        kind: str, names: list[str], description: str
+    ) -> tuple[Path, ConversionError | None]:
+        """Export the drawings *names* in one run; return the folder and how the run failed."""
+        folder = work / kind
+        folder.mkdir()
+        command = [office, f"-env:UserInstallation={profile}", "--headless", "--convert-to", kind]
+        try:
+            _reference.run_command(
+                [*command, "--outdir", str(folder), *(str(paths[name]) for name in names)],
+                description,
+            )
+        except ConversionError as error:
+            return folder, error
+        return folder, None
+
+    def produced(path: Path) -> bool:
+        return path.is_file() and path.stat().st_size > 0
+
+    findings: dict[str, list[str]] = {name: [] for name in drawings}
+    results: dict[str, VectorResult] = {}
+    svgs: dict[str, Path] = {}
+    frames: dict[str, Frame | None] = {}
+    fallback: dict[str, ConversionError] = {}
+    folder, failure = export("svg", list(drawings), "EMF-to-SVG conversion")
+    for name in drawings:
+        svg = folder / f"{name}.svg"
+        try:
+            if not produced(svg):
+                raise failure or ConversionError("LibreOffice SVG export produced no nonempty SVG")
+            validate_svg(svg)
+        except ConversionError as error:
+            fallback[name] = error
+            findings[name].append(f"{error}; trying the PDF/pdftocairo vector fallback")
+            continue
+        svgs[name] = svg
+        frames[name] = _svg_frame(ET.parse(svg).getroot())
+
+    if fallback:
         cairo = shutil.which("pdftocairo")
-        if cairo is None:
-            raise ConversionError(f"{direct_error}; this EMF requires pdftocairo for PDF-to-SVG")
-        _reference.run_command(
-            [cairo, "-svg", str(pdf), str(svg)], "PDF-to-SVG fallback conversion"
+        pdfs, failure = (
+            export("pdf", list(fallback), "EMF-to-PDF fallback conversion")
+            if cairo is not None
+            else (work / "pdf", None)
         )
-        if not svg.is_file() or not svg.stat().st_size:
-            raise ConversionError(f"{direct_error}; PDF-to-SVG fallback produced no SVG")
-        validate_svg(svg)
-        frame = _office_frame(office, source, slot)
-        unknown = "LibreOffice did not report the drawing's frame"
-    problem = unknown if frame is None else _crop_svg(svg, frame, fraction=direct_error is not None)
-    if problem is None:
-        validate_svg(svg)
-    else:
-        findings.append(f"kept LibreOffice's whole page around the drawing: {problem}")
-    shutil.copy2(svg, destination)
+        cairo_folder = work / "cairo"
+        cairo_folder.mkdir()
+        for name, direct_error in fallback.items():
+            pdf, svg = pdfs / f"{name}.pdf", cairo_folder / f"{name}.svg"
+            try:
+                if cairo is None:
+                    raise ConversionError(
+                        f"{direct_error}; this EMF requires pdftocairo for PDF-to-SVG"
+                    )
+                if not produced(pdf):
+                    raise failure or ConversionError(
+                        f"{direct_error}; EMF fallback did not produce {pdf}"
+                    )
+                _reference.run_command(
+                    [cairo, "-svg", str(pdf), str(svg)], "PDF-to-SVG fallback conversion"
+                )
+                if not produced(svg):
+                    raise ConversionError(f"{direct_error}; PDF-to-SVG fallback produced no SVG")
+                validate_svg(svg)
+            except ConversionError as error:
+                results[name] = (str(error), findings[name])
+                continue
+            svgs[name] = svg
+        located = [name for name in fallback if name in svgs]
+        if located:
+            odgs, _failure = export("odg", located, "EMF frame lookup")
+            for name in located:
+                frames[name] = _odg_frame(odgs / f"{name}.odg")
+
+    for name, svg in svgs.items():
+        fraction = name in fallback
+        frame = frames[name]
+        if frame is None:
+            problem: str | None = (
+                "LibreOffice did not report the drawing's frame"
+                if fraction
+                else "LibreOffice did not mark one drawing on it"
+            )
+        else:
+            problem = _crop_svg(svg, frame, fraction=fraction)
+        try:
+            if problem is None:
+                validate_svg(svg)
+            else:
+                findings[name].append(
+                    f"kept LibreOffice's whole page around the drawing: {problem}"
+                )
+            results[name] = (svg.read_bytes(), findings[name])
+        except (ConversionError, OSError) as error:
+            results[name] = (str(error), findings[name])
+    return results
 
 
 def _relative_name(part: str) -> PurePosixPath:
@@ -559,10 +593,13 @@ class ImageStager:
     def __init__(self, work: Path, package: WordPackage) -> None:
         self.root = work / "final-images"
         self._cache = work / "emf-cache"
-        self._slots = 0
+        self._runs = 0
         self._parts: dict[str, str] = {}
+        # The document's EMF/WMF drawings by digest, converted together when one is published.
+        self._vectors: dict[str, tuple[bytes, str]] = {}
         for name, data in package.parts.items():
-            if not data or PurePosixPath(name).suffix.casefold() not in IMAGE_SUFFIXES:
+            suffix = PurePosixPath(name).suffix.casefold()
+            if not data or suffix not in IMAGE_SUFFIXES:
                 continue
             digest = hashlib.sha256(data).hexdigest()
             current = self._parts.get(digest)
@@ -570,7 +607,10 @@ class ImageStager:
                 name.startswith("word/media/") and not current.startswith("word/media/")
             ):
                 self._parts[digest] = name
+            if suffix in VECTOR_SUFFIXES:
+                self._vectors.setdefault(digest, (data, suffix))
         self._converted: dict[str, bytes | str] = {}
+        self._findings: dict[str, list[str]] = {}
         self._published: dict[str, PurePosixPath] = {}
         self._names: set[str] = set()
         self._data = 0
@@ -649,23 +689,21 @@ class ImageStager:
         self, data: bytes, suffix: str, preferred: PurePosixPath, report: TransformReport
     ) -> bytes | None:
         digest = hashlib.sha256(data).hexdigest()
-        cached = self._converted.get(digest)
+        if digest not in self._converted:
+            # Converting every drawing not yet converted starts LibreOffice once per document.
+            pending = {
+                key: value for key, value in self._vectors.items() if key not in self._converted
+            }
+            pending[digest] = (data, suffix)
+            self._runs += 1
+            converted = _convert_vectors(pending, self._cache / f"run-{self._runs}")
+            for key, (result, findings) in converted.items():
+                self._converted[key] = result
+                self._findings[key] = findings
+        cached = self._converted[digest]
         label = suffix[1:].upper()
-        if cached is None:
-            self._cache.mkdir(exist_ok=True)
-            self._slots += 1
-            target = self._cache / f"{self._slots:04d}.svg"
-            findings: list[str] = []
-            try:
-                _convert_emf(
-                    data, target, self._cache / f"slot-{self._slots:04d}", findings, suffix=suffix
-                )
-                cached = target.read_bytes()
-            except ConversionError as error:
-                cached = str(error)
-            for message in findings:
-                report.warn(f"{preferred.as_posix()}: {message}")
-            self._converted[digest] = cached
+        for message in self._findings.pop(digest, []):
+            report.warn(f"{preferred.as_posix()}: {message}")
         if isinstance(cached, str):
             report.skipped(
                 "image-conversion",
