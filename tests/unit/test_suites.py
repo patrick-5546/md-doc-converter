@@ -65,7 +65,7 @@ def test_every_suite_needs_the_pinned_pandoc(
 def test_the_render_suite_needs_its_native_tools(monkeypatch: pytest.MonkeyPatch) -> None:
     tools(monkeypatch, "git", "node")
     assert suites.missing_prerequisites(render=True) == [
-        "pdftocairo",
+        *suites.POPPLER,
         "libreoffice/soffice (EMF regression coverage)",
     ]
 
@@ -73,7 +73,7 @@ def test_the_render_suite_needs_its_native_tools(monkeypatch: pytest.MonkeyPatch
 @pytest.mark.parametrize("office", ["libreoffice", "soffice"])
 @pytest.mark.usefixtures("pinned_pandoc")
 def test_either_office_command_will_do(monkeypatch: pytest.MonkeyPatch, office: str) -> None:
-    tools(monkeypatch, "git", "node", "pdftocairo", office)
+    tools(monkeypatch, "git", "node", *suites.POPPLER, office)
     assert suites.missing_prerequisites(render=True) == []
 
 
@@ -81,7 +81,7 @@ def test_either_office_command_will_do(monkeypatch: pytest.MonkeyPatch, office: 
 def test_the_render_suite_names_each_missing_toolchain_part(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    tools(monkeypatch, "git", "node", "pdftocairo", "soffice", toolchain="error")
+    tools(monkeypatch, "git", "node", *suites.POPPLER, "soffice", toolchain="error")
     assert suites.missing_prerequisites(render=True) == [
         "packages: detail (Run setup)",
         "browser: detail (Run setup)",

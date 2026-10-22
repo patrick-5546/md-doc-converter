@@ -94,9 +94,10 @@ mocked native tools. Converter fixtures are synthetic documents built by
 The render suite exercises real EMF-to-SVG conversion (one LibreOffice run for
 a document's drawings, and the PDF fallback), a synthetic
 Word-to-Markdown-to-HTML/PDF workflow, a reference-linked folder with images,
-Mermaid and math, and the PDF time limit. It needs the installed toolchain,
-Node.js, `pdftocairo` and LibreOffice (`libreoffice` or
-`soffice`) on `PATH`.
+Mermaid and math, the printed PDF's pages, header and footer, bookmarks,
+tagging and fonts, and the PDF time limit. It needs the installed toolchain,
+Node.js, LibreOffice (`libreoffice` or `soffice`) and Poppler's `pdftocairo`,
+`pdfinfo`, `pdftotext`, `pdftohtml` and `pdffonts` on `PATH`.
 
 The converter writes code fences itself, because Pandoc's GFM writer drops
 labels, such as `text`, that are not among its highlighting languages (since

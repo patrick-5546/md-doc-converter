@@ -80,8 +80,10 @@ command's options.
 ## Excel and CSV
 
 `excel-to-csv` writes each worksheet as `<sheet name>.csv` beside the workbook,
-or in the `-o` folder. Formulas are written as their cached values. For clean
-output, each worksheet should:
+or in the `-o` folder. Formulas are written as the values Excel saved with them;
+a workbook saved by a program that does not calculate formulas, such as a
+script, has none, and those cells come out empty. For clean output, each
+worksheet should:
 
 - contain one table beginning in the first row and first column;
 - contain no populated cells outside the table;

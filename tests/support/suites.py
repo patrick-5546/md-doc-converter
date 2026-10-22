@@ -25,6 +25,9 @@ from tests.support.project import PROJECT_ROOT
 
 RENDERING = PROJECT_ROOT / "tests" / "rendering"
 SETUP_PANDOC = "run `make setup-pandoc`"
+# The Poppler utilities that the render suite runs: pdftocairo converts EMF drawings, and
+# the others read the PDFs it prints.
+POPPLER = ("pdftocairo", "pdfinfo", "pdftotext", "pdftohtml", "pdffonts")
 
 
 def use_project_toolchain(environment: MutableMapping[str, str] | None = None) -> None:
@@ -57,7 +60,7 @@ def missing_prerequisites(*, render: bool) -> list[str]:
     if pandoc.status != "ok":
         missing.append(f"pandoc {PANDOC_VERSION}: {pandoc.detail} ({SETUP_PANDOC})")
     if render:
-        missing.extend(tool for tool in ("node", "pdftocairo") if shutil.which(tool) is None)
+        missing.extend(tool for tool in ("node", *POPPLER) if shutil.which(tool) is None)
         if not (shutil.which("libreoffice") or shutil.which("soffice")):
             missing.append("libreoffice/soffice (EMF regression coverage)")
         tools = toolchain()
