@@ -461,6 +461,31 @@ def _crop_svg(path: Path, frame: Frame, *, fraction: bool = False) -> str | None
     return None
 
 
+_UNITLESS_SIZE = re.compile(
+    r"""(?<=\s)(width|height)(\s*=\s*)(["'])\s*([0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)\s*\3"""
+)
+
+
+def _size_in_points(path: Path) -> None:
+    """Give the page size of a pdftocairo SVG the unit `pt` when it has none.
+
+    pdftocairo draws in PDF points, but only Poppler 25.04 and newer write the unit. With an older
+    Poppler and Cairo 1.17.6 or newer, the size has no unit, which SVG reads as CSS pixels, so the
+    drawing would show at 75% of its size.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise ConversionError(f"PDF-to-SVG fallback SVG could not be read: {error}") from error
+    start = re.search(r"<svg\b[^>]*>", text)
+    if start is None:
+        return
+    tag = _UNITLESS_SIZE.sub(
+        lambda size: f"{size[1]}{size[2]}{size[3]}{size[4]}pt{size[3]}", start.group(0)
+    )
+    path.write_text(text[: start.start()] + tag + text[start.end() :], encoding="utf-8")
+
+
 # A converted drawing's SVG, or why it could not be converted, and notes on the conversion.
 VectorResult = tuple[bytes | str, list[str]]
 
@@ -548,6 +573,7 @@ def _convert_vectors(drawings: dict[str, tuple[bytes, str]], work: Path) -> dict
                 if not produced(svg):
                     raise ConversionError(f"{direct_error}; PDF-to-SVG fallback produced no SVG")
                 validate_svg(svg)
+                _size_in_points(svg)
             except ConversionError as error:
                 results[name] = (str(error), findings[name])
                 continue

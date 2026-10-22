@@ -193,6 +193,35 @@ class EmfCropTests(unittest.TestCase):
                     findings[-1], f"kept LibreOffice's whole page around the drawing: {reason}"
                 )
 
+    def test_a_unitless_pdftocairo_page_is_measured_in_points(self) -> None:
+        # Poppler before 25.04 with Cairo 1.17.6 or newer writes the page size without a unit.
+        unitless = CAIRO_PAGE.replace('width="612pt" height="792pt"', 'width="612" height="792"')
+        cropped, _tools = _convert({"drawing": {"svg": None, "cairo": unitless}})
+        self.assertEqual(cropped["drawing"][0], CROPPED_CAIRO_PAGE)
+        whole, _tools = _convert({"drawing": {"svg": None, "cairo": unitless, "odg": False}})
+        self.assertEqual(whole["drawing"][0], CAIRO_PAGE)
+
+    def test_only_a_unitless_page_size_gets_points(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="docx-emf-units-") as directory:
+            path = Path(directory) / "page.svg"
+            for before, after in (
+                (
+                    '<svg width="612" height="1e3" stroke-width="2">',
+                    '<svg width="612pt" height="1e3pt" stroke-width="2">',
+                ),
+                ('<svg width="612pt" height="10mm">', '<svg width="612pt" height="10mm">'),
+                (
+                    "<svg height='79.5' viewBox='0 0 1 1'>",
+                    "<svg height='79.5pt' viewBox='0 0 1 1'>",
+                ),
+            ):
+                with self.subTest(before=before):
+                    path.write_text(f"<?xml version='1.0'?>\n{before}<g width='5'/></svg>\n")
+                    _media._size_in_points(path)
+                    self.assertEqual(
+                        path.read_text(), f"<?xml version='1.0'?>\n{after}<g width='5'/></svg>\n"
+                    )
+
 
 class EmfBatchTests(unittest.TestCase):
     def test_all_drawings_convert_in_one_libreoffice_run(self) -> None:
