@@ -12,7 +12,7 @@ from md_doc_converter.converters.docx import explain as _explain
 from md_doc_converter.converters.docx import ooxml as _ooxml
 from md_doc_converter.converters.docx.diagnostics import TransformReport
 from md_doc_converter.converters.docx.models import SourceDocument, WordPackage
-from tests.support.docx import W, numbered, numbering_xml, paragraph, word_style
+from tests.support.docx import R, W, numbered, numbering_xml, paragraph, word_style
 
 MARKER = "MDCONVDOCX" + "0123456789ABCDEF" * 2
 
@@ -307,6 +307,17 @@ def test_a_missing_bookmark_is_described_by_where_it_exists_instead(name: str, f
     ET.SubElement(notes, W + "bookmarkStart", {W + "name": "NoteMark"})
     word.parts["word/footnotes.xml"] = ET.tostring(notes)
     word.parts["word/header1.xml"] = b"<not-xml"
+    # Parts are found through the document's relationships; a missing one is skipped.
+    for kind, target in (
+        ("footnotes", "footnotes.xml"),
+        ("header", "header1.xml"),
+        ("footer", "footer1.xml"),
+    ):
+        ET.SubElement(
+            word.relationships,
+            _ooxml.PACKAGE_REL + "Relationship",
+            {"Id": kind, "Type": R[1:-1] + "/" + kind, "Target": target},
+        )
     explainer = _explain.Explainer(word, TransformReport(explaining=True))
     shape = explainer.missing_bookmark(name, "link")
     assert shape == {"from": "link", "name": _explain.name_class(name), "bookmark": found}

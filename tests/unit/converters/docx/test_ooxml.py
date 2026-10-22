@@ -984,3 +984,71 @@ def test_underline_is_dropped_only_where_markdown_shows_it_twice_or_as_text() ->
     }
     assert values["valueless"] is not None
     assert _ooxml.drop_redundant_underline(root, styles) == 0
+
+
+@pytest.mark.parametrize(
+    ("source", "target", "part"),
+    [
+        pytest.param(
+            "word/document.xml", "media/image1.png", "word/media/image1.png", id="relative"
+        ),
+        pytest.param(
+            "word/document.xml", "/word/media/image1.png", "word/media/image1.png", id="absolute"
+        ),
+        pytest.param("word/document.xml", "../media/image1.png", "media/image1.png", id="parent"),
+        pytest.param(
+            "word/document.xml", "media/my%20image.png", "word/media/my image.png", id="encoded"
+        ),
+        pytest.param("", "word/document2.xml", "word/document2.xml", id="from-the-package"),
+        pytest.param(
+            "", "/word/document2.xml", "word/document2.xml", id="absolute-from-the-package"
+        ),
+    ],
+)
+def test_a_relationship_target_is_a_part_relative_to_its_source(
+    source: str, target: str, part: str
+) -> None:
+    assert _ooxml.part_name(source, target) == part
+
+
+@pytest.mark.parametrize(
+    ("target", "message"),
+    [
+        pytest.param("../../secret.png", "escapes the DOCX", id="parent-of-the-package"),
+        pytest.param("/../secret.png", "escapes the DOCX", id="absolute-parent"),
+        pytest.param("//host/secret.png", "escapes the DOCX", id="network-path"),
+        pytest.param("..", "escapes the DOCX", id="package-folder"),
+        pytest.param("media\\image1.png", "Unsafe package target", id="backslash"),
+        pytest.param("media%5Cimage1.png", "Unsafe package target", id="encoded-backslash"),
+    ],
+)
+def test_a_relationship_target_outside_the_package_is_refused(target: str, message: str) -> None:
+    with pytest.raises(ConversionError, match=message):
+        _ooxml.part_name("word/document.xml", target)
+
+
+def test_related_parts_follow_internal_relationships_of_one_type() -> None:
+    relationships = ET.Element(_ooxml.PACKAGE_REL + "Relationships")
+    for identifier, kind, target, mode in (
+        ("rId1", "/header", "header1.xml", None),
+        ("rId2", "/footer", "footer1.xml", None),
+        ("rId3", "/header", "/word/header2.xml", None),
+        ("rId4", "/header", "https://example.com/header.xml", "External"),
+        ("rId5", "/header", "../../header3.xml", None),
+    ):
+        attributes = {"Id": identifier, "Type": R[1:-1] + kind, "Target": target}
+        if mode is not None:
+            attributes["TargetMode"] = mode
+        ET.SubElement(relationships, _ooxml.PACKAGE_REL + "Relationship", attributes)
+    strict = "http://purl.oclc.org/ooxml/officeDocument/relationships/header"
+    ET.SubElement(
+        relationships,
+        _ooxml.PACKAGE_REL + "Relationship",
+        {"Id": "rId6", "Type": strict, "Target": "header4.xml"},
+    )
+
+    assert _ooxml.related_parts(relationships, "word/document.xml", "header") == [
+        "word/header1.xml",
+        "word/header2.xml",
+        "word/header4.xml",
+    ]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import io
+import posixpath
 import re
 import urllib.parse
 import uuid
@@ -173,6 +174,48 @@ def word_xml_bytes(root: ET.Element, original: bytes | None = None) -> bytes:
         if namespace is not None and namespace not in used:
             root.set("xmlns:" + prefix, namespace)
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
+
+
+# Relationship types, such as .../officeDocument, in the Transitional and the Strict forms.
+_RELATIONSHIP_TYPES = (
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/",
+    "http://purl.oclc.org/ooxml/officeDocument/relationships/",
+)
+
+
+def part_name(source: str, target: str) -> str:
+    """The package part that a relationship of the *source* part targets.
+
+    *source* is "" for the package's own relationships. A target is relative to the folder of
+    *source*, or absolute from the package root (ECMA-376 Part 2, 9.3); one outside the package
+    is refused.
+    """
+    decoded = urllib.parse.unquote(target)
+    if "\\" in decoded:
+        raise ConversionError(f"Unsafe package target: {target!r}")
+    if decoded.startswith("/"):
+        joined = decoded[1:]
+    else:
+        joined = posixpath.join(posixpath.dirname(source), decoded)
+    name = posixpath.normpath(joined)
+    if name.startswith(("../", "/")) or name in {"", ".", ".."}:
+        raise ConversionError(f"Package target escapes the DOCX: {target!r}")
+    return name
+
+
+def related_parts(relationships: ET.Element, source: str, kind: str) -> list[str]:
+    """The parts that the relationships of *source* of a type, such as "styles", target."""
+    names: list[str] = []
+    for relation in relationships.iter(PACKAGE_REL + "Relationship"):
+        if relation.get("Type") not in {prefix + kind for prefix in _RELATIONSHIP_TYPES}:
+            continue
+        if relation.get("TargetMode", "").casefold() == "external":
+            continue
+        try:
+            names.append(part_name(source, relation.get("Target", "")))
+        except ConversionError:
+            continue
+    return names
 
 
 def word_paragraph(text: str) -> ET.Element:

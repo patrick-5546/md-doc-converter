@@ -16,7 +16,7 @@ import sys
 import zipfile
 from pathlib import Path
 
-from md_doc_converter.converters.packages import too_large
+from md_doc_converter.converters.packages import is_compound_file, too_large
 
 
 def excel_to_csv(excel_path: str, output_dir: str | None = None) -> None:
@@ -26,6 +26,11 @@ def excel_to_csv(excel_path: str, output_dir: str | None = None) -> None:
     path = Path(excel_path)
     if not path.exists():
         raise FileNotFoundError(f"file not found: {excel_path}")
+    if is_compound_file(path):
+        raise ValueError(
+            f"{excel_path} is encrypted, or in the Excel 97-2003 format; "
+            "convert an unencrypted .xlsx copy"
+        )
     try:
         with zipfile.ZipFile(path) as archive:
             problem = too_large(archive.infolist())

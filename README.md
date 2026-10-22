@@ -80,8 +80,9 @@ command's options.
 ## Excel and CSV
 
 `excel-to-csv` writes each worksheet as `<sheet name>.csv` beside the workbook,
-or in the `-o` folder. Like Word documents, a workbook whose contents expand to
-more than 1,024 MiB is refused. Formulas are written as the values Excel saved with them;
+or in the `-o` folder. Like Word documents, a workbook that is encrypted, in the
+Excel 97-2003 format (`.xls`), or whose contents expand to more than 1,024 MiB
+is refused. Formulas are written as the values Excel saved with them;
 a workbook saved by a program that does not calculate formulas, such as a
 script, has none, and those cells come out empty. For clean output, each
 worksheet should:

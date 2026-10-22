@@ -8,6 +8,7 @@ import zipfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
+from md_doc_converter.converters.docx import models as _models
 from md_doc_converter.converters.docx import ooxml as _ooxml
 
 W = _ooxml.WORD
@@ -302,7 +303,9 @@ def write_docx(
     media: dict[str, bytes] | None = None,
     extras: dict[str, bytes] | None = None,
     styles: tuple[ET.Element, ...] = (),
+    document: str = "word/document.xml",
 ) -> None:
+    """Write a Word package; the package relationships name its main *document* part."""
     root = ET.Element(W + "document")
     body_node = ET.SubElement(root, W + "body")
     body_node.extend(copy.deepcopy(body))
@@ -314,7 +317,7 @@ def write_docx(
         {
             "Id": "office",
             "Type": R[1:-1] + "/officeDocument",
-            "Target": "word/document.xml",
+            "Target": document,
         },
     )
     document_relations = ET.Element(_ooxml.PACKAGE_REL + "Relationships")
@@ -344,7 +347,7 @@ def write_docx(
         )
     for name, mime in (
         (
-            "/word/document.xml",
+            "/" + document,
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml",
         ),
         (
@@ -368,8 +371,8 @@ def write_docx(
         for name, xml in (
             ("[Content_Types].xml", content_types),
             ("_rels/.rels", package),
-            ("word/document.xml", root),
-            ("word/_rels/document.xml.rels", document_relations),
+            (document, root),
+            (_models.relationships_part_of(document), document_relations),
             ("word/styles.xml", style_part),
         ):
             archive.writestr(name, _ooxml.word_xml_bytes(xml))

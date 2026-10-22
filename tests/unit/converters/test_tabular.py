@@ -176,6 +176,13 @@ def test_excel_to_csv_writes_one_csv_per_worksheet(
         pytest.param("missing.xlsx", None, "file not found: ", id="missing"),
         pytest.param("notes.txt", b"text", "not an Excel workbook: ", id="other-format"),
         pytest.param("damaged.xlsx", b"PK not a zip", "not an Excel workbook: ", id="damaged"),
+        pytest.param(
+            "protected.xlsx",
+            bytes.fromhex("d0cf11e0a1b11ae1") + b"EncryptedPackage",
+            r".*protected\.xlsx is encrypted, or in the Excel 97-2003 format; convert an "
+            r"unencrypted \.xlsx copy$",
+            id="encrypted",
+        ),
     ],
 )
 def test_excel_to_csv_reports_an_unreadable_workbook(

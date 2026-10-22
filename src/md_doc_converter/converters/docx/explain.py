@@ -188,7 +188,8 @@ _CATEGORIES = {
     "M": "mark",
 }
 _NOTE_FRAGMENT = re.compile(r"(?:footnote|endnote|comment)(?:-ref)?-\d+")
-_OTHER_PARTS = re.compile(r"word/(?:footnotes|endnotes|comments|header\d*|footer\d*)\.xml")
+# The parts besides the document body that hold Word text, by relationship type.
+_OTHER_STORIES = ("footnotes", "endnotes", "comments", "header", "footer")
 # Any docx-to-md alignment marker: its prefix is MDCONVDOCX and 32 hexadecimal digits.
 _MARKERS = re.compile(r"MDCONVDOCX[0-9A-F]{32}" + marker_pattern("").pattern)
 
@@ -731,14 +732,15 @@ class Explainer:
                 for node in self.package.root.iter(WORD + "bookmarkStart")
             }
             other: set[str] = set()
-            for part, data in self.package.parts.items():
-                if not _OTHER_PARTS.fullmatch(part):
-                    continue
-                try:
-                    nodes = ET.fromstring(data).iter(WORD + "bookmarkStart")
-                except ET.ParseError:
-                    continue
-                other.update(node.get(WORD + "name", "") for node in nodes)
+            for kind in _OTHER_STORIES:
+                for part in _ooxml.related_parts(
+                    self.package.relationships, self.package.document_part, kind
+                ):
+                    try:
+                        nodes = ET.fromstring(self.package.parts[part]).iter(WORD + "bookmarkStart")
+                    except (KeyError, ET.ParseError):
+                        continue
+                    other.update(node.get(WORD + "name", "") for node in nodes)
             self._names = original - {""}, other - {""}
         return self._names
 

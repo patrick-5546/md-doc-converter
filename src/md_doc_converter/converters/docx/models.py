@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import posixpath
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -14,6 +15,12 @@ class ConversionError(RuntimeError):
 
 class PackageError(ConversionError):
     """The DOCX package cannot be read safely, so no baseline conversion is possible."""
+
+
+def relationships_part_of(name: str) -> str:
+    """The package part that holds the relationships of part *name*."""
+    folder, file = posixpath.split(name)
+    return posixpath.join(folder, "_rels", file + ".rels")
 
 
 @dataclass(frozen=True)
@@ -136,6 +143,19 @@ class WordPackage:
     root: ET.Element
     relationships: ET.Element
     styles: ET.Element
+    # The parts that the package relationships name; these defaults are where Word puts them.
+    document_part: str = "word/document.xml"
+    styles_part: str = "word/styles.xml"
+    numbering_part: str = "word/numbering.xml"
+
+    @property
+    def relationships_part(self) -> str:
+        return relationships_part_of(self.document_part)
+
+    @property
+    def media_folder(self) -> str:
+        """Where Word keeps the document's images, such as word/media."""
+        return posixpath.join(posixpath.dirname(self.document_part), "media")
 
 
 @dataclass

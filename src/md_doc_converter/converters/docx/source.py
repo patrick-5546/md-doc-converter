@@ -5,7 +5,6 @@ from __future__ import annotations
 import copy
 import dataclasses
 import os
-import posixpath
 import stat
 import urllib.parse
 import uuid
@@ -33,6 +32,7 @@ from md_doc_converter.converters.docx.models import (
     SourceListItem,
     SourceTable,
     WordPackage,
+    relationships_part_of,
 )
 from md_doc_converter.converters.docx.ooxml import (
     DRAWING,
@@ -48,32 +48,12 @@ from md_doc_converter.converters.docx.ooxml import (
     WORD,
     XML_SPACE,
 )
-from md_doc_converter.converters.packages import too_large
-
-DOCUMENT_PART = "word/document.xml"
-
-
-RELATIONSHIPS_PART = "word/_rels/document.xml.rels"
-
-
-STYLES_PART = "word/styles.xml"
-NUMBERING_PART = "word/numbering.xml"
-
+from md_doc_converter.converters.packages import is_compound_file, too_large
 
 _TEXT_BOX_CONSEQUENCES = {
     "VML text box": "its text is kept after its paragraph",
     "DrawingML text box": "its text is omitted",
 }
-
-
-def _package_target(target: str) -> str:
-    decoded = urllib.parse.unquote(target)
-    if "\\" in decoded:
-        raise ConversionError(f"Unsafe package media target: {target!r}")
-    name = posixpath.normpath(posixpath.join("word", decoded))
-    if name.startswith(("../", "/")) or name in {"", ".", ".."}:
-        raise ConversionError(f"Package media target escapes the DOCX: {target!r}")
-    return name
 
 
 def _rebase_source_link(target: str, paths: ConversionPaths) -> str:
@@ -95,8 +75,18 @@ def _rebase_source_link(target: str, paths: ConversionPaths) -> str:
     )
 
 
+def _part_of(parts: dict[str, bytes], candidates: list[str], default: str) -> str:
+    """The first candidate part in the package, as Mammoth finds parts, else *default*."""
+    return next((name for name in candidates if name in parts), default)
+
+
 def read_package(paths: ConversionPaths) -> WordPackage:
     """Read every part once; an unreadable or unsafe package is the only source error."""
+    if is_compound_file(paths.source):
+        raise PackageError(
+            f"Cannot read {paths.source}: it is encrypted, or in the Word 97-2003 format; "
+            "convert an unencrypted .docx copy"
+        )
     try:
         with zipfile.ZipFile(paths.source) as archive:
             entries = archive.infolist()
@@ -115,15 +105,36 @@ def read_package(paths: ConversionPaths) -> WordPackage:
                 if stat.S_ISLNK(entry.external_attr >> 16):
                     raise PackageError(f"Symlink in DOCX package: {entry.filename!r}")
             parts = {entry.filename: archive.read(entry) for entry in entries}
-        root = ET.fromstring(parts[DOCUMENT_PART])
-        relationships = (
-            ET.fromstring(parts[RELATIONSHIPS_PART])
-            if RELATIONSHIPS_PART in parts
+        # The package relationships name the main document part, which Word calls
+        # word/document.xml; the parts it uses are found through its own relationships.
+        package_relationships = (
+            ET.fromstring(parts["_rels/.rels"])
+            if "_rels/.rels" in parts
             else ET.Element(PACKAGE_REL + "Relationships")
         )
+        document = _part_of(
+            parts,
+            _ooxml.related_parts(package_relationships, "", "officeDocument"),
+            "word/document.xml",
+        )
+        root = ET.fromstring(parts[document])
+        relationships_part = relationships_part_of(document)
+        relationships = (
+            ET.fromstring(parts[relationships_part])
+            if relationships_part in parts
+            else ET.Element(PACKAGE_REL + "Relationships")
+        )
+        styles_part, numbering_part = (
+            _part_of(
+                parts,
+                _ooxml.related_parts(relationships, document, kind),
+                f"word/{kind}.xml",
+            )
+            for kind in ("styles", "numbering")
+        )
         styles = (
-            ET.fromstring(parts[STYLES_PART])
-            if STYLES_PART in parts
+            ET.fromstring(parts[styles_part])
+            if styles_part in parts
             else ET.Element(WORD + "styles")
         )
     except (
@@ -135,11 +146,10 @@ def read_package(paths: ConversionPaths) -> WordPackage:
         EOFError,
         zlib.error,
     ) as error:
-        raise PackageError(
-            f"Cannot read DOCX package {paths.source}; encrypted/protected containers "
-            f"are not bypassed: {error}"
-        ) from error
-    return WordPackage(entries, parts, root, relationships, styles)
+        raise PackageError(f"Cannot read DOCX package {paths.source}: {error}") from error
+    return WordPackage(
+        entries, parts, root, relationships, styles, document, styles_part, numbering_part
+    )
 
 
 def _write_package(package: WordPackage, destination: Path, modified: dict[str, bytes]) -> None:
@@ -161,7 +171,7 @@ def document_title(root: ET.Element) -> str | None:
     return None
 
 
-def _image_part(node: ET.Element, relations: dict[str, ET.Element], parts: dict[str, bytes]) -> str:
+def _image_part(node: ET.Element, relations: dict[str, ET.Element], package: WordPackage) -> str:
     """The embedded package part an image node shows; the error says why there is none."""
     relation_id = node.get(REL + "embed") or node.get(REL + "id")
     if not relation_id:
@@ -175,10 +185,10 @@ def _image_part(node: ET.Element, relations: dict[str, ET.Element], parts: dict[
         raise ConversionError(
             f"External/missing Word media is not fetched: {relation.get('Target')!r}"
         )
-    name = _package_target(relation.get("Target", ""))
-    if name not in parts:
+    name = _ooxml.part_name(package.document_part, relation.get("Target", ""))
+    if name not in package.parts:
         raise ConversionError(f"Missing Word media part {name!r}")
-    if not parts[name]:
+    if not package.parts[name]:
         raise ConversionError(f"Empty Word media part {name!r}")
     return name
 
@@ -299,7 +309,7 @@ def baseline_input(
             node.attrib.pop(REL + "link")
             changed = True
         try:
-            _image_part(node, relations, package.parts)
+            _image_part(node, relations, package)
         except ConversionError as error:
             _neutralize(node)
             changed = True
@@ -310,8 +320,12 @@ def baseline_input(
         package,
         work / "baseline.docx",
         {
-            DOCUMENT_PART: _ooxml.word_xml_bytes(root, package.parts[DOCUMENT_PART]),
-            RELATIONSHIPS_PART: ET.tostring(relationships, encoding="utf-8", xml_declaration=True),
+            package.document_part: _ooxml.word_xml_bytes(
+                root, package.parts[package.document_part]
+            ),
+            package.relationships_part: ET.tostring(
+                relationships, encoding="utf-8", xml_declaration=True
+            ),
         },
     )
     return work / "baseline.docx"
@@ -361,21 +375,27 @@ def prepare_source(
     report.prefix = source.prefix
     numbered, numbering = _list_numbering(package, report)
     if explainer is not None:
-        explainer.numbering = _explain.Numbering(numbering or package.parts.get(NUMBERING_PART))
+        explainer.numbering = _explain.Numbering(
+            numbering or package.parts.get(package.numbering_part)
+        )
     _instrument_source(source, package, relationships, paths, report, numbered, explainer)
     _keep_metadata_in_body(root, package)
     _text_boxes_after_paragraphs(root)
     _tables.pad_first_body_rows(root)
     modified = {
-        DOCUMENT_PART: _ooxml.word_xml_bytes(root, package.parts[DOCUMENT_PART]),
-        RELATIONSHIPS_PART: ET.tostring(relationships, encoding="utf-8", xml_declaration=True),
+        package.document_part: _ooxml.word_xml_bytes(root, package.parts[package.document_part]),
+        package.relationships_part: ET.tostring(
+            relationships, encoding="utf-8", xml_declaration=True
+        ),
     }
     if numbering is not None:
-        modified[NUMBERING_PART] = numbering
-    if source.code_style is not None and STYLES_PART in package.parts:
+        modified[package.numbering_part] = numbering
+    if source.code_style is not None and package.styles_part in package.parts:
         styles = copy.deepcopy(package.styles)
         styles.append(source.code_style)
-        modified[STYLES_PART] = _ooxml.word_xml_bytes(styles, package.parts[STYLES_PART])
+        modified[package.styles_part] = _ooxml.word_xml_bytes(
+            styles, package.parts[package.styles_part]
+        )
     _write_package(package, work / "reference.docx", modified)
     return source, _write_markitdown_copy(source, package, work, modified)
 
@@ -473,7 +493,7 @@ def _list_numbering(
     package: WordPackage, report: TransformReport
 ) -> tuple[frozenset[str], bytes | None]:
     """Word's numbered lists, and the numbering part rewritten if list-style links changed it."""
-    data = package.parts.get(NUMBERING_PART)
+    data = package.parts.get(package.numbering_part)
     if data is None:
         return frozenset(), None
     try:
@@ -548,8 +568,8 @@ def _write_markitdown_copy(
                 source.literal_tokens[breaking] = " "
     if not source.alt_targets and not source.literal_tokens and not source.pict_units:
         return work / "reference.docx"
-    document = _ooxml.word_xml_bytes(protected, package.parts[DOCUMENT_PART])
-    _write_package(package, work / "markitdown.docx", {**modified, DOCUMENT_PART: document})
+    document = _ooxml.word_xml_bytes(protected, package.parts[package.document_part])
+    _write_package(package, work / "markitdown.docx", {**modified, package.document_part: document})
     return work / "markitdown.docx"
 
 
@@ -652,7 +672,7 @@ def _select_image(
     svg = next(node.iter(SVG_DRAWING + "svgBlip"), None) if node.tag == DRAWING + "blip" else None
     if svg is not None:
         try:
-            name = _image_part(svg, relations, package.parts)
+            name = _image_part(svg, relations, package)
             _media.validate_svg_bytes(package.parts[name], name)
         except ConversionError as error:
             report.skipped(
@@ -667,7 +687,7 @@ def _select_image(
             node.set(REL + "embed", svg.get(REL + "embed", ""))
             node.attrib.pop(REL + "link", None)
             return name
-    name = _image_part(node, relations, package.parts)
+    name = _image_part(node, relations, package)
     if node.get(REL + "embed"):
         node.attrib.pop(REL + "link", None)
     return name
@@ -700,9 +720,7 @@ def _instrument_images(
                 report.skipped_error("images", error, where, "; image dropped", items=(token,))
                 continue
             source.media[name] = package.parts[name]
-            relative = PurePosixPath(name)
-            if name.startswith("word/media/"):
-                relative = relative.relative_to("word/media")
+            relative = _media.media_name(name, package.media_folder)
             found.append(SourceImage(token, name, relative, description))
         if not found:
             continue

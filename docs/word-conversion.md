@@ -669,10 +669,12 @@ targeting the same output set.
 
 ## Before and after converting
 
-Conversion requires unencrypted input. Use an authorized working copy of
-protected Office documents. A Word file is a ZIP package; one whose contents
-expand to more than 1,024 MiB is refused before any of it is read, since a
-crafted package can expand to far more than its own size.
+Conversion requires an unencrypted `.docx` file: a document encrypted with a
+password or by rights management, or one in the Word 97-2003 format (`.doc`),
+is refused. Use an authorized working copy of protected Office documents. A
+Word file is a ZIP package; one whose contents expand to more than 1,024 MiB is
+refused before any of it is read, since a crafted package can expand to far
+more than its own size.
 
 After Word conversion, review the transform summary and warnings, then inspect
 tables, code blocks, escaped identifiers, links, images, and the selected Wiki

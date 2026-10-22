@@ -610,9 +610,10 @@ def _convert_vectors(drawings: dict[str, tuple[bytes, str]], work: Path) -> dict
     return results
 
 
-def _relative_name(part: str) -> PurePosixPath:
+def media_name(part: str, folder: str) -> PurePosixPath:
+    """The name an image part is published under: relative to the media *folder* if in it."""
     name = PurePosixPath(part)
-    return name.relative_to("word/media") if part.startswith("word/media/") else name
+    return name.relative_to(folder) if name.is_relative_to(folder) else name
 
 
 class ImageStager:
@@ -623,6 +624,7 @@ class ImageStager:
         self._cache = work / "emf-cache"
         self._runs = 0
         self._parts: dict[str, str] = {}
+        self._media = package.media_folder
         # The document's EMF/WMF drawings by digest, converted together when one is published.
         self._vectors: dict[str, tuple[bytes, str]] = {}
         for name, data in package.parts.items():
@@ -632,7 +634,8 @@ class ImageStager:
             digest = hashlib.sha256(data).hexdigest()
             current = self._parts.get(digest)
             if current is None or (
-                name.startswith("word/media/") and not current.startswith("word/media/")
+                PurePosixPath(name).is_relative_to(self._media)
+                and not PurePosixPath(current).is_relative_to(self._media)
             ):
                 self._parts[digest] = name
             if suffix in VECTOR_SUFFIXES:
@@ -694,7 +697,7 @@ class ImageStager:
     ) -> PurePosixPath:
         part = self._parts.get(hashlib.sha256(data).hexdigest())
         if part is not None:
-            return self.publish("part:" + part, data, _relative_name(part), report)
+            return self.publish("part:" + part, data, media_name(part, self._media), report)
         key = "data:" + hashlib.sha256(data).hexdigest()
         if key not in self._published:
             self._data += 1

@@ -3139,15 +3139,51 @@ def test_custom_style_outline_level_is_preserved(convert: Converter) -> None:
     assert "##### Custom heading\n" in result
 
 
-def test_encrypted_container_is_rejected_without_bypass(
+def test_an_encrypted_or_word_97_document_is_refused_before_conversion(
     source: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    source.write_bytes(bytes.fromhex("d0cf11e0a1b11ae1") + b"encrypted office container")
+    # Both are OLE compound files rather than ZIP packages.
+    source.write_bytes(bytes.fromhex("d0cf11e0a1b11ae1") + b"EncryptedPackage")
     run = mock.Mock()
     monkeypatch.setattr(_reference, "run_command", run)
-    with pytest.raises(_models.ConversionError, match=r"not bypassed"):
+    with pytest.raises(
+        _models.PackageError,
+        match=r"it is encrypted, or in the Word 97-2003 format; "
+        r"convert an unencrypted \.docx copy$",
+    ):
         _pipeline.convert_docx(source)
     run.assert_not_called()
+
+
+def test_a_damaged_package_is_refused_with_the_reason(source: Path) -> None:
+    source.write_bytes(b"PK not a zip")
+    with pytest.raises(
+        _models.PackageError, match=r"^Cannot read DOCX package .+: File is not a zip file$"
+    ):
+        _pipeline.convert_docx(source)
+
+
+def test_the_main_document_part_is_found_through_the_package_relationships(
+    source: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Word names it word/document.xml, but generators may not; this package also targets its
+    # parts by absolute names, as the Open XML SDK can.
+    write_docx(
+        source,
+        [paragraph("Overview", "Heading1"), image()],
+        relations=(
+            ("styles", "styles", "/word/styles.xml", "Internal"),
+            ("image", "image", "/word/media/image.png", "Internal"),
+        ),
+        media={"image.png": PNG},
+        document="word/document2.xml",
+    )
+    stats = _pipeline.convert_docx(source)
+    assert _publication.requested_output(source, None).read_text(encoding="utf-8") == (
+        "# Overview\n\n![Diagram](.images/Synthetic%20Guide/image.png)\n"
+    )
+    assert stats["image_occurrences"] == 1
+    assert "warning" not in capsys.readouterr().err
 
 
 def test_a_package_that_expands_too_far_is_rejected_before_it_is_read(
