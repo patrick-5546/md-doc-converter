@@ -46,6 +46,16 @@ def code_run(text: str, *, font: str = "Courier New") -> ET.Element:
     return result
 
 
+def formatted(run: ET.Element, tag: str, value: str | None = None) -> ET.Element:
+    """Give *run* the direct formatting w:*tag*, such as u or dstrike, with an optional w:val."""
+    properties = run.find(W + "rPr")
+    if properties is None:
+        properties = ET.Element(W + "rPr")
+        run.insert(0, properties)
+    ET.SubElement(properties, W + tag, {} if value is None else {W + "val": value})
+    return run
+
+
 def paragraph_of(*runs: ET.Element, style: str | None = None) -> ET.Element:
     """A paragraph of *runs*, in the paragraph style *style*."""
     result = ET.Element(W + "p")

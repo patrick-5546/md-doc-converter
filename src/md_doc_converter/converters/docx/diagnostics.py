@@ -26,6 +26,7 @@ TRANSFORMS = (
     "symbols",
     "hidden-text",
     "spaces",
+    "underline",
     "literal-text",
     "line-breaks",
     "images",

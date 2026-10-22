@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import json
 import re
 import shutil
 import string
@@ -346,6 +347,31 @@ def _pipe_table(content: list[JSONValue]) -> bool:
         )
         for blocks in cells
     )
+
+
+def escape_link_titles(value: JSONValue) -> JSONValue:
+    r"""Escape the characters a Markdown link title reads specially: \, " and &.
+
+    Pandoc's GFM writer (3.12.1) writes a title between double quotes as it is, so a double
+    quote, or a final backslash, breaks the link, and an entity such as &amp; reads back as
+    its character. Since 3.12, Pandoc reads Word ScreenTips as link titles.
+    """
+    if isinstance(value, dict):
+        kind, content = value.get("t"), value.get("c")
+        if kind in {"Link", "Image"} and isinstance(content, list) and len(content) == 3:
+            attributes, inlines, target = content
+            if isinstance(target, list) and len(target) == 2 and isinstance(target[1], str):
+                title = re.sub(r'([\\"&])', r"\\\1", target[1])
+                return {**value, "c": [attributes, escape_link_titles(inlines), [target[0], title]]}
+        return {key: escape_link_titles(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [escape_link_titles(item) for item in value]
+    return value
+
+
+def gfm_input(value: JSONValue) -> str:
+    """Pandoc JSON for its GFM writer, with the fixes its output needs."""
+    return json.dumps(protect_backslashes(fence_code_blocks(escape_link_titles(value))))
 
 
 def protect_backslashes(value: JSONValue, *, table_cell: bool = False) -> JSONValue:

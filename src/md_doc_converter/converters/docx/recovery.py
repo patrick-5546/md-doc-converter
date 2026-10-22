@@ -442,7 +442,7 @@ def _render_list(
             )
             # A line break in a list item starts a new paragraph in it, as elsewhere.
             tree = _reference.split_paragraphs_at_line_breaks(tree)
-            markup = json.dumps(_reference.protect_backslashes(_reference.fence_code_blocks(tree)))
+            markup = _reference.gfm_input(tree)
             reader = "--from=json"
         rendered = _reference.run_command(
             [pandoc, reader, "--to=gfm+raw_html", "--wrap=none"],
@@ -787,9 +787,7 @@ def restore_literal_text(markdown: str, source: SourceDocument, pandoc: str) -> 
     return _reference.run_command(
         [pandoc, "--from=json", "--to=gfm+raw_html", "--wrap=none", "--markdown-headings=atx"],
         "Literal Word text recovery",
-        input_text=json.dumps(
-            _reference.protect_backslashes(_reference.fence_code_blocks(settled))
-        ),
+        input_text=_reference.gfm_input(settled),
     )
 
 

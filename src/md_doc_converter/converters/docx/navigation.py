@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import difflib
 import html
-import json
 import os
 import re
 import unicodedata
@@ -289,7 +288,7 @@ def rewrite_page_references(
             "--markdown-headings=atx",
         ],
         "Split-page reference rendering",
-        input_text=json.dumps(_reference.protect_backslashes(_reference.fence_code_blocks(data))),
+        input_text=_reference.gfm_input(data),
     )
     result = _normalization.normalize_unordered_lists(result)[0]
     spaced, spacing = _normalization.normalize_ordered_list_spacing(result)

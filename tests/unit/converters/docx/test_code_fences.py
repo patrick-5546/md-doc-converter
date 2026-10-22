@@ -138,5 +138,55 @@ class FenceCodeBlocksTest(unittest.TestCase):
         )
 
 
+def link(title: str, *, image: bool = False) -> dict[str, JSONValue]:
+    target: list[JSONValue] = ["https://example.test/a", title]
+    return {
+        "t": "Image" if image else "Link",
+        "c": [["", [], []], [{"t": "Str", "c": "x"}], target],
+    }
+
+
+class LinkTitleTest(unittest.TestCase):
+    def test_titles_escape_backslashes_double_quotes_and_ampersands(self) -> None:
+        nested: JSONValue = {
+            "t": "Link",
+            "c": [["", [], []], [link('in "x"', image=True)], ["u", "a&b\\"]],
+        }
+        self.assertEqual(
+            _reference.escape_link_titles([link('say "hi"'), link(""), nested]),
+            [
+                link('say \\"hi\\"'),
+                link(""),
+                {
+                    "t": "Link",
+                    "c": [["", [], []], [link('in \\"x\\"', image=True)], ["u", "a\\&b\\\\"]],
+                },
+            ],
+        )
+
+    def test_pandoc_writes_titles_that_read_back_unchanged(self) -> None:
+        pandoc = _reference.require_pandoc()
+        # An escaped entity, "\\&amp;", stays literal in CommonMark parsers, but Pandoc's reader
+        # decodes it anyway, so it is covered by the escaping test above instead.
+        titles = ['say "hi"', "ends\\", "back\\slash", "paren (x)", "it's", "<tag> & more"]
+        document: JSONValue = {
+            "pandoc-api-version": [1, 23, 1],
+            "meta": {},
+            "blocks": [
+                {"t": "Para", "c": [link(title), link(title, image=True)]} for title in titles
+            ],
+        }
+        written = _reference.run_command(
+            [pandoc, "--from=json", "--to=gfm+raw_html", "--wrap=none"],
+            "Link title writing",
+            input_text=_reference.gfm_input(document),
+        )
+        reread = json.loads(json.dumps(_reference.markdown_ast(written, pandoc, "read").blocks))
+        self.assertEqual(
+            [[inline["c"][2][1] for inline in block["c"]] for block in reread],
+            [[title, title] for title in titles],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

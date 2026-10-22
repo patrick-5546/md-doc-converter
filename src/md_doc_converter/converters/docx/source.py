@@ -247,6 +247,17 @@ def _plain_spaces(root: ET.Element, package: WordPackage, report: TransformRepor
     return False
 
 
+def _drop_redundant_underline(
+    root: ET.Element, package: WordPackage, report: TransformReport
+) -> bool:
+    """Apply the underline transform; return whether the document changed."""
+    with transform(report, "underline"):
+        count = _ooxml.drop_redundant_underline(root, package.styles)
+        report.applied("underline", count=count)
+        return bool(count)
+    return False
+
+
 def baseline_input(
     package: WordPackage, paths: ConversionPaths, work: Path, report: TransformReport
 ) -> Path:
@@ -278,6 +289,7 @@ def baseline_input(
     changed |= _map_symbols(root, report)
     changed |= _drop_hidden_text(root, package, report)
     changed |= _plain_spaces(root, package, report)
+    changed |= _drop_redundant_underline(root, package, report)
     for index, node in enumerate(node for node in root.iter() if node.tag in IMAGE_NODES):
         if node.tag == DRAWING + "blip" and node.get(REL + "embed") and node.get(REL + "link"):
             node.attrib.pop(REL + "link")
@@ -333,6 +345,7 @@ def prepare_source(
     _map_symbols(root, report)
     _drop_hidden_text(root, package, report)
     _plain_spaces(root, package, report)
+    _drop_redundant_underline(root, package, report)
     _ooxml.split_drawing_runs(root)
     for problem in _tables.canonicalize_horizontal_merges(root, strict=False):
         report.warn(f"Legacy horizontal table merge kept as written: {problem}")

@@ -42,6 +42,7 @@ from tests.support.docx import (
     boundary_hyperlink_field,
     cell,
     code_run,
+    formatted,
     grouped_image,
     hyperlink,
     image,
@@ -1375,6 +1376,67 @@ class ConversionTests(unittest.TestCase):
             summary,
         )
         self.assertEqual(warnings.count("links:"), 1)
+
+    def test_underline_stays_but_not_in_links_headings_or_code(self) -> None:
+        def underlined(node: ET.Element) -> ET.Element:
+            for run in node.iter(W + "r"):
+                formatted(run, "u", "single")
+            return node
+
+        body = paragraph_of(
+            _ooxml.word_run("Do "),
+            formatted(_ooxml.word_run("not"), "u", "single"),
+            _ooxml.word_run(" connect."),
+        )
+        code = paragraph_of(
+            _ooxml.word_run("Call "),
+            formatted(code_run("init()"), "u", "single"),
+            _ooxml.word_run(" first."),
+        )
+        must = paragraph_of(
+            _ooxml.word_run("Must "), formatted(_ooxml.word_run("not"), "u", "single")
+        )
+        grid = table(
+            row(cell("Rule"), cell("Link"), header=True),
+            row(cell(must), cell(underlined(hyperlink("Site", relation="site")))),
+        )
+        result, report, _warnings = self.convert_reported(
+            [
+                underlined(paragraph("Overview", "Heading1")),
+                body,
+                underlined(hyperlink("Spec site", relation="site")),
+                code,
+                grid,
+            ],
+            relations=(("site", "hyperlink", "https://example.test/spec", "External"),),
+        )
+        self.assertEqual(
+            result,
+            "# Overview\n\nDo <u>not</u> connect.\n\n[Spec site](https://example.test/spec)\n\n"
+            "Call `init()` first.\n\n| Rule | Link |\n| --- | --- |\n"
+            "| Must <u>not</u> | [Site](https://example.test/spec) |\n",
+        )
+        self.assertIn("  underline: applied (4)", report.summary())
+
+    def test_screen_tips_become_link_titles_and_double_strikethrough_is_struck(self) -> None:
+        tipped = hyperlink("Spec site", relation="site")
+        link = tipped.find(W + "hyperlink")
+        assert link is not None
+        link.set(W + "tooltip", 'Opens the "specification"')
+        struck = paragraph_of(
+            formatted(_ooxml.word_run("double"), "dstrike"),
+            _ooxml.word_run(" and "),
+            formatted(_ooxml.word_run("single"), "strike"),
+        )
+        result, _report, _warnings = self.convert_reported(
+            [tipped, struck],
+            relations=(("site", "hyperlink", "https://example.test/spec", "External"),),
+        )
+        self.assertEqual(
+            result,
+            '[Spec site](https://example.test/spec "Opens the \\"specification\\"")\n\n'
+            "~~double~~ and ~~single~~\n",
+        )
 
     def test_hyperlink_with_a_missing_relationship_still_converts(self) -> None:
         def fail(*_arguments: object) -> NoReturn:
@@ -2789,18 +2851,18 @@ class ConversionTests(unittest.TestCase):
         self.assertEqual(report.status("checks"), "applied")
         self.assertFalse(report.records["checks"].skipped)
 
-    def test_hyperlink_field_preserves_destination_and_cached_label(self) -> None:
+    def test_hyperlink_field_preserves_destination_label_and_screen_tip(self) -> None:
         content = ET.Element(W + "p")
         field = ET.SubElement(
             content,
             W + "fldSimple",
             {
-                W + "instr": ' HYPERLINK "https://example.test/item" \\o "Tooltip" ',
+                W + "instr": ' HYPERLINK "https://example.test/item" \\o "Say \\"hi\\"" ',
             },
         )
         field.append(_ooxml.word_run("Source label"))
         result, _stats = self.convert([content])
-        self.assertIn("[Source label](https://example.test/item)", result)
+        self.assertEqual(result, '[Source label](https://example.test/item "Say \\"hi\\"")\n')
 
     def test_complex_hyperlink_field_and_tooltip_preserve_link(self) -> None:
         content = ET.Element(W + "p")
@@ -2815,13 +2877,13 @@ class ConversionTests(unittest.TestCase):
             else:
                 ET.SubElement(run, W + "fldChar", {W + "fldCharType": kind})
         result, _stats = self.convert([content])
-        self.assertIn("[Cached label](https://example.test/a)", result)
+        self.assertEqual(result, '[Cached label](https://example.test/a "Tip")\n')
 
     def test_field_boundary_run_content_survives_real_conversion(self) -> None:
-        for formatted in (False, True):
-            with self.subTest(formatted=formatted):
+        for bold in (False, True):
+            with self.subTest(bold=bold):
                 content = boundary_hyperlink_field()
-                if formatted:
+                if bold:
                     for run in (content[0], content[-1]):
                         properties = ET.Element(W + "rPr")
                         ET.SubElement(properties, W + "b")
@@ -2833,7 +2895,7 @@ class ConversionTests(unittest.TestCase):
                         run.insert(2, drawing)
                 result, _stats = self.convert(
                     [content],
-                    output=self.root / f"field-{formatted}.md",
+                    output=self.root / f"field-{bold}.md",
                     relations=(("image", "image", "media/image.png", "Internal"),),
                     media={"image.png": PNG},
                 )
@@ -2845,7 +2907,7 @@ class ConversionTests(unittest.TestCase):
                 self.assertEqual(
                     _validation.collect_references(parsed).links, ["https://example.test/plain"]
                 )
-                if formatted:
+                if bold:
                     strong = ["".join(node.itertext()) for node in parsed.iter("strong")]
                     self.assertTrue(any("Before" in text for text in strong))
                     self.assertTrue(any("After" in text for text in strong))
@@ -2996,7 +3058,8 @@ class ConversionTests(unittest.TestCase):
         self.assertIn(
             r"| x<sup>2</sup> | H<sub>2</sub>O, <mark>new</mark> and <u>a\|b \*c\*</u> |", result
         )
-        self.assertIn("[<u>Spec.pptx</u>](https://example.test/Spec.pptx)", result)
+        # Links show as underlined, so their text drops Word's underline.
+        self.assertIn("[Spec.pptx](https://example.test/Spec.pptx)", result)
         self.assertNotIn("<table", result)
         self.assertNotIn("<a href", result)
         self.assertNotIn("remains HTML", warnings)

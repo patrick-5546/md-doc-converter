@@ -295,6 +295,51 @@ class RunProperties:
                 return name.strip().casefold() in MONOSPACE_FONTS
         return False
 
+    def underlined(self, own: ET.Element | None, paragraph: ET.Element | None) -> bool:
+        """Whether the text is underlined, as mammoth and Pandoc read it: w:u needs a w:val."""
+        for properties in self.settings(own, paragraph):
+            underline = properties.find(WORD + "u")
+            if underline is not None:
+                return underline.get(WORD + "val", "none") not in {"none", "false", "0"}
+        return False
+
+
+def drop_redundant_underline(root: ET.Element, styles: ET.Element) -> int:
+    """Remove underline where Markdown would show it twice or as text; return how many runs.
+
+    Links are underlined anyway; heading text becomes page titles, file names, and anchors;
+    monospace text becomes code, which shows a tag as text. Elsewhere underline stays, and the
+    converters write it as <u>, since Markdown has no syntax for it.
+    """
+    properties = RunProperties(styles)
+    changed = 0
+    for paragraph in root.iter(WORD + "p"):
+        try:
+            heading = heading_level(paragraph, properties.styles) is not None
+        except ConversionError:
+            heading = False
+        linked = {
+            run
+            for link in scoped_iter(paragraph, WORD + "hyperlink")
+            for run in scoped_iter(link, WORD + "r")
+        }
+        for run in scoped_iter(paragraph, WORD + "r"):
+            own = run.find(WORD + "rPr")
+            if not (heading or run in linked or properties.monospace(own, paragraph)):
+                continue
+            if not properties.underlined(own, paragraph):
+                continue
+            if own is None:
+                own = ET.Element(WORD + "rPr")
+                run.insert(0, own)
+            underline = own.find(WORD + "u")
+            if underline is None:
+                underline = ET.SubElement(own, WORD + "u")
+            underline.attrib.clear()
+            underline.set(WORD + "val", "none")
+            changed += 1
+    return changed
+
 
 # Unicode spaces other than the space, which Markdown editors do not show and text search does
 # not match, and the zero-width space, which shows nothing.
@@ -637,6 +682,10 @@ def _field_link(
         link.set(REL + "id", relation_id)
     else:
         raise ConversionError(f"Cannot decode Word hyperlink field: {instruction!r}")
+    # The ScreenTip, like a hyperlink element's w:tooltip, which Pandoc reads as the title.
+    tip = re.search(r'\\o\s+"((?:\\.|[^"\\])*)"', instruction)
+    if tip is not None:
+        link.set(WORD + "tooltip", re.sub(r"\\(.)", r"\1", tip.group(1)))
     link.extend(children)
     return link
 

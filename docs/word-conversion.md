@@ -21,7 +21,9 @@ Hidden, which Word neither shows nor prints, is dropped too. No-break, en, and
 other Unicode spaces become plain spaces, which text search matches, and
 zero-width spaces are dropped. Two or more spaces that indent a line, which
 Markdown would drop, become no-break spaces instead, so the line keeps the
-indent Word shows.
+indent Word shows. Underlined text becomes `<u>…</u>`, since Markdown has no
+underline, except in links, which are underlined anyway, in headings, whose text
+also names pages and anchors, and in code, which would show the tag as text.
 
 The default conversion preserves step labels, status labels, generated index
 content, and every table row that shows something. A heading loses the
@@ -164,11 +166,12 @@ this order:
 | `symbols` | Writes characters set in the Symbol, Wingdings, and Webdings fonts, such as a Wingdings check mark typed as `ü`, as the Unicode symbols they show. |
 | `hidden-text` | Drops text formatted as Hidden, directly or through its character style, paragraph style, or the document defaults. |
 | `spaces` | Writes no-break, en, and other Unicode spaces as plain spaces, which Markdown editors do not show and text search does not match, and drops zero-width spaces, in text and in Word alt text. Spaces that indent a line outside a heading, two or more with at least one a Unicode space, become no-break spaces, the only spaces Markdown keeps at the start of a paragraph. |
+| `underline` | Drops Word underline, direct or through a style, from hyperlinks, headings, and monospace text; elsewhere both converters keep it as `<u>`. |
 | `literal-text` | Keeps literal `<`, `>`, `&`, `` ` ``, `\`, `#`, `[`, and `]` as text rather than HTML, code, escapes, headings, or links. |
 | `line-breaks` | Keeps Word line breaks, which MarkItDown loses, by starting a new paragraph at each. One in a heading or link text becomes a space; table cells keep theirs as `<br>`. |
 | `images` | Places each Word image at its source position, as `![alt](path)` without Word's display size. The alt text is the image's figure caption title, or else Word's alt text, or else the text of a heading directly above it. |
 | `image-conversion` | Converts EMF and WMF drawings to SVG, cropped. |
-| `links` | Restores hyperlinks, including links to Word bookmarks. A web or e-mail address typed as text becomes an autolink, `<https://…>`. |
+| `links` | Restores hyperlinks, including links to Word bookmarks. A Word ScreenTip becomes the link's title, which renderers show on hover. A web or e-mail address typed as text becomes an autolink, `<https://…>`. |
 | `bookmarks` | Maps Word bookmarks to final headings, sections, or the document top. |
 | `headings` | Restores Word heading levels 1-6; levels 7-9 stay paragraphs. A numbered paragraph that is a heading only by its outline level stays a list item, as Pandoc and MarkItDown read it. A heading with no text is omitted, and one with only a picture becomes a paragraph. Trailing `.`, `,`, `;`, `:`, and `!` are trimmed, and skipped levels are closed. |
 | `lists` | Restores list structure and numbering; lettered and Roman levels are numbered. A paragraph whose numbering was removed, such as a list item's second paragraph, stays in the list item before it. List items that show nothing in Word are omitted, keeping Word's numbers for the rest. |
@@ -293,6 +296,16 @@ Before: ü Supported      û Not supported
 After:  ✓ Supported      🗶 Not supported
 ```
 
+### `underline`
+
+```text
+Underline in a sentence, a link, and a heading
+  Before: Do <u>not</u> reset. See [<u>Spec</u>](https://example.test/spec).
+          # <u>Overview</u>
+  After:  Do <u>not</u> reset. See [Spec](https://example.test/spec).
+          # Overview
+```
+
 ### `literal-text`
 
 ```text
@@ -376,7 +389,7 @@ A mailto: link, which MarkItDown reduces to its text
 
 A hyperlink field with a ScreenTip
   Before: [Spec](https://example.test/spec%22%20%5Co%20%22Open%20the%20spec)
-  After:  [Spec](https://example.test/spec)
+  After:  [Spec](https://example.test/spec "Open the spec")
 
 A link to a Word bookmark that no longer exists, kept as text and reported
   Before: [Missing target](#_RefGone)

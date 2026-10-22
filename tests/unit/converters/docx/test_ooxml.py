@@ -13,12 +13,15 @@ from tests.support.docx import (
     W,
     boundary_hyperlink_field,
     cell,
+    code_run,
+    formatted,
     hyperlink,
     numbered,
     page_reference,
     paragraph,
     row,
     table,
+    text_box,
     toc_entry,
     word_style,
 )
@@ -873,3 +876,68 @@ class UnicodeSpaceTests(unittest.TestCase):
     def test_code_text_writes_unicode_spaces_as_spaces(self) -> None:
         code = _styled(None, _run("\u00a0\u00a0\u2002\u202fx\u00a0=\u20021;"))
         self.assertEqual(_ooxml.code_text(code), "    x = 1;")
+
+
+def _first_run(node: ET.Element) -> ET.Element:
+    return next(run for run in node.iter(W + "r") if run.find(W + "t") is not None)
+
+
+class UnderlineTests(unittest.TestCase):
+    def test_underline_is_dropped_only_where_markdown_shows_it_twice_or_as_text(self) -> None:
+        styles = ET.Element(W + "styles")
+        link_style = word_style("Hyperlink", "character")
+        ET.SubElement(ET.SubElement(link_style, W + "rPr"), W + "u", {W + "val": "single"})
+        styles.append(link_style)
+        body = paragraph("Body ")
+        emphasis = formatted(_ooxml.word_run("kept"), "u", "double")
+        body.append(emphasis)
+        styled = hyperlink("Styled")
+        styled_run = _first_run(styled)
+        properties = ET.Element(W + "rPr")
+        ET.SubElement(properties, W + "rStyle", {W + "val": "Hyperlink"})
+        styled_run.insert(0, properties)
+        direct = hyperlink("Direct")
+        direct_run = formatted(_first_run(direct), "u", "single")
+        valueless = hyperlink("Valueless")
+        valueless_run = formatted(_first_run(valueless), "u")
+        heading = paragraph("Heading", "Heading2")
+        heading_run = formatted(_first_run(heading), "u", "single")
+        boxed = text_box("In a box")
+        box_run = formatted(_first_run(boxed), "u", "single")
+        heading.append(boxed[0])
+        code = formatted(code_run("init()"), "u", "single")
+        code_paragraph = ET.Element(W + "p")
+        code_paragraph.append(code)
+        root = ET.Element(W + "document")
+        ET.SubElement(root, W + "body").extend(
+            [body, styled, direct, valueless, heading, code_paragraph]
+        )
+
+        self.assertEqual(_ooxml.drop_redundant_underline(root, styles), 4)
+        values = {
+            name: run.find(f"./{W}rPr/{W}u")
+            for name, run in {
+                "emphasis": emphasis,
+                "styled": styled_run,
+                "direct": direct_run,
+                "valueless": valueless_run,
+                "heading": heading_run,
+                "box": box_run,
+                "code": code,
+            }.items()
+        }
+        self.assertEqual(
+            {name: None if node is None else node.get(W + "val") for name, node in values.items()},
+            {
+                "emphasis": "double",
+                "styled": "none",
+                "direct": "none",
+                "valueless": None,
+                "heading": "none",
+                # A text box in a heading is a paragraph of its own.
+                "box": "single",
+                "code": "none",
+            },
+        )
+        self.assertIsNotNone(values["valueless"])
+        self.assertEqual(_ooxml.drop_redundant_underline(root, styles), 0)
