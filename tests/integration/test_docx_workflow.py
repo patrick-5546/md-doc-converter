@@ -1675,6 +1675,36 @@ def test_line_breaks_in_list_items_formatting_and_links(convert: Converter) -> N
     assert report.status("checks") == "applied"
 
 
+@pytest.mark.parametrize(
+    ("kind", "start", "expected"),
+    [
+        pytest.param("bullet", 1, "- First\n- Second\n  - Nested\n- Third\n", id="bullets"),
+        pytest.param("decimal", 1, "1. First\n2. Second\n    1. Nested\n3. Third\n", id="numbers"),
+        # A nested list numbered from other than 1 cannot follow a paragraph in a tight list.
+        pytest.param(
+            "decimal",
+            7,
+            "7. First\n\n8. Second\n\n    7. Nested\n\n9. Third\n",
+            id="nested-from-7",
+        ),
+    ],
+)
+def test_lists_of_one_paragraph_items_are_tight_where_markdown_allows(
+    convert: Converter, kind: str, start: int, expected: str
+) -> None:
+    result, _stats = convert(
+        [
+            numbered("First"),
+            numbered("Second"),
+            numbered("Nested", 1),
+            numbered("Third"),
+            paragraph("After"),
+        ],
+        extras={"word/numbering.xml": numbering_xml(kind, start)},
+    )
+    assert result == expected + "\nAfter\n"
+
+
 def test_list_markers_take_one_space_and_lines_have_no_trailing_whitespace(
     convert: Converter,
 ) -> None:
@@ -1692,7 +1722,7 @@ def test_list_markers_take_one_space_and_lines_have_no_trailing_whitespace(
     )
     assert (
         result == "[Go](#scope)\n\n# Scope\n\nText ends with spaces\n\n"
-        "7. Alpha\n\n8.\n\n9. Beta\n\nOutro\n"
+        "7. Alpha\n8.\n9. Beta\n\nOutro\n"
     )
     assert "  spaces: applied (3)" in report.summary()
     assert "  cleanup: applied (1 line(s) with trailing whitespace trimmed)" in report.summary()
@@ -3324,7 +3354,7 @@ def test_deleted_list_items_and_tables_are_not_written(convert: Converter) -> No
     )
     assert "<table" not in result
     assert "Removed" not in result
-    assert "1. one\n\n2. two" in result
+    assert "1. one\n2. two" in result
 
 
 def test_accepted_view_and_package_metadata_are_consistent(source: Path, tmp_path: Path) -> None:

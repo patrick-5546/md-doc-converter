@@ -339,6 +339,44 @@ def _restore_empty_rows(root: ET.Element, source: SourceDocument, report: Transf
         current.text = None
 
 
+def _single_paragraph(item: ET.Element) -> bool:
+    """Whether list *item* holds one paragraph, without a line break, and any nested lists."""
+    children = list(item)
+    return (
+        bool(children)
+        and children[0].tag == "p"
+        and next(children[0].iter("br"), None) is None
+        and all(child.tag in {"ol", "ul"} for child in children[1:])
+        and not (item.text or "").strip()
+        and not any((child.tail or "").strip() for child in children)
+    )
+
+
+def _tighten_lists(root: ET.Element) -> bool:
+    """Unwrap the paragraph of each item of a list whose items are all one paragraph.
+
+    Word list items are paragraphs, which Markdown writes with a blank line between items, and
+    renderers then space them as paragraphs. Without the paragraph, the list is written tight. A
+    list with an item of several paragraphs, or a line break, which starts one, stays loose.
+    Return whether any list changed.
+    """
+    changed = False
+    for container in root.iter():
+        items = [child for child in container if child.tag == "li"]
+        if container.tag not in {"ol", "ul"} or not items:
+            continue
+        if not all(_single_paragraph(item) for item in items):
+            continue
+        for item in items:
+            paragraph = item[0]
+            item.remove(paragraph)
+            item.text = paragraph.text
+            for index, node in enumerate(paragraph):
+                item.insert(index, node)
+        changed = True
+    return changed
+
+
 def _list_shape(root: ET.Element) -> list[tuple[str, str, int, int]]:
     shape: list[tuple[str, str, int, int]] = []
     for node in root.iter():
@@ -428,34 +466,49 @@ def _render_list(
     if not any(child.tag == "li" for child in cleaned):
         return markdown[:line_start] + markdown[line_end:].lstrip("\n"), omitted
     shape = _list_shape(cleaned)
-    if any(start < 0 for _tag, _kind, start, _count in shape):
+    rendered = None
+    if all(start >= 0 for _tag, _kind, start, _count in shape):
+        tight = copy.deepcopy(cleaned)
+        # A tight list cannot always say the same, such as a nested list that is numbered from
+        # other than 1 after a paragraph; the loose list can.
+        for candidate in (tight, cleaned) if _tighten_lists(tight) else (cleaned,):
+            rendered = _markdown_list(candidate, shape, pandoc)
+            if rendered is not None:
+                break
+    if rendered is None:
         rendered = _reference.html_element(cleaned)
-    else:
-        markup, reader = _reference.html_element(cleaned), "--from=html"
-        if "\\" in markup or "<br" in markup:
-            tree = json.loads(
-                _reference.run_command(
-                    [pandoc, "--from=html", "--to=json"],
-                    "Faithful Word list rendering",
-                    input_text=markup,
-                )
-            )
-            # A line break in a list item starts a new paragraph in it, as elsewhere.
-            tree = _reference.split_paragraphs_at_line_breaks(tree)
-            markup = _reference.gfm_input(tree)
-            reader = "--from=json"
-        rendered = _reference.run_command(
-            [pandoc, reader, "--to=gfm+raw_html", "--wrap=none"],
-            "Faithful Word list rendering",
-            input_text=markup,
-        )
-        rendered = _normalization.normalize_unordered_lists(rendered)[0]
-        round_trip = _reference.pandoc_html(rendered, pandoc)
-        if _list_shape(round_trip) != shape or _reference.plain_text(
-            _reference.visible_reference_text(round_trip)
-        ) != _reference.plain_text(_reference.visible_reference_text(cleaned)):
-            rendered = _reference.html_element(cleaned)
     return markdown[:line_start] + rendered.rstrip("\n") + "\n" + markdown[line_end:], omitted
+
+
+def _markdown_list(
+    cleaned: ET.Element, shape: list[tuple[str, str, int, int]], pandoc: str
+) -> str | None:
+    """The Markdown of the HTML list *cleaned*, or None when it does not read back the same."""
+    markup, reader = _reference.html_element(cleaned), "--from=html"
+    if "\\" in markup or "<br" in markup:
+        tree = json.loads(
+            _reference.run_command(
+                [pandoc, "--from=html", "--to=json"],
+                "Faithful Word list rendering",
+                input_text=markup,
+            )
+        )
+        # A line break in a list item starts a new paragraph in it, as elsewhere.
+        tree = _reference.split_paragraphs_at_line_breaks(tree)
+        markup = _reference.gfm_input(tree)
+        reader = "--from=json"
+    rendered = _reference.run_command(
+        [pandoc, reader, "--to=gfm+raw_html", "--wrap=none"],
+        "Faithful Word list rendering",
+        input_text=markup,
+    )
+    rendered = _normalization.normalize_unordered_lists(rendered)[0]
+    round_trip = _reference.pandoc_html(rendered, pandoc)
+    if _list_shape(round_trip) != shape or _reference.plain_text(
+        _reference.visible_reference_text(round_trip)
+    ) != _reference.plain_text(_reference.visible_reference_text(cleaned)):
+        return None
+    return rendered
 
 
 def _recover_lists(
