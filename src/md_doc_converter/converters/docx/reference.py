@@ -251,6 +251,69 @@ def code_span(text: str, *, table_cell: bool = False) -> str:
     return f"{delimiter}{space}{text}{space}{delimiter}"
 
 
+def code_fence(text: str, info: str = "") -> str:
+    """A fenced code block of *text* labeled *info*, with a fence no line of it could close."""
+    fence = "```"
+    while re.search(rf"^ {{0,3}}{fence}", text, re.MULTILINE):
+        fence += "`"
+    return f"{fence}{info}\n{text}\n{fence}" if text else f"{fence}{info}\n{fence}"
+
+
+# Blocks whose content Pandoc's GFM writer writes as Markdown, where a raw GFM fence fits.
+_FENCE_CONTAINERS = frozenset({"BlockQuote", "BulletList", "OrderedList", "Div"})
+
+
+def fence_code_blocks(value: JSONValue) -> JSONValue:
+    """Write labeled code blocks as raw GFM fences that keep their language label.
+
+    Since 3.10.1, Pandoc's GFM writer only writes a class that is one of its highlighting
+    languages, so it drops labels such as ``text``. An unlabeled block, which the writer
+    indents, and a block with an id or attributes, or one in a table, figure or definition
+    list, which the writer may write as HTML, stays as is.
+    """
+    if isinstance(value, dict):
+        blocks = value.get("blocks")
+        return {**value, "blocks": _fence_blocks(blocks)} if isinstance(blocks, list) else value
+    return _fence_blocks(value) if isinstance(value, list) else value
+
+
+def _fence_blocks(blocks: list[JSONValue]) -> list[JSONValue]:
+    return [_fence_block(block) for block in blocks]
+
+
+def _fence_block(block: JSONValue) -> JSONValue:
+    if not isinstance(block, dict):
+        return block
+    kind, content = block.get("t"), block.get("c")
+    if kind == "CodeBlock" and isinstance(content, list) and len(content) == 2:
+        attributes, text = content
+        if (
+            isinstance(attributes, list)
+            and len(attributes) == 3
+            and attributes[0] == ""
+            and attributes[2] == []
+            and isinstance(attributes[1], list)
+            and attributes[1]
+            and isinstance(text, str)
+        ):
+            info = attributes[1][0]
+            if isinstance(info, str) and info and not re.search(r"[\s`]", info):
+                return {"t": "RawBlock", "c": ["gfm", code_fence(text, info)]}
+        return block
+    if kind not in _FENCE_CONTAINERS or not isinstance(content, list):
+        return block
+    if kind == "BlockQuote":
+        return {**block, "c": _fence_blocks(content)}
+    if kind == "BulletList":
+        return {**block, "c": [_fence_blocks(json_list(item)) for item in content]}
+    if kind == "OrderedList" and len(content) == 2:
+        items = json_list(content[1])
+        return {**block, "c": [content[0], [_fence_blocks(json_list(item)) for item in items]]}
+    if kind == "Div" and len(content) == 2:
+        return {**block, "c": [content[0], _fence_blocks(json_list(content[1]))]}
+    return block
+
+
 def _has_line_break(value: JSONValue) -> bool:
     if isinstance(value, dict):
         return value.get("t") == "LineBreak" or any(map(_has_line_break, value.values()))

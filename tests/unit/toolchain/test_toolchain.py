@@ -122,7 +122,7 @@ class ChecksTest(TemporaryTest):
         ):
             self.assertEqual(checks.main([]), 1)
         report = output.getvalue()
-        self.assertIn("Install Pandoc 3.10 or newer", report)
+        self.assertIn("Install Pandoc 3.12 or newer", report)
         self.assertIn("Install Node.js 22.12 or newer", report)
         self.assertIn("-> Run `md-doc-converter setup`", report)
         self.assertIn("Not ready to render", report)
@@ -137,7 +137,7 @@ class ChecksTest(TemporaryTest):
         self.assertEqual(node.status, "error")
         self.assertIn("20.11.1 is older than 22.12", node.detail)
         self.assertEqual(pandoc.status, "warn")
-        self.assertIn("older than the tested 3.10", pandoc.detail)
+        self.assertIn("older than the tested 3.12", pandoc.detail)
 
     def test_render_problems_name_each_missing_part_and_html_needs_no_printer(self) -> None:
         write_fake_tools(self.bin, self.log)

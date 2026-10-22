@@ -17,9 +17,9 @@ and PDF.
 
 - Linux x86_64.
 - Python 3.10 or newer. uv installs one if needed.
-- [Pandoc](https://pandoc.org/installing.html) 3.10 or newer, for rendering
+- [Pandoc](https://pandoc.org/installing.html) 3.12 or newer, for rendering
   and for Word conversion beyond the MarkItDown baseline. md-doc-converter is
-  tested with Pandoc 3.10; other 3.x versions may format some converted
+  tested with Pandoc 3.12.1; other versions may format some converted
   Markdown slightly differently.
 - [Node.js](https://nodejs.org/) 22.12 or newer, with npm, for rendering.
 - Optional: LibreOffice (`libreoffice` or `soffice`) and Poppler

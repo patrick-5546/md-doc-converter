@@ -96,7 +96,7 @@ def resolve_relative_paths(
 
 
 # Pandoc's Markdown reader ends a pipe-table cell at one of these HTML tags and drops the
-# rest of the cell (checked with Pandoc 3.10); GFM renderers show the whole cell.
+# rest of the cell (checked with Pandoc 3.12.1); GFM renderers show the whole cell.
 _CELL_BLOCK_TAG_RE = re.compile(
     r"</?(address|article|aside|blockquote|body|canvas|caption|center|dd|details|dir|div|dl|"
     r"dt|fieldset|figcaption|figure|footer|form|h[1-6]|head|header|hgroup|hr|html|li|main|"

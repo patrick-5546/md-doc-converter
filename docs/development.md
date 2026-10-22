@@ -38,7 +38,7 @@ independently.
 ## Environment
 
 Development needs Linux x86_64, [pixi](https://pixi.sh) and Git. pixi provides
-Pandoc 3.10, Node.js 24, Poppler (`pdftocairo`) and uv from conda-forge; uv
+Pandoc 3.12.1, Node.js 24, Poppler (`pdftocairo`) and uv from conda-forge; uv
 installs Python (version from `.python-version`) and the locked dependencies in
 `uv.lock`. Inside pixi, `MD_DOC_CONVERTER_HOME` points at `.toolchain/` in the
 checkout, so the renderer toolchain stays out of your home directory.
@@ -62,7 +62,7 @@ pixi run test      # core suite
 | `build` | Build the wheel and sdist into `dist/` |
 | `lock-npm` | Refresh `package-lock.json` after editing the bundled `package.json` |
 
-Without pixi, put Pandoc 3.10 on `PATH` and use uv directly, for example
+Without pixi, put Pandoc 3.12.1 on `PATH` and use uv directly, for example
 `uv run python -m tests core`.
 
 ## Test suites
@@ -83,9 +83,10 @@ folder with images, Mermaid and math, and the PDF time limit. It needs the
 installed toolchain, `pdftocairo` and LibreOffice (`libreoffice` or `soffice`)
 on `PATH`.
 
-Some converter tests compare exact Pandoc output and expect the Pandoc 3.10 that
-pixi pins; Pandoc 3.10.2, for example, writes fenced code without its `text`
-label. Python 3.10 is the oldest supported version:
+Some converter tests compare exact Pandoc output and expect the Pandoc 3.12.1
+that pixi pins. The converter writes code fences itself, because Pandoc's GFM
+writer drops labels, such as `text`, that are not among its highlighting
+languages (since Pandoc 3.10.1). Python 3.10 is the oldest supported version:
 
 ```sh
 UV_PYTHON=3.10 UV_PROJECT_ENVIRONMENT=.venv-3.10 pixi run test

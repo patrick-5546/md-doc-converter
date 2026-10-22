@@ -442,7 +442,7 @@ def _render_list(
             )
             # A line break in a list item starts a new paragraph in it, as elsewhere.
             tree = _reference.split_paragraphs_at_line_breaks(tree)
-            markup = json.dumps(_reference.protect_backslashes(tree))
+            markup = json.dumps(_reference.protect_backslashes(_reference.fence_code_blocks(tree)))
             reader = "--from=json"
         rendered = _reference.run_command(
             [pandoc, reader, "--to=gfm+raw_html", "--wrap=none"],
@@ -787,16 +787,15 @@ def restore_literal_text(markdown: str, source: SourceDocument, pandoc: str) -> 
     return _reference.run_command(
         [pandoc, "--from=json", "--to=gfm+raw_html", "--wrap=none", "--markdown-headings=atx"],
         "Literal Word text recovery",
-        input_text=json.dumps(_reference.protect_backslashes(settled)),
+        input_text=json.dumps(
+            _reference.protect_backslashes(_reference.fence_code_blocks(settled))
+        ),
     )
 
 
 def _code_fence(text: str) -> str:
-    """A fenced block of *text*, with a fence that no line of it could close."""
-    fence = "```"
-    while re.search(rf"^ {{0,3}}{fence}", text, re.MULTILINE):
-        fence += "`"
-    return f"{fence}text\n{text}\n{fence}"
+    """A fenced ``text`` block of *text*, with a fence that no line of it could close."""
+    return _reference.code_fence(text, "text")
 
 
 def _recover_code_blocks(

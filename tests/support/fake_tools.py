@@ -14,7 +14,7 @@ from pathlib import Path
 from md_doc_converter.toolchain.environment import Toolchain, write_stamp
 
 VERSIONS = {
-    "pandoc": "pandoc 3.10.2",
+    "pandoc": "pandoc 3.12.1",
     "node": "v24.0.0",
     "npm": "11.0.0",
     "pandoc-katex": "pandoc-katex 0.1.11\nkatex 0.16.4",

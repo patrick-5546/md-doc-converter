@@ -2360,7 +2360,7 @@ class ConversionTests(unittest.TestCase):
         ]
         result, report, warnings = self.convert_reported(body)
         self.assertIn(
-            'Before.\n\n```` text\nif (state == "busy") {\n    wait();\n\n'
+            'Before.\n\n````text\nif (state == "busy") {\n    wait();\n\n'
             "} # end - done\n```\n````\n\nAfter.",
             result,
         )
@@ -2382,7 +2382,7 @@ class ConversionTests(unittest.TestCase):
             table(row(cell(paragraph_of(code_run("not code"))), cell("Next")), columns=2),
         ]
         result, report, warnings = self.convert_reported(body)
-        self.assertIn("Before.\n\n``` text\nx = <a> & `b`\n\n  y = 2\n```\n\nAfter.", result)
+        self.assertIn("Before.\n\n```text\nx = <a> & `b`\n\n  y = 2\n```\n\nAfter.", result)
         self.assertIn("| `not code` | Next |", result)
         self.assertIn(
             "  code: applied (1 code block(s), 1 inline code span(s), "

@@ -289,7 +289,7 @@ def rewrite_page_references(
             "--markdown-headings=atx",
         ],
         "Split-page reference rendering",
-        input_text=json.dumps(_reference.protect_backslashes(data)),
+        input_text=json.dumps(_reference.protect_backslashes(_reference.fence_code_blocks(data))),
     )
     result = _normalization.normalize_unordered_lists(result)[0]
     spaced, spacing = _normalization.normalize_ordered_list_spacing(result)

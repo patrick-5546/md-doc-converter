@@ -20,9 +20,9 @@ from md_doc_converter.toolchain.environment import (
     toolchain,
 )
 
-PANDOC_TESTED = (3, 10)
+PANDOC_TESTED = (3, 12)
 PANDOC_FIX = (
-    "Install Pandoc 3.10 or newer: https://pandoc.org/installing.html "
+    "Install Pandoc 3.12 or newer: https://pandoc.org/installing.html "
     "(or `pixi global install pandoc`)"
 )
 NODE_FIX = (
@@ -87,7 +87,7 @@ def check_pandoc() -> Check:
         return Check(
             "pandoc",
             "warn",
-            f"{_text(version)} is older than the tested 3.10 ({pandoc})",
+            f"{_text(version)} is older than the tested 3.12 ({pandoc})",
             PANDOC_FIX,
         )
     return Check("pandoc", "ok", f"{_text(version)} ({pandoc})")
