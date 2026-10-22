@@ -167,4 +167,4 @@ def install_fake_toolchain(root: Path, log: Path) -> Toolchain:
 def read_log(log: Path) -> list[dict[str, object]]:
     if not log.exists():
         return []
-    return [json.loads(line) for line in log.read_text().splitlines()]
+    return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]

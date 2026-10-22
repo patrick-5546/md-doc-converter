@@ -315,7 +315,7 @@ class TransformReport:
             return order[key[0]], -len(reasons[key]), key[1]
 
         for name, reason in sorted(reasons, key=rank):
-            events = reasons[(name, reason)]
+            events = reasons[name, reason]
             lines.append(f"  {name}: {reason} ({self.records[name].skipped[reason]})")
             shapes = dict.fromkeys(key for event in events for key in event.shape)
             for key in shapes:

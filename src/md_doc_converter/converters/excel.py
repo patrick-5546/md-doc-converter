@@ -33,7 +33,7 @@ def excel_to_csv(excel_path: str, output_dir: str | None = None) -> None:
         safe_name = sheet_name.replace("/", "_").replace("\\", "_")
         csv_path = out / f"{safe_name}.csv"
 
-        with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        with csv_path.open("w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             for row in ws.iter_rows(values_only=True):
                 writer.writerow(row)

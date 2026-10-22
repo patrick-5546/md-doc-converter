@@ -66,7 +66,9 @@ class RenderTest(unittest.TestCase):
             styles = Path(command[command.index("--include-in-header") + 1])
             self.styles.append(styles.read_text(encoding="utf-8"))
             self.pandoc_calls.append((command, kwargs))
-            Path(command[command.index("-o") + 1]).write_text("<html>rendered</html>")
+            Path(command[command.index("-o") + 1]).write_text(
+                "<html>rendered</html>", encoding="utf-8"
+            )
         elif command[:2] == ["node", str(render.PDF_PRINTER)]:
             self.printer_commands.append(command)
             assert Path(command[-1]).is_file()

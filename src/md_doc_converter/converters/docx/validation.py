@@ -278,10 +278,10 @@ def validate_outputs(
                 issue("a link target cannot be checked", f"Link in {page}: {error}")
                 continue
             if local is None:
-                actual_links[(_reference.encoded_uri(target), "")] += 1
+                actual_links[_reference.encoded_uri(target), ""] += 1
                 continue
             destination, fragment = local
-            actual_links[(str(destination), fragment)] += 1
+            actual_links[str(destination), fragment] += 1
             anchors: set[str]
             if destination in references:
                 anchors = set(references[destination].anchors)
@@ -369,14 +369,14 @@ def validate_outputs(
             except ConversionError:
                 continue
             if local is None:
-                expected_links[(_reference.encoded_uri(target), "")] += 1
+                expected_links[_reference.encoded_uri(target), ""] += 1
                 continue
             destination, fragment = local
             if destination == paths.output and fragment in source.bookmark_targets:
                 section = source.bookmark_targets[fragment]
                 destination = (paths.output.parent / section.page).resolve()
                 fragment = section.fragment
-            expected_links[(str(destination), fragment)] += 1
+            expected_links[str(destination), fragment] += 1
         missing = sum((expected_links - actual_links).values())
         if missing:
             issue(

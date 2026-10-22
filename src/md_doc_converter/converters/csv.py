@@ -33,7 +33,7 @@ def _title_from_stem(stem: str) -> str:
 
 def csv_to_md(csv_path: Path) -> str:
     """Return the Markdown string for a single CSV file."""
-    with open(csv_path, newline="", encoding="utf-8") as f:
+    with csv_path.open(newline="", encoding="utf-8") as f:
         reader = csv.reader(f)
         rows = list(reader)
 

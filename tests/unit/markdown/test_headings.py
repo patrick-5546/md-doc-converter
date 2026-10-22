@@ -184,7 +184,7 @@ class PreprocessHeadingIdsTest(unittest.TestCase):
             stderr = io.StringIO()
 
             with contextlib.redirect_stderr(stderr):
-                result = preprocess.collect_directory(str(docs), stats)
+                result = preprocess.collect_directory(docs, stats)
 
         assert "[bare](#same-1)" in result
         assert "[to duplicate](#same-1)" in result

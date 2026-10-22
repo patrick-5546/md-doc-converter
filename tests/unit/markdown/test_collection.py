@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import contextlib
 import io
-import os
 import re
 import shutil
 import tempfile
 import unittest
 from collections import Counter, defaultdict
+from collections.abc import Iterator
 from pathlib import Path
 from unittest import mock
 
@@ -25,22 +25,19 @@ def write_tree(root: Path, files: dict[str, str]) -> None:
 
 def collected_titles(docs: Path) -> list[str]:
     with contextlib.redirect_stderr(io.StringIO()):
-        result = preprocess.collect_directory(str(docs), defaultdict(Counter))
+        result = preprocess.collect_directory(docs, defaultdict(Counter))
     return re.findall(r"^# (.+?)\s*$", result, re.MULTILINE)
 
 
 @unittest.skipUnless(PANDOC, "pandoc not installed")
 class DirectoryOrderTest(unittest.TestCase):
     def test_order_keeps_a_title_page_with_its_directory(self) -> None:
-        listdir = os.listdir
+        iterdir = Path.iterdir
         for last in ("topic.md", "topic"):
 
-            def listed_last(path: str, entry: str = last) -> list[str]:
-                names = listdir(path)
-                if entry in names:
-                    names.remove(entry)
-                    names.append(entry)
-                return names
+            def listed_last(directory: Path, entry: str = last) -> Iterator[Path]:
+                paths = sorted(iterdir(directory), key=lambda path: path.name == entry)
+                return iter(paths)
 
             with self.subTest(listed_last=last), tempfile.TemporaryDirectory() as directory:
                 docs = Path(directory) / "docs"
@@ -55,7 +52,7 @@ class DirectoryOrderTest(unittest.TestCase):
                     },
                 )
 
-                with mock.patch.object(preprocess.os, "listdir", side_effect=listed_last):
+                with mock.patch.object(Path, "iterdir", autospec=True, side_effect=listed_last):
                     titles = collected_titles(docs)
 
                 assert titles == ["Topic", "Child", "A", "Z"]

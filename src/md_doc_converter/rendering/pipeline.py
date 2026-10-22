@@ -72,7 +72,8 @@ def pdf_timeout_seconds(value: str | None) -> int:
 
 def absolute_path(path: Path) -> Path:
     """Normalize spelling without changing a supplied symlink's document name."""
-    return Path(os.path.abspath(path.expanduser()))
+    # Unlike Path.resolve, abspath collapses ".." without following symlinks.
+    return Path(os.path.abspath(path.expanduser()))  # noqa: PTH100
 
 
 def output_path(source: Path, output_format: OutputFormat, output: Path | None = None) -> Path:
@@ -172,7 +173,7 @@ def _filter_gitignored(choice: bool | None, source: Path) -> bool:
     # Imported here so command-line help does not load the Markdown toolchain.
     from md_doc_converter.markdown.preprocess import in_git_work_tree
 
-    return in_git_work_tree(str(source))
+    return in_git_work_tree(source)
 
 
 def _prepare_markdown(source: Path, *, respect_gitignore: bool) -> str:

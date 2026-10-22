@@ -449,12 +449,12 @@ class HeadingAltTextTests(unittest.TestCase):
         pair = image(alt=None)
         pair.extend(image(alt=None).findall(W + "r"))
         assert _headed(
-            _caption("1.2", "\t", "Block", "‑", "diagram", style="Heading1"),
+            _caption("1.2", "\t", "Block", "\u2011", "diagram", style="Heading1"),
             paragraph(""),
             image(alt=None),
             paragraph("Data flow", "Heading1"),
             pair,
-        ) == [("1.2 Block‑diagram", True), ("Data flow", True), ("Data flow", True)]
+        ) == [("1.2 Block\u2011diagram", True), ("Data flow", True), ("Data flow", True)]
 
     def test_only_a_heading_directly_above_in_the_same_container_counts(self) -> None:
         beside = image(alt=None)

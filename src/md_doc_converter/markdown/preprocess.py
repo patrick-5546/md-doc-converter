@@ -30,6 +30,7 @@ that git ignores.
 """
 
 import os
+import posixpath
 import re
 import shutil
 import subprocess
@@ -73,7 +74,7 @@ def resolve_relative_paths(
     if source_path is None:
         return
 
-    source_dir = os.path.dirname(source_path)
+    source_dir = posixpath.dirname(source_path)
     if not source_dir:
         return
 
@@ -81,9 +82,10 @@ def resolve_relative_paths(
         url = urlsplit(target)
         if url.scheme or url.netloc or not url.path or url.path.startswith("/"):
             return target
-        # Encode filesystem characters without decoding reserved URL delimiters.
+        # Link targets are URL paths. Encode filesystem characters without decoding
+        # reserved URL delimiters.
         directory = quote(source_dir, safe="/")
-        resolved = os.path.normpath(os.path.join(directory, url.path))
+        resolved = posixpath.normpath(posixpath.join(directory, url.path))
         result = urlunsplit(("", "", resolved, url.query, url.fragment))
         if result != target:
             stats["paths resolved"] += 1
@@ -264,7 +266,7 @@ def warn_broken_images(
     Runs before :func:`resolve_relative_paths`, so local paths are still
     relative to *source_path*'s directory.
     """
-    source_dir = os.path.dirname(source_path) if source_path else ""
+    source_dir = Path(source_path).parent if source_path else Path()
     warned_files: set[str] = set()
     warned_placeholders: set[str] = set()
 
@@ -275,8 +277,8 @@ def warn_broken_images(
         if url.scheme or url.netloc or not url.path:
             return
         path = unquote(url.path)
-        resolved = os.path.normpath(os.path.join(source_dir, path))
-        if resolved not in warned_files and not os.path.isfile(resolved):
+        resolved = os.path.normpath(source_dir / path)
+        if resolved not in warned_files and not Path(resolved).is_file():
             warned_files.add(resolved)
             print(
                 f"WARNING: missing image '{path}' referenced in {source_path}",
@@ -424,7 +426,7 @@ def warn_crossfile_md_links(
     if source_path is None:
         return
 
-    source_dir = os.path.dirname(source_path)
+    source_dir = Path(source_path).parent
     warned: set[str] = set()
 
     def _check(target: str, image: bool) -> str:
@@ -434,8 +436,7 @@ def warn_crossfile_md_links(
         if target in warned:
             return target
         warned.add(target)
-        resolved = os.path.normpath(os.path.join(source_dir, unquote(url.path)))
-        if os.path.isfile(resolved):
+        if (source_dir / unquote(url.path)).is_file():
             print(
                 f"WARNING: cross-file link to '{target}' will not resolve in "
                 "single-file output; build the containing directory instead",
@@ -549,13 +550,13 @@ def print_stats(stats: dict[str, Counter[str]]) -> None:
             print(line, file=sys.stderr)
 
 
-def in_git_work_tree(directory: str) -> bool:
+def in_git_work_tree(directory: Path) -> bool:
     """Return True if git is available and *directory* is inside a work tree."""
     if shutil.which("git") is None:
         return False
     try:
         proc = subprocess.run(
-            ["git", "-C", directory, "rev-parse", "--is-inside-work-tree"],
+            ["git", "-C", str(directory), "rev-parse", "--is-inside-work-tree"],
             capture_output=True,
             text=True,
             check=False,
@@ -565,7 +566,7 @@ def in_git_work_tree(directory: str) -> bool:
     return proc.returncode == 0 and proc.stdout.strip() == "true"
 
 
-def _git_ignored(names: list[str], directory: str) -> set[str]:
+def _git_ignored(names: list[str], directory: Path) -> set[str]:
     """Return the subset of *names* (entries of *directory*) that git ignores.
 
     Runs ``git check-ignore`` from *directory*.  It honours .gitignore,
@@ -593,7 +594,7 @@ def _git_ignored(names: list[str], directory: str) -> set[str]:
 
 
 def collect_directory(
-    dir_path: str, stats: dict[str, Counter[str]], respect_gitignore: bool = False
+    root: Path, stats: dict[str, Counter[str]], respect_gitignore: bool = False
 ) -> str:
     """Collect all .md files in a directory tree into one document.
 
@@ -608,9 +609,9 @@ def collect_directory(
     internal heading anchors when the target file is part of the
     collection.
     """
-    if respect_gitignore and not in_git_work_tree(dir_path):
+    if respect_gitignore and not in_git_work_tree(root):
         print(
-            f"WARNING: --respect-gitignore had no effect: '{dir_path}' is not "
+            f"WARNING: --respect-gitignore had no effect: '{root}' is not "
             "inside a git working tree (or git is unavailable)",
             file=sys.stderr,
         )
@@ -623,30 +624,29 @@ def collect_directory(
     file_slug_map: dict[str, str] = {}
     file_anchor_map: dict[str, dict[str, str]] = {}
 
-    def _is_ignored(file_path: str) -> bool:
+    def _is_ignored(file_path: Path) -> bool:
         if not respect_gitignore:
             return False
-        directory, name = os.path.split(file_path)
-        return name in _git_ignored([name], directory or ".")
+        return file_path.name in _git_ignored([file_path.name], file_path.parent)
 
-    def _ordered_entries(directory: str) -> list[str]:
+    def _ordered_entries(directory: Path) -> list[str]:
         """Return directory entries ordered by .order file if present."""
-        order_file = os.path.join(directory, ".order")
-        entries = os.listdir(directory)
+        order_file = directory / ".order"
+        entries = [entry.name for entry in directory.iterdir()]
 
         if respect_gitignore:
             ignored = _git_ignored(entries, directory)
             entries = [e for e in entries if e not in ignored]
 
-        if os.path.isfile(order_file):
-            with open(order_file, encoding="utf-8") as f:
-                order = [line.strip() for line in f if line.strip()]
+        if order_file.is_file():
+            lines = order_file.read_text(encoding="utf-8").splitlines()
+            order = [line.strip() for line in lines if line.strip()]
             # Build lookup: stem -> actual entry name. A directory owns its stem
             # so a same-stem title page (topic.md beside topic/) stays with it.
             stem_map: dict[str, str] = {}
             for e in entries:
                 stem = e.removesuffix(".md") if e.lower().endswith(".md") else e
-                if stem not in stem_map or os.path.isdir(os.path.join(directory, e)):
+                if stem not in stem_map or (directory / e).is_dir():
                     stem_map[stem] = e
             ordered = []
             seen = set()
@@ -662,17 +662,16 @@ def collect_directory(
 
         return sorted(entries)
 
-    def _read_md(file_path: str) -> _CollectedMarkdown:
+    def _read_md(file_path: Path) -> _CollectedMarkdown:
         """Read a markdown file, run all transforms, and record its heading anchors."""
         print(f"  {file_path}", file=sys.stderr)
-        with open(file_path, encoding="utf-8") as fh:
-            content = fh.read()
-        document = _prepare_document(content, source_path=file_path, stats=stats)
+        content = file_path.read_text(encoding="utf-8")
+        document = _prepare_document(content, source_path=str(file_path), stats=stats)
         normalized = os.path.normpath(file_path)
         return _CollectedMarkdown(normalized, document.render(), document.headings, document)
 
     def _collect(
-        directory: str, title_content: _CollectedMarkdown | None = None
+        directory: Path, title_content: _CollectedMarkdown | None = None
     ) -> list[_CollectedMarkdown]:
         """Recursively collect markdown content from *directory*.
 
@@ -680,22 +679,22 @@ def collect_directory(
         Otherwise, a directory without a ``.order`` file uses its first
         file as the title page; a ``.order`` file keeps its listed order.
         """
-        explicit_order = os.path.isfile(os.path.join(directory, ".order"))
+        explicit_order = (directory / ".order").is_file()
         parts: list[_CollectedMarkdown] = []
 
         for entry in _ordered_entries(directory):
             if entry.startswith("."):
                 continue
-            full_path = os.path.join(directory, entry)
-            if os.path.isdir(full_path):
-                sibling_md = full_path + ".md"
+            full_path = directory / entry
+            if full_path.is_dir():
+                sibling_md = directory / f"{entry}.md"
                 sub_title: _CollectedMarkdown | None = None
-                if os.path.isfile(sibling_md) and not _is_ignored(sibling_md):
+                if sibling_md.is_file() and not _is_ignored(sibling_md):
                     sub_title = _read_md(sibling_md)
                 parts.extend(_collect(full_path, sub_title))
-            elif os.path.isfile(full_path) and entry.lower().endswith(".md"):
+            elif full_path.is_file() and entry.lower().endswith(".md"):
                 stem = entry.removesuffix(".md") if entry.lower().endswith(".md") else entry
-                if os.path.isdir(os.path.join(directory, stem)):
+                if (directory / stem).is_dir():
                     continue
                 if title_content is None and not (explicit_order and parts):
                     title_content = _read_md(full_path)
@@ -709,14 +708,14 @@ def collect_directory(
         return all_parts
 
     # Top-level: check for sibling .md to use as title page
-    sibling_md = dir_path.rstrip("/") + ".md"
+    sibling_md = root.parent / f"{root.name}.md"
     title_content: _CollectedMarkdown | None = None
-    if os.path.isfile(sibling_md) and not _is_ignored(sibling_md):
+    if root.name and sibling_md.is_file() and not _is_ignored(sibling_md):
         title_content = _read_md(sibling_md)
 
-    collected = _collect(dir_path, title_content)
+    collected = _collect(root, title_content)
     result = "\n\n".join(item.content for item in collected if item.content)
-    combined = _pandoc_headings(result, dir_path)
+    combined = _pandoc_headings(result, str(root))
     expected = sum(len(item.headings) for item in collected)
     if len(combined) != expected:
         raise RuntimeError(
@@ -848,7 +847,7 @@ def prepare_markdown(source: Path, *, respect_gitignore: bool = False) -> str:
     stats: dict[str, Counter[str]] = defaultdict(Counter)
     if source.is_dir():
         # Each file is preprocessed during collection.
-        result = collect_directory(str(source), stats, respect_gitignore=respect_gitignore)
+        result = collect_directory(source, stats, respect_gitignore=respect_gitignore)
     else:
         text = source.read_text(encoding="utf-8")
         result = preprocess(text, source_path=str(source), stats=stats, single_file=True)

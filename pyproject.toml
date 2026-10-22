@@ -71,7 +71,24 @@ line-length = 100
 src = ["src", "tests"]
 
 [tool.ruff.lint]
-extend-select = ["B", "E501", "I", "SIM", "UP", "ANN", "PYI", "PT"]
+extend-select = [
+    "ANN",
+    "B",
+    "C4",
+    "E501",
+    "I",
+    "PGH",
+    "PIE",
+    "PLW1514",
+    "PT",
+    "PTH",
+    "PYI",
+    "RUF",
+    "SIM",
+    "UP",
+]
+# Stylistic preference for `ruff: ignore` over `noqa`, which other tools understand.
+ignore = ["RUF105"]
 preview = true
 
 [tool.ty.rules]

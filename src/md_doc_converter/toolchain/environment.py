@@ -33,7 +33,8 @@ def default_home(environment: Mapping[str, str] | None = None) -> Path:
     environment = os.environ if environment is None else environment
     configured = environment.get(HOME_VARIABLE, "").strip()
     if configured:
-        return Path(os.path.abspath(Path(configured).expanduser()))
+        # Unlike Path.resolve, abspath keeps the configured spelling of symlinked folders.
+        return Path(os.path.abspath(Path(configured).expanduser()))  # noqa: PTH100
     data_home = environment.get("XDG_DATA_HOME", "").strip()
     base = Path(data_home) if data_home and Path(data_home).is_absolute() else None
     return (base or Path.home() / ".local" / "share") / "md-doc-converter"

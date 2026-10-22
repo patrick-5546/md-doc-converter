@@ -553,7 +553,7 @@ class SymbolFontTests(unittest.TestCase):
         # Every character of a symbol-font run is a symbol, including the space.
         assert _ooxml.map_symbol_fonts(content) == (6, 1)
 
-        assert _ooxml.word_text(content) == "✓✓α→ plain üü✓ÿ"
+        assert _ooxml.word_text(content) == "✓✓\u03b1→ plain üü✓ÿ"
         fonts = [node.attrib for node in content.iter(W + "rFonts")]
         assert fonts[:3] == [{}, {}, {}]
         assert fonts[3] == {W + "ascii": "Calibri", W + "hAnsi": "Calibri"}
@@ -799,7 +799,7 @@ class CodeTextTests(unittest.TestCase):
         ET.SubElement(run, W + "t").text = "x\u2013\u2014y\u2026"
         ET.SubElement(run, W + "noBreakHyphen")
         text = _ooxml.code_text(_styled(None, run))
-        assert text == "if (a == “b”) {\n    x–—y…-"
+        assert text == "if (a == “b”) {\n    x\u2013\u2014y…-"
         assert _ooxml.straighten_code(text) == ('if (a == "b") {\n    x---y...-', 5)
 
 

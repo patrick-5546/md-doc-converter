@@ -35,7 +35,7 @@ class PackageLayoutTest(unittest.TestCase):
         files = {
             name
             for name in result.stdout.splitlines()
-            if Path(name).parent == Path(".") and not name.startswith(".")
+            if Path(name).parent == Path() and not name.startswith(".")
         }
         assert files == {"Makefile", "README.md", "pyproject.toml", "uv.lock"}
 

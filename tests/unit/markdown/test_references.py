@@ -112,7 +112,7 @@ class ReferenceLinksTest(unittest.TestCase):
             stats: dict[str, Counter[str]] = defaultdict(Counter)
             stderr = io.StringIO()
             with contextlib.redirect_stderr(stderr):
-                result = preprocess.collect_directory(str(docs), stats)
+                result = preprocess.collect_directory(docs, stats)
             output = rendered(result)
             assert len(output.links) == 8
             assert all(link[0] == "#same-1" for link in output.links)
@@ -187,7 +187,7 @@ class ReferenceLinksTest(unittest.TestCase):
                     f"# {name}\n\n![pic][]\n\n[pic]: pic.png\n", encoding="utf-8"
                 )
             with contextlib.redirect_stderr(io.StringIO()):
-                result = preprocess.collect_directory(str(docs), defaultdict(Counter))
+                result = preprocess.collect_directory(docs, defaultdict(Counter))
             assert [unquote(path) for path, _title in rendered(result).images] == expected
 
     def test_escaped_reference_labels_and_literal_brackets(self) -> None:
@@ -217,7 +217,7 @@ class ReferenceLinksTest(unittest.TestCase):
                     encoding="utf-8",
                 )
             with contextlib.redirect_stderr(io.StringIO()):
-                result = preprocess.collect_directory(str(root), defaultdict(Counter))
+                result = preprocess.collect_directory(root, defaultdict(Counter))
             assert rendered(result).links == [("#a", "", "local"), ("#b", "", "local")]
 
     def test_normalization_preserves_parsed_content_including_entity_like_urls(self) -> None:
@@ -285,7 +285,7 @@ A footnote[^note].
                 )
             stderr = io.StringIO()
             with contextlib.redirect_stderr(stderr):
-                result = preprocess.collect_directory(str(root), defaultdict(Counter))
+                result = preprocess.collect_directory(root, defaultdict(Counter))
             text = "".join(rendered(result).text)
             for name in ("First", "Second"):
                 assert text.count(f"{name} unique footnote.") == 1
@@ -330,7 +330,7 @@ A footnote[^note].
             (docs / "b.md").write_text("# B\n", encoding="utf-8")
             stderr = io.StringIO()
             with contextlib.redirect_stderr(stderr):
-                result = preprocess.collect_directory(str(docs), defaultdict(Counter))
+                result = preprocess.collect_directory(docs, defaultdict(Counter))
             output = rendered(result)
             assert output.links == [
                 (str(docs / "b.md") + "#absent", "Missing", "missing"),
