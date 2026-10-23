@@ -119,6 +119,9 @@ executables, which `tests/support/fake_tool.py` implements, installs a fake
 toolchain and reads the calls they recorded); and its module's own. Independent
 cases are `pytest.mark.parametrize` cases with readable ids.
 
+Every Markdown page that the Word conversion tests publish is also checked with
+rumdl, against the rules in `tests/support/converted.rumdl.toml`.
+
 `make coverage` measures the core suite's line and branch coverage, including
 the command-line processes that tests start, and lists the lines it misses. No
 minimum is enforced; use it to find untested code.

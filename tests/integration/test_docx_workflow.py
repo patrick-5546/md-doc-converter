@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 import copy
+import inspect
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import sysconfig
 import tempfile
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import NoReturn
+from typing import NoReturn, ParamSpec
 from unittest import mock
 from xml.etree import ElementTree as ET
 
@@ -63,6 +66,56 @@ from tests.support.docx import (
 COMMAND = [sys.executable, "-m", "md_doc_converter", "docx-to-md"]
 # Word document relationships: (identifier, type, target, target mode).
 Relations = tuple[tuple[str, str, str, str], ...]
+
+
+# The markdownlint rules, as rumdl checks them, that converted Markdown must follow.
+CONVERTED_MARKDOWN_RULES = Path(__file__).parents[1] / "support" / "converted.rumdl.toml"
+
+
+Options = ParamSpec("Options")
+
+
+def linted(convert: Callable[Options, dict[str, int]]) -> Callable[Options, dict[str, int]]:
+    """*convert*, then a check of the pages it published against markdownlint's rules."""
+    signature = inspect.signature(convert)
+    rumdl = Path(sysconfig.get_path("scripts")) / "rumdl"
+
+    def checked(*args: Options.args, **kwargs: Options.kwargs) -> dict[str, int]:
+        stats = convert(*args, **kwargs)
+        call = signature.bind(*args, **kwargs)
+        call.apply_defaults()
+        options = call.arguments
+        if not options["dry_run"]:
+            published = _publication.requested_output(options["input_path"], options["output_path"])
+            folder = published.with_suffix("")
+            pages = sorted(folder.rglob("*.md")) if options["split_depth"] else []
+            result = subprocess.run(
+                [
+                    rumdl,
+                    "check",
+                    "--config",
+                    CONVERTED_MARKDOWN_RULES,
+                    "--no-cache",
+                    "--output-format",
+                    "concise",
+                    published,
+                    *pages,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            assert result.returncode == 0, result.stdout + result.stderr
+        return stats
+
+    return checked
+
+
+@pytest.fixture(autouse=True)
+def lint_converted_markdown(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Check every page that a conversion in these tests publishes, including combinations
+    that no expected output covers."""
+    monkeypatch.setattr(_pipeline, "convert_docx", linted(_pipeline.convert_docx))
 
 
 @dataclass(frozen=True)
