@@ -197,7 +197,11 @@ def short_rules(blocks: list[JSONValue]) -> None:
 
 
 def merge_code(blocks: list[JSONValue]) -> None:
-    """Join adjacent code spans, which Markdown would read as one with backticks inside."""
+    """Join adjacent code spans, which Markdown would read as one with backticks inside.
+
+    Pandoc's Markdown writers write them back to back
+    (https://github.com/jgm/pandoc/issues/11993).
+    """
     for value in _tree.lists(blocks):
         if _tree.kind(value) != "inline":
             continue
@@ -313,8 +317,9 @@ _RULE_OR_UNDERLINE = re.compile(r"(?:-+|=+)[ \t]*$")
 def escape_rules_and_underlines(blocks: list[JSONValue]) -> None:
     """Keep as text a paragraph's last line of dashes, or of equals signs after a line break.
 
-    Pandoc's GFM writer (3.12.1) writes them as they are, so "---" alone would be a horizontal
-    rule, and after a Word line break it, or "===", would make the paragraph a heading. Tables
+    Pandoc's GFM writer (3.12.1) writes them as they are
+    (https://github.com/jgm/pandoc/issues/11992), so "---" alone would be a horizontal rule,
+    and after a Word line break it, or "===", would make the paragraph a heading. Tables
     write their own lines.
     """
     for element in _tree.walk(blocks, skip=frozenset({"Table"})):

@@ -47,8 +47,8 @@ def complete_table_grids(root: ET.Element) -> int:
     """Give each table a grid that Pandoc reads whole; return how many grids changed.
 
     Pandoc leaves out a grid column without a width in whole twips, and drops the cells of a
-    row beyond the table's grid; Word tolerates both. Widths only size the columns, which the
-    Markdown does not keep.
+    row beyond the table's grid (https://github.com/jgm/pandoc/issues/11989); Word tolerates
+    both. Widths only size the columns, which the Markdown does not keep.
     """
     changed = 0
     for table in root.iter(WORD + "tbl"):

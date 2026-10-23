@@ -162,7 +162,7 @@ def word_xml_bytes(root: ET.Element, original: bytes | None = None) -> bytes:
 
     Pandoc's DOCX reader requires conventional prefixes, and reads the notes, such as a
     hyperlink's r:id in a footnote, with the prefixes that the document part declares,
-    whether the part uses them or not.
+    whether the part uses them or not (https://github.com/jgm/pandoc/issues/11991).
     """
     # Registering a prefix replaces any namespace that had it, so the document's own come last.
     namespaces = dict(_CONVENTIONAL_PREFIXES)
@@ -344,7 +344,7 @@ class RunProperties:
         return False
 
     def underlined(self, own: ET.Element | None, paragraph: ET.Element | None) -> bool:
-        """Whether the text is underlined, as mammoth and Pandoc read it: w:u needs a w:val."""
+        """Whether the text is underlined, in any style; as for Pandoc, w:u needs a w:val."""
         for properties in self.settings(own, paragraph):
             underline = properties.find(WORD + "u")
             if underline is not None:
@@ -355,8 +355,9 @@ class RunProperties:
 def single_underlines(*roots: ET.Element) -> int:
     """Write every underline as a single underline; return how many were another kind.
 
-    Pandoc (3.12.1) reads only a single underline as underline; a double, thick, dotted or
-    wavy one shows the same in Markdown, which has one kind.
+    Pandoc (3.12.1) reads only a single underline as underline
+    (https://github.com/jgm/pandoc/issues/11988); a double, thick, dotted or wavy one shows
+    the same in Markdown, which has one kind.
     """
     changed = 0
     for root in roots:
@@ -681,8 +682,8 @@ def _accept_changes(parent: ET.Element) -> None:
             fallback = child.find(MC + "Fallback")
             for choice in choices:
                 _accept_changes(choice)
-            # One image outside text boxes marks a picture both converters read; otherwise
-            # the fallback is usually VML, whose text-box text MarkItDown still keeps.
+            # One image outside text boxes marks a picture that Pandoc reads; otherwise the
+            # fallback is usually VML, whose text-box text Pandoc keeps.
             selected = next(
                 (
                     choice
@@ -969,8 +970,8 @@ def _checked(box: ET.Element) -> bool:
 def form_check_boxes(root: ET.Element) -> int:
     """Write each check box form field as the box that Word shows, checked or not.
 
-    Such a field, FORMCHECKBOX, has no result for Pandoc to keep: Word draws the box. Return
-    how many there were.
+    Such a field, FORMCHECKBOX, has no result for Pandoc to keep: Word draws the box
+    (https://github.com/jgm/pandoc/issues/11990). Return how many there were.
     """
     count = 0
     for parent in list(root.iter()):
@@ -1033,9 +1034,9 @@ def _field_character(kind: str) -> ET.Element:
 def expand_simple_fields(root: ET.Element) -> int:
     """Rewrite each simple field as the equivalent complex field; return how many.
 
-    MarkItDown and Pandoc drop a w:fldSimple together with its cached result, such as a
-    caption number; both keep the cached result of a complex field. For mammoth, which
-    MarkItDown uses, see https://github.com/mwilliamson/python-mammoth/issues/69.
+    Pandoc 3.12.1 drops a w:fldSimple together with its cached result, such as a caption
+    number, but keeps the cached result of a complex field
+    (https://github.com/jgm/pandoc/issues/11944, fixed after 3.12.1).
     """
     simple = [
         (parent, field) for parent in root.iter() for field in parent.findall(WORD + "fldSimple")
@@ -1149,8 +1150,7 @@ def repair_fields(root: ET.Element) -> Counter[str]:
             ):
                 unwrap(current, node)
         elif kind in {"separate", "end"}:
-            # Word and Pandoc ignore these; mammoth, which MarkItDown uses, failed on them with
-            # an IndexError before 1.12.2 (https://github.com/mwilliamson/python-mammoth/issues/168).
+            # Word and Pandoc ignore these.
             marks.append(node)
             counts["stray field mark(s) removed"] += 1
     for current in stack:

@@ -298,15 +298,15 @@ def warn_broken_images(
 ) -> None:
     """Warn about broken image references (a read-only check; text is unchanged).
 
-    Covers both image failure modes surfaced by the Word -> markdown pipeline,
-    reporting each once on stderr so they surface without failing the build:
+    Covers two image failure modes, reporting each once on stderr so they surface
+    without failing the build:
 
     * **Missing local files** -- inline/reference images and ``<img src="path">``
       targets whose decoded file path cannot be found. Remote URLs, ``data:``
       URIs and fragment-only targets are ignored.
     * **Empty placeholder data URIs** -- ``![alt](data:image/...)`` whose base64
-      payload is empty or truncated (e.g. ``data:image/x-emf;base64...`` left by
-      markitdown), which render blank.
+      payload is empty or truncated (e.g. ``data:image/x-emf;base64...``, which
+      MarkItDown writes in place of an image), which render blank.
 
     Runs before :func:`resolve_relative_paths`, so local paths are still
     relative to *source_path*'s directory.

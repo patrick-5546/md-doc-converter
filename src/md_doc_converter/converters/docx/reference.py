@@ -238,7 +238,8 @@ def fence_code_blocks(value: JSONValue) -> JSONValue:
     """Write labeled code blocks as raw GFM fences that keep their language label.
 
     Since 3.10.1, Pandoc's GFM writer only writes a class that is one of its highlighting
-    languages, so it drops labels such as ``text``. An unlabeled block, which the writer
+    languages, so it drops labels such as ``text``
+    (https://github.com/jgm/pandoc/issues/11987). An unlabeled block, which the writer
     indents, and a block with an id or attributes, or one in a table, figure or definition
     list, which the writer may write as HTML, stays as is.
     """

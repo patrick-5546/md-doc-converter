@@ -274,8 +274,8 @@ def document(blocks: list[JSONValue], api: JSONValue) -> dict[str, JSONValue]:
 def _escape_destinations(root: JSONValue) -> None:
     r"""Escape, in place, what Pandoc's GFM writer (3.12.1) writes as is in link and image
     destinations: an ampersand, which could start a character reference such as &copy;, and
-    in a title, \, " and &. A title's surrounding spaces go: Markdown reads no link whose
-    title starts with one."""
+    in a title, \, " and & (https://github.com/jgm/pandoc/issues/11994). A title's
+    surrounding spaces go: Markdown reads no link whose title starts with one."""
     for found in walk(root):
         if found["t"] in {"Link", "Image"}:
             target = items(items(found["c"])[2])
