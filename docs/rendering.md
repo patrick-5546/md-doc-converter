@@ -150,8 +150,10 @@ the diagram's position, such as `Mermaid diagram 2 of 3 (flowchart LR)`.
 ## Math
 
 TeX math between `$` signs, or between `$$` for display math, is rendered with
-[KaTeX](https://katex.org/). Math that KaTeX cannot parse is shown as its TeX
-source in red, with KaTeX's message as its tooltip, rather than stopping the
+[KaTeX](https://katex.org/). GitHub's forms work too: `` $`...`$ `` for inline
+math, a code block whose language is `math` for display math, and `\\{` and
+`\\}` for braces in inline math. Math that KaTeX cannot parse is shown as its
+TeX source in red, with KaTeX's message as its tooltip, rather than stopping the
 render. Only a document with math embeds KaTeX's stylesheet and its WOFF2
 fonts, about 340 KB.
 

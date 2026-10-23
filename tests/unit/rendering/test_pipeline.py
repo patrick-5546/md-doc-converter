@@ -6,6 +6,7 @@ pandoc and the PDF printer, and with `tools`, a toolchain with only the npm pack
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import stat
@@ -622,15 +623,21 @@ def test_katex_stylesheet_without_woff2_fonts_is_rejected(tmp_path: Path) -> Non
         render.katex_stylesheet(tools)
 
 
-def test_an_escaped_pipe_in_table_code_renders_as_gfm_shows_it(pandoc: str) -> None:
+def pandoc_defaults() -> tuple[str, str]:
+    """The renderer's Pandoc defaults file, and the Markdown reader it names."""
     defaults = asset_path("pandoc-defaults.yaml").read_text(encoding="utf-8")
     reader = re.search(r"^from: (\S+)$", defaults, re.MULTILINE)
     assert reader is not None
+    return defaults, reader.group(1)
+
+
+def test_an_escaped_pipe_in_table_code_renders_as_gfm_shows_it(pandoc: str) -> None:
+    defaults, reader = pandoc_defaults()
     assert "table-code-pipes.lua" in defaults
     result = subprocess.run(
         [
             pandoc,
-            f"--from={reader.group(1)}",
+            f"--from={reader}",
             "--to=html",
             f"--lua-filter={asset_path('table-code-pipes.lua')}",
         ],
@@ -641,6 +648,54 @@ def test_an_escaped_pipe_in_table_code_renders_as_gfm_shows_it(pandoc: str) -> N
     )
     assert "<code>a|b</code>" in result.stdout
     assert "<code>c\\|d</code>" in result.stdout
+
+
+def elements(node: object, tag: str) -> list[object]:
+    """The contents of each *tag* element in Pandoc JSON *node*, in document order."""
+    if isinstance(node, list):
+        return [found for item in node for found in elements(item, tag)]
+    if not isinstance(node, dict):
+        return []
+    found: list[object] = [node["c"]] if node.get("t") == tag else []
+    return found + [item for value in node.values() for item in elements(value, tag)]
+
+
+GITHUB_MATH = (
+    "Inline $`a^2`$, $``c`d``$, $`` e ``$, $`f``$, $`ab$, $b$, `$g$`, $\\\\{h\\\\}$ "
+    "and $`\\\\{i\\\\}`$.\n\n"
+    "```math\n\\sum_{i=1}^n i\n```\n\n"
+    "~~~ math\nx\n~~~\n\n"
+    "- ```math\n  y\n  ```\n\n"
+    "$$`z`$$\n\n"
+    "```{.math #eq}\nkept\n```\n\n"
+    "```{.math .numbered}\nkept\n```\n\n"
+    "```{.math label=sum}\nkept\n```\n"
+)
+
+
+def test_githubs_math_syntax_reads_as_pandocs_gfm_reader_reads_it(pandoc: str) -> None:
+    defaults, reader = pandoc_defaults()
+    assert defaults.index("gfm-math.lua") < defaults.index("katex.js")
+
+    def read(*options: str) -> object:
+        result = subprocess.run(
+            [pandoc, *options, "--to=json"],
+            input=GITHUB_MATH,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return json.loads(result.stdout)
+
+    ours = read(f"--from={reader}", f"--lua-filter={asset_path('gfm-math.lua')}")
+    github = read("--from=gfm")
+    assert elements(ours, "Math") == elements(github, "Math")
+    # A math block with other attributes is not GitHub's, and stays code.
+    assert elements(ours, "CodeBlock") == [
+        [["eq", ["math"], []], "kept"],
+        [["", ["math", "numbered"], []], "kept"],
+        [["", ["math"], [["label", "sum"]]], "kept"],
+    ]
 
 
 def test_pandoc_does_not_repeat_the_warnings_for_images_left_as_references() -> None:

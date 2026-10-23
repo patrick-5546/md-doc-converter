@@ -204,6 +204,18 @@ def test_reference_folder_renders_linked_html_and_pdf_with_images(tmp_path: Path
     assert sorted(path.name for path in docs.glob("*.md")) == ["a.md", "b page.md"]
 
 
+def test_githubs_math_syntax_is_drawn_with_katex(tmp_path: Path) -> None:
+    (tmp_path / "page.md").write_text(
+        "Inline $`a^2`$.\n\n```math\n\\sum_{i=1}^n i\n```\n", encoding="utf-8"
+    )
+    command(tmp_path, *CLI, "md-to-html", "page.md")
+    html = (tmp_path / "page.html").read_text(encoding="utf-8")
+    # KaTeX keeps each formula's TeX in its MathML.
+    tex = re.findall(r'<annotation encoding="application/x-tex">(.*?)</annotation>', html)
+    assert tex == ["a^2", "\\sum_{i=1}^n i"]
+    assert html.count('class="katex-display"') == 1
+
+
 def test_a_document_from_elsewhere_cannot_read_local_files_into_its_output(
     tmp_path: Path,
 ) -> None:

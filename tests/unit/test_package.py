@@ -27,6 +27,7 @@ SHARED_LAYERS = (
 FEATURES = ("md_doc_converter.converters", "md_doc_converter.rendering")
 ASSETS = (
     "pandoc-defaults.yaml",
+    "gfm-math.lua",
     "mermaid-config.json",
     "mermaid.lua",
     "katex.js",
