@@ -43,8 +43,11 @@ requires = ["uv_build>=0.13.4,<0.14.0"]
 build-backend = "uv_build"
 
 [tool.uv]
-# setup supports Linux x86_64 only, so the lock resolves for it alone.
-environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
+# md-doc-converter runs on Linux x86_64 and Windows x86_64, so the lock resolves for them alone.
+environments = [
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sys_platform == 'win32' and platform_machine == 'AMD64'",
+]
 # Lock only releases at least a week old, as Dependabot's cooldown waits for: most compromised
 # releases are found and pulled within days. Mirrors that hold new releases for a week then have
 # every locked release.

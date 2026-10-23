@@ -1,0 +1,2 @@
+# Every text file has LF line endings, on Windows too, as .editorconfig asks.
+* text=auto eol=lf
