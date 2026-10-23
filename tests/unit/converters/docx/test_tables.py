@@ -85,6 +85,21 @@ def test_merged_html_stays_html() -> None:
     )
 
 
+def test_html_cells_of_one_paragraph_lose_its_tags() -> None:
+    rendered = _tables.render_source_table(
+        html_table(
+            '<table><thead><tr><th colspan="2"><p>Merged</p></th></tr></thead><tbody>'
+            "<tr><td><p>one <strong>bold</strong></p></td><td><p>first</p><p>second</p></td></tr>"
+            "<tr><td><p></p></td><td><p>a</p><ul><li>b</li><li>c</li></ul></td></tr>"
+            "</tbody></table>"
+        )
+    )
+    assert not rendered.markdown
+    assert '<th colspan="2">Merged</th>' in rendered.text
+    assert "<td>one <strong>bold</strong></td><td><p>first</p><p>second</p></td>" in rendered.text
+    assert "<td></td><td><p>a</p><ul><li>b</li><li>c</li></ul></td>" in rendered.text
+
+
 def test_nested_tables_and_caption_are_not_flattened() -> None:
     source = (
         '<table id="table-anchor"><caption>Caption</caption>'

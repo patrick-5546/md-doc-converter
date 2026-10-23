@@ -619,7 +619,24 @@ def render_source_table(table: ET.Element) -> TableRendering:
     markdown, reason = _pipe_table(cleaned)
     if markdown is not None:
         return TableRendering(markdown, True, omitted=omitted)
+    _unwrap_single_paragraphs(cleaned)
     return TableRendering(_reference.html_element(cleaned) + "\n", False, reason, omitted)
+
+
+def _unwrap_single_paragraphs(table: ET.Element) -> None:
+    """Write each cell that holds one paragraph without its <p>, as a Markdown table's cells
+    are; the paragraphs of a cell with more blocks stay."""
+    cells = [node for node in table.iter() if node.tag in {"td", "th"} and len(node) == 1]
+    for cell in cells:
+        paragraph = cell[0]
+        if (
+            paragraph.tag == "p"
+            and not paragraph.attrib
+            and not (cell.text or "").strip()
+            and not (paragraph.tail or "").strip()
+        ):
+            cell.text, paragraph.tail = None, None
+            _unwrap_html_child(cell, paragraph)
 
 
 _TABLE_ID = "docx-to-md-table-"
