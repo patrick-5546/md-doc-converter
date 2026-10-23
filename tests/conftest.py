@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Generator
+from collections.abc import Generator, Iterator
 from pathlib import Path
 
 import pytest
 from hypothesis import settings
 
-from tests.support import suites
+from tests.support import suites, web_server
 from tests.support.fake_tools import FakeTools
 
 # Properties that run Pandoc take tens of milliseconds an example, so they have no deadline
@@ -55,3 +55,17 @@ def pandoc() -> str:
 def fake_tools(tmp_path: Path) -> FakeTools:
     """Fake pandoc, node, npm, mmdc and Puppeteer, written on request with `write`."""
     return FakeTools(tmp_path / "fake-bin", tmp_path / "tools.jsonl")
+
+
+@pytest.fixture
+def no_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Send requests straight to their hosts, whatever proxy the environment sets."""
+    monkeypatch.setenv("no_proxy", "*")
+
+
+@pytest.fixture
+def web(no_proxy: None) -> Iterator[web_server.WebServer]:
+    """A local web server; tests set the files that it serves."""
+    del no_proxy
+    with web_server.serve() as server:
+        yield server

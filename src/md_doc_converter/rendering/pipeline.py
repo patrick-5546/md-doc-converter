@@ -11,13 +11,13 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import urllib.request
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 from urllib.parse import unquote, urlsplit
 
+from md_doc_converter.download import DownloadError, download
 from md_doc_converter.media_types import FONT_TYPES, IMAGE_TYPES
 from md_doc_converter.rendering.header import page_css
 from md_doc_converter.resources import asset_path
@@ -76,6 +76,7 @@ class RenderOptions:
     respect_gitignore: bool | None = None
     pdf_timeout: str | None = None
     keep_intermediates: Path | None = None
+    download_images: bool = False
 
 
 def pdf_timeout_seconds(value: str | None) -> int:
@@ -167,18 +168,11 @@ def embed_stylesheet_files(css: str, folder: Path) -> str:
         target = next((group for group in match.groups() if group is not None), "")
         url = urlsplit(target)
         scheme = url.scheme.casefold()
-        if scheme in {"http", "https"}:
-            reader = f"{target} could not be downloaded"
-        elif scheme in {"", "file"} and url.path and not url.netloc:
-            reader = f"{target} could not be read"
-        else:
+        local = scheme in {"", "file"} and bool(url.path) and not url.netloc
+        if not local and scheme not in {"http", "https"}:
             return match[0]
         try:
-            if scheme in {"http", "https"}:
-                with urllib.request.urlopen(target, timeout=60) as response:
-                    data = response.read()
-                    kind = response.headers.get_content_type()
-            else:
+            if local:
                 path = folder / unquote(url.path)
                 data = path.read_bytes()
                 suffix = path.suffix.casefold()
@@ -188,11 +182,17 @@ def embed_stylesheet_files(css: str, folder: Path) -> str:
                     or mimetypes.guess_type(path.name)[0]
                     or "application/octet-stream"
                 )
+            else:
+                data, kind = download(target)
+        except DownloadError as error:
+            problem = str(error)
         except (OSError, ValueError) as error:
-            print(f"WARNING: extra stylesheet: {reader}: {error}", file=sys.stderr)
-            return match[0]
-        fragment = f"#{url.fragment}" if url.fragment else ""
-        return f'url("data:{kind};base64,{base64.b64encode(data).decode("ascii")}{fragment}")'
+            problem = f"it could not be read ({error})"
+        else:
+            fragment = f"#{url.fragment}" if url.fragment else ""
+            return f'url("data:{kind};base64,{base64.b64encode(data).decode("ascii")}{fragment}")'
+        print(f"WARNING: extra stylesheet: {target} is not embedded: {problem}", file=sys.stderr)
+        return match[0]
 
     return _CSS_URL.sub(embed, css)
 
@@ -277,14 +277,18 @@ def _filter_gitignored(choice: bool | None, source: Path) -> bool:
     return in_git_work_tree(source)
 
 
-def _prepare_markdown(source: Path, *, respect_gitignore: bool) -> PreparedMarkdown:
+def _prepare_markdown(
+    source: Path, *, respect_gitignore: bool, download_images: bool = False
+) -> PreparedMarkdown:
     # Imported here so command-line help does not load the Markdown toolchain.
     from md_doc_converter.markdown.document import MarkdownError
     from md_doc_converter.markdown.headings import HeadingError
     from md_doc_converter.markdown.preprocess import prepare_markdown
 
     try:
-        return prepare_markdown(source, respect_gitignore=respect_gitignore)
+        return prepare_markdown(
+            source, respect_gitignore=respect_gitignore, download_images=download_images
+        )
     except (MarkdownError, HeadingError, ValueError) as error:
         raise RenderError(f"cannot prepare {source}: {error}") from error
 
@@ -369,7 +373,11 @@ def render_markdown(
             name = destination.stem
             prepared = work / "markdown" / f"{name}.md"
             prepared.parent.mkdir()
-            markdown = _prepare_markdown(source, respect_gitignore=filter_gitignored)
+            markdown = _prepare_markdown(
+                source,
+                respect_gitignore=filter_gitignored,
+                download_images=options.download_images,
+            )
             prepared.write_text(markdown.text, encoding="utf-8")
 
             styles_file = work / "page-styles.html"
@@ -484,6 +492,14 @@ def main(argv: list[str] | None = None, *, action: Literal["html", "pdf"]) -> in
         metavar="DIR",
         help="Keep the private intermediates in a new or empty directory, even on failure",
     )
+    parser.add_argument(
+        "--download-images",
+        action="store_true",
+        help=(
+            "Download and embed the images that the Markdown shows by http(s) URL; use it only "
+            "for documents you trust, since they can make rendering request any URL"
+        ),
+    )
     if output_format is OutputFormat.PDF:
         parser.add_argument(
             "--pdf-timeout",
@@ -506,6 +522,7 @@ def main(argv: list[str] | None = None, *, action: Literal["html", "pdf"]) -> in
         respect_gitignore=arguments.respect_gitignore,
         pdf_timeout=os.environ.get(PDF_TIMEOUT_VARIABLE) if pdf_timeout is None else pdf_timeout,
         keep_intermediates=arguments.keep_intermediates,
+        download_images=arguments.download_images,
     )
     try:
         destination = render_markdown(arguments.input, output_format, arguments.output, options)

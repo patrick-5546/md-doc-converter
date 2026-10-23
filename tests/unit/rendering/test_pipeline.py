@@ -6,14 +6,12 @@ pandoc and the PDF printer, and with `tools`, a toolchain with only the npm pack
 
 from __future__ import annotations
 
-import email.message
 import os
 import re
 import stat
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Self
 from unittest import mock
 from urllib.parse import unquote, urlsplit
 
@@ -26,6 +24,7 @@ from md_doc_converter.rendering import pipeline as render
 from md_doc_converter.resources import asset_path
 from md_doc_converter.toolchain.environment import Toolchain
 from tests.support.fake_tools import write_packages
+from tests.support.web_server import WebServer
 
 FORMAT = render.OutputFormat
 Options = render.RenderOptions
@@ -41,15 +40,17 @@ class FakeRenderer:
 
     git_work_tree: bool = False
     pandoc_fails: bool = False
-    prepare_calls: list[tuple[Path, bool]] = field(default_factory=list)
+    prepare_calls: list[tuple[Path, bool, bool]] = field(default_factory=list)
     prepared: list[Path] = field(default_factory=list)
     styles: list[str] = field(default_factory=list)
     katex_stylesheets: list[str] = field(default_factory=list)
     pandoc_calls: list[tuple[list[str], dict[str, object]]] = field(default_factory=list)
     printer_commands: list[list[str]] = field(default_factory=list)
 
-    def prepare(self, source: Path, *, respect_gitignore: bool) -> preprocess.PreparedMarkdown:
-        self.prepare_calls.append((source, respect_gitignore))
+    def prepare(
+        self, source: Path, *, respect_gitignore: bool, download_images: bool
+    ) -> preprocess.PreparedMarkdown:
+        self.prepare_calls.append((source, respect_gitignore, download_images))
         return preprocess.PreparedMarkdown("# Prepared Markdown\n")
 
     def run(self, command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -359,38 +360,18 @@ def test_extra_stylesheet_is_inlined_last_and_protected(
 
 
 def test_files_that_the_extra_stylesheet_names_are_embedded(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, web: WebServer, capsys: pytest.CaptureFixture[str]
 ) -> None:
     (tmp_path / "fonts").mkdir()
     (tmp_path / "fonts" / "brand.woff2").write_bytes(b"font")
     logo = tmp_path / "logo.png"
     logo.write_bytes(b"logo")
-
-    class Response:
-        headers = email.message.Message()
-        headers["Content-Type"] = "image/svg+xml"
-
-        def __enter__(self) -> Self:
-            return self
-
-        def __exit__(self, *_details: object) -> None:
-            return None
-
-        def read(self) -> bytes:
-            return b"<svg/>"
-
-    downloads: list[str] = []
-
-    def urlopen(url: str, timeout: float) -> Response:
-        downloads.append(url)
-        assert timeout > 0
-        return Response()
-
-    monkeypatch.setattr(render.urllib.request, "urlopen", urlopen)
+    web.files["/mark.svg"] = (b"<svg/>", "image/svg+xml")
     css = (
         "@font-face { src: url(fonts/brand.woff2) format('woff2'); }\n"
-        f'.logo {{ background: url("{logo}"), url(https://example.test/mark.svg#top); }}\n'
-        ".mask { mask: url(#shape), url(data:image/png;base64,AA==), url(missing.png); }\n"
+        f'.logo {{ background: url("{logo}"), url({web.url}/mark.svg#top); }}\n'
+        ".mask { mask: url(#shape), url(data:image/png;base64,AA==), url(missing.png), "
+        f"url({web.url}/gone.svg); }}\n"
     )
 
     embedded = render.embed_stylesheet_files(css, tmp_path)
@@ -399,10 +380,20 @@ def test_files_that_the_extra_stylesheet_names_are_embedded(
         "@font-face { src: url(\"data:font/woff2;base64,Zm9udA==\") format('woff2'); }\n"
         '.logo { background: url("data:image/png;base64,bG9nbw=="), '
         'url("data:image/svg+xml;base64,PHN2Zy8+#top"); }\n'
-        ".mask { mask: url(#shape), url(data:image/png;base64,AA==), url(missing.png); }\n"
+        ".mask { mask: url(#shape), url(data:image/png;base64,AA==), url(missing.png), "
+        f"url({web.url}/gone.svg); }}\n"
     )
-    assert downloads == ["https://example.test/mark.svg#top"]
-    assert "WARNING: extra stylesheet: missing.png could not be read" in capsys.readouterr().err
+    assert [path for path, _ in web.requests] == ["/mark.svg", "/gone.svg"]
+    errors = capsys.readouterr().err.splitlines()
+    assert errors[0].startswith(
+        "WARNING: extra stylesheet: missing.png is not embedded: it could not be read ([Errno 2]"
+    )
+    assert errors[1:] == [
+        (
+            f"WARNING: extra stylesheet: {web.url}/gone.svg is not embedded: "
+            "the server answered 404 Not Found"
+        )
+    ]
 
 
 def test_conversion_failure_leaves_previous_deliverable_and_cleans_scratch(
@@ -560,7 +551,19 @@ def test_gitignore_filtering_defaults_to_folders_in_git_work_trees(
     render.render_markdown(
         selected, FORMAT.HTML, options=Options(respect_gitignore=choice), tools=tools
     )
-    assert fake.prepare_calls[-1] == (selected, expected)
+    assert fake.prepare_calls[-1] == (selected, expected, False)
+
+
+def test_images_are_downloaded_only_with_the_flag(
+    fake: FakeRenderer, source: Path, tools: Toolchain, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def installed() -> Toolchain:
+        return tools
+
+    monkeypatch.setattr(render, "toolchain", installed)
+    assert render.main([str(source)], action="html") == 0
+    assert render.main([str(source), "--download-images"], action="pdf") == 0
+    assert [call[2] for call in fake.prepare_calls] == [False, True]
 
 
 @pytest.mark.parametrize(
@@ -571,7 +574,7 @@ def test_gitignore_filtering_defaults_to_folders_in_git_work_trees(
 def test_preprocessing_errors_become_render_errors(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: Exception
 ) -> None:
-    def fail(source: Path, *, respect_gitignore: bool) -> str:
+    def fail(source: Path, *, respect_gitignore: bool, download_images: bool) -> str:
         raise error
 
     monkeypatch.setattr(preprocess, "prepare_markdown", fail)

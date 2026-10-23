@@ -197,11 +197,12 @@ md-doc-converter setup --downloads ~/downloads
 Only `setup` downloads software: Pandoc from GitHub, npm packages from your npm
 registry, and chrome-headless-shell through Puppeteer from Google's Chrome for
 Testing downloads. Conversion and rendering run locally and do not upload
-documents. Rendering downloads nothing that a document names, nor reads a file
-it names outside its Git repository or folder, so a document from elsewhere
-cannot copy your files into its HTML or PDF; it downloads only the files that
-your own `--extra-css` stylesheet names by URL. Rendered HTML embeds its images,
-stylesheets and fonts, so opening it, or printing it to PDF, needs no network.
+documents. Rendering reads no file that a document names outside its Git
+repository or folder, so a document from elsewhere cannot copy your files into
+its HTML or PDF. It downloads only the files that your own `--extra-css`
+stylesheet names by URL and, with `--download-images`, the images that a
+document shows by URL. Rendered HTML embeds its images, stylesheets and fonts,
+so opening it, or printing it to PDF, needs no network.
 
 ## Troubleshooting
 

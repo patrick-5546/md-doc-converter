@@ -52,14 +52,20 @@ rendered them.
 Rendering is safe for documents from elsewhere. It embeds only image files
 inside the input's Git repository or, outside Git, inside the folder that holds
 the input: the file's folder, or the parent of a folder, where the folder's
-title page and its Word images are. It reads no other file and downloads
-nothing that a document names, so a document cannot copy your files, such as
-SSH keys, into its HTML or PDF, nor tell its author when and where it was
-rendered. Any other image, including one referenced by URL, stays a reference,
-with a warning: the HTML loads it when it is opened, and the PDF is printed
-without it. Rendered HTML runs no script: its
+title page and its Word images are. It reads no other file and, without
+`--download-images`, downloads nothing that a document names, so a document
+cannot copy your files, such as SSH keys, into its HTML or PDF, nor tell its
+author when and where it was rendered. Any other image, including one
+referenced by URL, stays a reference, with a warning: the HTML loads it when it
+is opened, and the PDF is printed without it. Rendered HTML runs no script: its
 content security policy allows none. The PDF is printed with JavaScript off,
 and the browser loads nothing but the HTML.
+
+`--download-images` downloads and embeds the images that a document shows by
+http(s) URL, so that the PDF shows them too. One that cannot be downloaded, or
+is not an image, stays a reference, with a warning that says why. Use it only
+for documents you trust: it lets a document make rendering request any URL,
+including addresses inside your network.
 
 ## Pipeline
 

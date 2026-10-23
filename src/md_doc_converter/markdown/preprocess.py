@@ -41,8 +41,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
-from urllib.parse import quote, unquote, urlsplit, urlunsplit
+from urllib.parse import quote, unquote, urldefrag, urlsplit, urlunsplit
 
+from md_doc_converter.download import DownloadError, download
 from md_doc_converter.markdown.document import READER as _RENDERER_READER
 from md_doc_converter.markdown.document import MarkdownDocument
 from md_doc_converter.markdown.syntax import (
@@ -856,14 +857,16 @@ class ImageEmbedder:
 
     Rendering runs Pandoc in its sandbox, which reads no file and fetches no URL that a document
     names, so a document from elsewhere cannot copy files from outside *root*, such as ~/.ssh,
-    into the HTML or PDF, nor tell its author where it was rendered. Any other image stays a
-    reference, reported once: the HTML loads it when it is opened, and the PDF is printed
-    without it.
+    into the HTML or PDF, nor tell its author where it was rendered. With *download*, images
+    shown by http(s) URL are downloaded and embedded too. Any other image stays a reference,
+    reported once: the HTML loads it when it is opened, and the PDF is printed without it.
     """
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, *, download: bool = False) -> None:
         self.root = root.resolve()
+        self.download = download
         self.unembedded: set[str] = set()
+        self._downloads: dict[str, str] = {}  # Data URIs, by URL without its fragment.
 
     def __call__(self, document: MarkdownDocument) -> None:
         document.transform_targets(self._embed)
@@ -881,7 +884,11 @@ class ImageEmbedder:
         if not image or scheme == "data" or not (url.path or url.netloc):
             return target
         if url.netloc or scheme not in {"", "file"}:
-            return self._left(target, "rendering downloads nothing")
+            if scheme not in {"http", "https"}:
+                return self._left(target, "it is neither a local file nor an http(s) URL")
+            if not self.download:
+                return self._left(target, "rendering downloads images only with --download-images")
+            return self._download(target)
         try:
             path = Path(unquote(url.path)).resolve(strict=True)
         except (OSError, RuntimeError):
@@ -897,16 +904,37 @@ class ImageEmbedder:
         fragment = f"#{url.fragment}" if url.fragment else ""
         return f"data:{kind};base64,{data}{fragment}"
 
+    def _download(self, target: str) -> str:
+        """Download the image at http(s) URL *target* as a data URI, once per URL."""
+        if target in self.unembedded:
+            return target
+        address, fragment = urldefrag(target)
+        if address not in self._downloads:
+            try:
+                data, kind = download(address)
+            except DownloadError as error:
+                return self._left(target, str(error))
+            if not kind.startswith("image/"):
+                return self._left(target, f"the server sent {kind}, not an image")
+            self._downloads[address] = (
+                f"data:{kind};base64,{base64.b64encode(data).decode('ascii')}"
+            )
+        uri = self._downloads[address]
+        return f"{uri}#{fragment}" if fragment else uri
 
-def prepare_markdown(source: Path, *, respect_gitignore: bool = False) -> PreparedMarkdown:
+
+def prepare_markdown(
+    source: Path, *, respect_gitignore: bool = False, download_images: bool = False
+) -> PreparedMarkdown:
     """Prepare a Markdown file, or every Markdown file in a folder, for Pandoc.
 
     Report what changed on stderr. *respect_gitignore* skips what Git ignores in a folder.
-    The images in image_root(source) are embedded; see ImageEmbedder.
+    The images in image_root(source) are embedded, and with *download_images*, those shown by
+    http(s) URL; see ImageEmbedder.
     """
     # Per-transform change counts, shared across every file processed.
     stats: dict[str, Counter[str]] = defaultdict(Counter)
-    embed = ImageEmbedder(image_root(source))
+    embed = ImageEmbedder(image_root(source), download=download_images)
     if source.is_dir():
         # Each file is preprocessed during collection.
         result = collect_directory(source, stats, respect_gitignore=respect_gitignore, embed=embed)
