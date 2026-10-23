@@ -6,9 +6,9 @@ and PDF.
 - **Word to Markdown:** starts from a [MarkItDown](https://github.com/microsoft/markitdown)
   conversion and restores what it loses from the Word source, such as images
   with their captions, tables, lists, links, bookmarks and heading levels.
-  Optionally splits the document into wiki pages.
-- **Excel to CSV and CSV to Markdown:** one CSV per worksheet, one Markdown
-  table page per CSV, with cell contents kept literal.
+  Optionally splits the document into pages.
+- **Excel and CSV to Markdown:** a table page per worksheet or CSV file, with
+  cell contents kept literal.
 - **Markdown to HTML and PDF:** one file or a whole folder, with Mermaid
   diagrams, KaTeX math, GitHub-style tables and code, heading bookmarks, page
   numbers and optional header and footer text. The HTML is self-contained.
@@ -47,10 +47,9 @@ md-doc-converter doctor
 ```
 
 `setup` installs Pandoc and, for rendering, the pinned Mermaid, KaTeX and
-Puppeteer npm packages with the headless browser they share: about 270 MB of
-downloads and 0.8 GB on disk. For Word conversion only, `setup --no-render`
-installs just Pandoc, a 35 MB download, and needs no Node.js. See
-[Toolchain](#toolchain).
+Puppeteer npm packages with the headless browser they share. For Word
+conversion only, `setup --no-render` installs just Pandoc and needs no Node.js.
+See [Toolchain](#toolchain).
 
 ## Quick start
 
@@ -118,14 +117,14 @@ spaces.
 
 After conversion, check empty rows and columns and the file names. It is usually
 easiest to correct problems in the workbook and convert again. Regenerate the
-Markdown whenever the workbook or a CSV changes; wikis render the Markdown
-table, not the workbook.
+Markdown whenever the workbook or a CSV changes, since readers see the
+Markdown, not the workbook.
 
 ## Word documents
 
 ```sh
 md-doc-converter docx-to-md docs/spec.docx
-md-doc-converter docx-to-md docs/spec.docx --split-depth 1   # one wiki page per section
+md-doc-converter docx-to-md docs/spec.docx --split-depth 1   # one page per section
 md-doc-converter docx-to-md docs/spec.docx --dry-run --explain
 ```
 
@@ -167,14 +166,12 @@ Command-line options override these environment variables.
 `$XDG_DATA_HOME/md-doc-converter` or `~/.local/share/md-doc-converter`:
 
 - `bin/pandoc`: Pandoc 3.12.1, the version md-doc-converter is tested with,
-  from its GitHub release, verified against a pinned SHA-256 checksum (a 35 MB
-  download, 158 MB on disk);
+  from its GitHub release, verified against a pinned SHA-256 checksum;
 - `node/`: the npm packages from the lockfile bundled with md-doc-converter,
-  installed with `npm ci --ignore-scripts --omit=optional`, since none needs
-  its install scripts or optional packages (about 110 MB of downloads, 400 MB on disk);
+  installed without their install scripts or optional packages, which none
+  needs;
 - `puppeteer/`: chrome-headless-shell, the build of headless Chrome that the
-  locked Puppeteer pins, which Mermaid and the PDF printer share (a 126 MB
-  download, 273 MB on disk).
+  locked Puppeteer pins, which Mermaid and the PDF printer share.
 
 `setup --no-render` installs only Pandoc.
 
@@ -202,13 +199,13 @@ md-doc-converter setup --downloads ~/downloads
 
 Only `setup` downloads software: Pandoc from GitHub, npm packages from your npm
 registry, and chrome-headless-shell through Puppeteer from Google's Chrome for
-Testing downloads. Conversion and rendering run locally and do not upload
-documents. Rendering reads no file that a document names outside its Git
-repository or folder, so a document from elsewhere cannot copy your files into
-its HTML or PDF. It downloads only the files that your own `--extra-css`
-stylesheet names by URL and, with `--download-images`, the images that a
-document shows by URL. Rendered HTML embeds its images, stylesheets and fonts,
-so opening it, or printing it to PDF, needs no network.
+Testing downloads. Conversion and rendering run locally and upload nothing.
+Rendering downloads only the files that your `--extra-css` stylesheet names by
+URL and, with `--download-images`, the images that a document shows by URL. It
+is safe for documents from elsewhere; see
+[Images and documents from elsewhere](docs/rendering.md#images-and-documents-from-elsewhere).
+Rendered HTML embeds its images, stylesheets and fonts, so opening it, or
+printing it to PDF, needs no network.
 
 ## Troubleshooting
 

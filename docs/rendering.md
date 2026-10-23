@@ -49,17 +49,53 @@ opens anywhere without a network, and printing it to PDF needs none either.
 Links to other local files point to their absolute paths on the machine that
 rendered them.
 
-Rendering is safe for documents from elsewhere. It embeds only image files
-inside the input's Git repository or, outside Git, inside the folder that holds
-the input: the file's folder, or the parent of a folder, where the folder's
-title page and its Word images are. It reads no other file and, without
-`--download-images`, downloads nothing that a document names, so a document
-cannot copy your files, such as SSH keys, into its HTML or PDF, nor tell its
-author when and where it was rendered. Any other image, including one
-referenced by URL, stays a reference, with a warning: the HTML loads it when it
-is opened, and the PDF is printed without it. Rendered HTML runs no script: its
-content security policy allows none. The PDF is printed with JavaScript off,
-and the browser loads nothing but the HTML.
+## Folder input
+
+A folder is collected recursively into one document. A folder laid out as an
+Azure DevOps Wiki keeps the wiki's order: a `.order` file lists a folder's
+entries one per line, as Markdown file names without `.md` or as subfolder
+names, and unlisted entries follow, sorted by name. A `topic.md` beside a
+`topic/` folder is the title page for that folder's pages and is placed with
+them. Without `.order`, entries are sorted by name, except that the first
+Markdown file leads when the folder has no title page. Entries whose names
+begin with `.` are skipped.
+
+When the folder is inside a Git work tree, Git-ignored files are skipped.
+`--no-respect-gitignore` includes them; `--respect-gitignore` requests
+filtering explicitly and warns when it has no effect.
+
+## How Markdown is read
+
+Rendering reads Markdown with Pandoc, and prepares it so that Pandoc reads it
+as GitHub shows it:
+
+- Heading IDs are GitHub's, the same that Word conversion writes. In a folder,
+  links between files lead to the right heading of the combined document, even
+  among repeated headings; a link to a heading that does not exist is reported.
+- Each file's link references and footnotes are its own, so a label used in two
+  files keeps each file's definition.
+- A code block's language is the first word of its info string, so
+  `` ```python title="x.py" `` opens a Python code block.
+- GitHub's math syntax works; see [Math](#math).
+- In a table cell, an escaped pipe in code, `` `a\|b` ``, is a pipe. A
+  block-level HTML tag such as `<ul>` in a cell is reported with its line,
+  because Pandoc drops the rest of the cell; write the cell's lines with
+  `<br>`, or make the table HTML.
+- Azure DevOps Wiki's `[[_TOC_]]` and `[[_TOSP_]]` macro lines are dropped.
+
+Unlike GitHub, bit-field notation that would define a link reference, such as
+`[1:0]: Mode` at the start of a line, renders as text.
+
+## Images and documents from elsewhere
+
+Rendering embeds the image files that a document shows from inside its Git
+repository or, outside Git, from the folder that holds the input: the file's
+folder, or a folder input's parent, where its title page and Word images are.
+It reads no other file and, without `--download-images`, downloads nothing that
+a document names, so a document from elsewhere cannot copy your files, such as
+SSH keys, into its HTML or PDF, nor tell its author when and where it was
+rendered. Any other image stays a reference, with a warning: the HTML loads it
+when it is opened, and the PDF is printed without it.
 
 `--download-images` downloads and embeds the images that a document shows by
 http(s) URL, so that the PDF shows them too. One that cannot be downloaded, or
@@ -67,64 +103,8 @@ is not an image, stays a reference, with a warning that says why. Use it only
 for documents you trust: it lets a document make rendering request any URL,
 including addresses inside your network.
 
-## Pipeline
-
-1. Preprocess the source Markdown into a private temporary file, embedding
-   its images.
-2. Convert it to self-contained HTML with Pandoc, in its sandbox, with Mermaid
-   diagrams and KaTeX math, embedding the GitHub Markdown stylesheet, then the
-   shared styles, the page header and footer and any extra stylesheet.
-3. For `md-to-pdf`, print the HTML with headless Chrome, which lays out the
-   pages from the stylesheet's page rules, to a tagged PDF with heading
-   bookmarks and clickable links, limited by [`--pdf-timeout`](#pdf-time-limit).
-4. Publish the requested file and remove the private files.
-
-## Folder input
-
-A folder is collected recursively into one document. As in Azure DevOps Wikis,
-a `.order` file lists a folder's entries one per line, as Markdown filenames
-without `.md` or as subfolder names; unlisted entries follow, sorted by name.
-A `topic.md` beside a `topic/` folder is the title page for that folder's pages
-and is placed with them. Without `.order`, entries are sorted by name, except
-that the first Markdown file leads when the folder has no title page. Entries
-whose names begin with `.` are skipped. Azure DevOps Wiki macro lines,
-`[[_TOC_]]` and `[[_TOSP_]]`, are removed from the prepared Markdown; source
-files keep them.
-
-When the folder is inside a Git work tree, Git-ignored files are skipped.
-`--no-respect-gitignore` includes them; `--respect-gitignore` requests
-filtering explicitly and warns when it has no effect.
-
-## Links, headings and references
-
-Single-file and folder rendering share GFM-compatible heading IDs with Word
-conversion. Folder collection remaps file and section links to the final
-combined document IDs, including duplicate headings. Unresolved old-style
-fragments produce diagnostics rather than guessed destinations.
-
-Inline, full-reference, collapsed-reference, and shortcut links and images use
-the same source-relative path and heading handling. Each file's references and
-footnotes are resolved independently before collection, so repeated labels
-cannot take their definitions from another file. Link titles and encoded asset
-paths are preserved; literal code is not treated as navigation. Bit-field
-notation that would otherwise define a link reference, such as `[1:0]: Mode` at
-the start of a line, a list item, or an HTML table cell, renders as text.
-
-Private preprocessing may normalize equivalent Markdown syntax, but it never
-reformats source files. Column widths, which Pandoc derives from a pipe table
-line longer than 72 characters, are dropped, so a table keeps its alignment
-however long its lines are. Cross-file Markdown links with query parameters
-remain unchanged and produce a warning rather than discarding the query.
-
-A block-level HTML tag, such as `<ul>`, `<p>`, or `<div>`, in a Markdown table
-cell produces a warning with its line: Pandoc's Markdown reader ends the cell at
-that tag and drops the rest, although GFM renderers show it. Write such a cell's
-lines with `<br>`, or make the table HTML. An escaped pipe in a table cell's code
-span, `` `a\|b` ``, renders as the pipe GFM shows, not with the backslash
-Pandoc's Markdown reader keeps. As on GitHub, a code block's language is the
-first word of its info string, and the rest is ignored: `` ```python title="x.py" ``
-opens a Python code block, which Pandoc's Markdown reader alone reads as inline
-code.
+Rendered HTML runs no script: its content security policy allows none. The PDF
+is printed with JavaScript off, and the browser loads nothing but the HTML.
 
 ## Mermaid diagrams
 
@@ -157,8 +137,7 @@ TeX math between `$` signs, or between `$$` for display math, is rendered with
 math, a code block whose language is `math` for display math, and `\\{` and
 `\\}` for braces in inline math. Math that KaTeX cannot parse is shown as its
 TeX source in red, with KaTeX's message as its tooltip, rather than stopping the
-render. Only a document with math embeds KaTeX's stylesheet and its WOFF2
-fonts, about 340 KB.
+render.
 
 ## Page header and footer
 

@@ -7,6 +7,7 @@ src/md_doc_converter/
   __main__.py               # command-line entry point with lazy command dispatch
   resources.py, pandoc.py   # packaged file paths, version, typed Pandoc parsing
   media_types.py            # media types of the images and fonts that rendering embeds
+  download.py               # downloads of images and stylesheet files, with limits
   markdown/                 # preprocessing, headings, code regions, literal cells
   converters/
     excel.py, csv.py
@@ -26,10 +27,21 @@ tests/
 The DOCX package separates typed models, OOXML/source preparation, reference
 HTML, tables, recovery, normalization, media, navigation, validation,
 publication, and diagnostics. `pipeline.py` coordinates those stages and
-`cli.py` handles arguments. Shared Markdown/Pandoc modules do not import
-converters, rendering or the toolchain, and the toolchain does not import
-converters, rendering or the Markdown layer; `tests/unit/test_package.py`
-enforces these layers and an acyclic import graph.
+`cli.py` handles arguments. The converter writes code fences itself, because
+Pandoc's GFM writer drops labels, such as `text`, that are not among its
+highlighting languages (since Pandoc 3.10.1).
+
+Rendering prepares the Markdown in `markdown/preprocess.py`: it collects a
+folder, adjusts what Pandoc's Markdown reader would read differently from
+GitHub, and embeds images. `rendering/pipeline.py` then runs Pandoc in its
+sandbox with `assets/pandoc-defaults.yaml`, whose filters read GitHub's math,
+draw Mermaid diagrams and KaTeX math, and adjust tables, and for a PDF, prints
+the HTML in headless Chrome with `rendering/print-pdf.mjs`.
+
+Shared Markdown/Pandoc modules do not import converters, rendering or the
+toolchain, and the toolchain does not import converters, rendering or the
+Markdown layer; `tests/unit/test_package.py` enforces these layers and an
+acyclic import graph.
 
 Parsed Markdown retains its input text and reader. DOCX heading discovery and
 page-link rewriting reuse an unchanged page parse; rewriting copies the AST and
@@ -104,10 +116,8 @@ tagging and fonts, and the PDF time limit. It needs the installed toolchain,
 Node.js, LibreOffice (`libreoffice` or `soffice`) and Poppler's `pdftocairo`,
 `pdfinfo`, `pdftotext`, `pdftohtml` and `pdffonts` on `PATH`.
 
-The converter writes code fences itself, because Pandoc's GFM writer drops
-labels, such as `text`, that are not among its highlighting languages (since
-Pandoc 3.10.1). `.python-version` selects the newest supported Python, 3.14;
-to test the oldest, 3.11:
+`.python-version` selects the newest supported Python, 3.14; to test the
+oldest, 3.11:
 
 ```sh
 UV_PYTHON=3.11 UV_PROJECT_ENVIRONMENT=.venv-3.11 make test
