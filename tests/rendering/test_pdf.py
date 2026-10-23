@@ -68,6 +68,16 @@ def pdf(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return source.with_suffix(".pdf")
 
 
+@pytest.fixture(scope="module")
+def pdf_without_math(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The document without math, for which katex.js links no stylesheet."""
+    directory = tmp_path_factory.mktemp("pdf-without-math")
+    source = directory / "spec.md"
+    source.write_text(DOCUMENT.replace(", with math: $E = mc^2$", ""), encoding="utf-8")
+    run(*CLI, "md-to-pdf", source, cwd=directory)
+    return source.with_suffix(".pdf")
+
+
 def pages(pdf: Path) -> int:
     match = re.search(r"^Pages:\s+(\d+)$", run("pdfinfo", pdf), re.MULTILINE)
     assert match is not None
@@ -100,7 +110,12 @@ def test_headings_become_nested_bookmarks(pdf: Path) -> None:
     assert titles(outline) == BOOKMARKS
 
 
-def test_text_fills_the_width_between_one_inch_margins(pdf: Path) -> None:
+@pytest.mark.parametrize("document", ["pdf", "pdf_without_math"], ids=["math", "no-math"])
+def test_text_fills_the_width_between_one_inch_margins(
+    document: str, request: pytest.FixtureRequest
+) -> None:
+    # Pandoc's own document styles, a narrow padded body, would apply without math.
+    pdf: Path = request.getfixturevalue(document)
     # Words between the header and the footer, as (left, right) edges in points.
     layout = run("pdftotext", "-bbox", pdf, "-")
     words = [

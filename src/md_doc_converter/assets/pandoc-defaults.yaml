@@ -11,6 +11,10 @@ filters:
 # GitHub Markdown stylesheet, then style-overrides.css, the page header/footer and any extra
 # stylesheet, with --include-in-header, which follows KaTeX's.
 embed-resources: true
+# Pandoc's own document styles, a narrow padded body, would otherwise apply to every document
+# without math, for which katex.js links no stylesheet.
+metadata:
+  document-css: false
 # Wrap body content in .markdown-body so the GitHub Markdown stylesheet's selectors apply
 include-before-body: "${.}/markdown-body-open.html"
 include-after-body: "${.}/markdown-body-close.html"
