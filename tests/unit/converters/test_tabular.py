@@ -1,4 +1,4 @@
-"""Excel and CSV tables as Markdown: literal cell values, and checked CSV rows."""
+"""Excel and CSV tables as Markdown: literal cell values, worksheets, and checked CSV rows."""
 
 from __future__ import annotations
 
@@ -16,6 +16,8 @@ import openpyxl
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
+from openpyxl.chart import BarChart, Reference
+from openpyxl.styles import Font
 from typing_extensions import override
 
 from md_doc_converter.__main__ import main
@@ -254,32 +256,102 @@ def test_short_rows_are_padded_and_dry_run_creates_no_output_directory(tmp_path:
     assert "| signal | |" in csv_to_md.csv_to_md(source)
 
 
-def test_excel_to_csv_writes_one_csv_per_worksheet(
+def save_workbook(path: Path) -> Path:
+    """Save a workbook of two tables, an empty worksheet and a chart sheet. A formatted cell
+    past the first table makes that worksheet's extent larger than the table."""
+    workbook = openpyxl.Workbook()
+    pins = workbook.active
+    assert pins is not None
+    pins.title = "Pin-Assignments"
+    pins.append(["Signal", "Width", "Note"])
+    pins.append(["ready", 1, None])
+    pins.append(["<mask> | `x`", 2.5, "two\nlines"])
+    pins["E9"].font = Font(bold=True)
+    workbook.create_sheet("Empty")
+    clocks = workbook.create_sheet("Clocks & Resets")
+    clocks.append(["Name", "=1+1", "Edge"])
+    chart = BarChart()
+    chart.add_data(Reference(pins, min_col=2, min_row=1, max_row=3), titles_from_data=True)
+    workbook.create_chartsheet("Chart").add_chart(chart)
+    workbook.save(path)
+    workbook.close()
+    return path
+
+
+def test_excel_to_csv_writes_a_csv_file_for_each_table(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    workbook = openpyxl.Workbook()
-    first = workbook.active
-    assert first is not None
-    first.title = "Pins"
-    first.append(["Signal", "Width"])
-    first.append(["ready", 1])
-    second = workbook.create_sheet("Clocks & Resets")
-    second.append(["Name", None, "=1+1"])
-    source = tmp_path / "workbook.xlsx"
-    workbook.save(source)
-    workbook.close()
+    source = save_workbook(tmp_path / "pins.xlsx")
     out = tmp_path / "csv"
 
     assert main(["excel-to-csv", str(source), "-o", str(out)]) == 0
 
-    assert sorted(path.name for path in out.iterdir()) == ["Clocks & Resets.csv", "Pins.csv"]
-    assert (out / "Pins.csv").read_bytes() == b"Signal,Width\r\nready,1\r\n"
-    # openpyxl wrote no cached value for the formula, so the cell is empty, like the blank one.
-    assert (out / "Clocks & Resets.csv").read_bytes() == b"Name,,\r\n"
-    assert (
-        capsys.readouterr().out
-        == f"Written: {out / 'Pins.csv'}\nWritten: {out / 'Clocks & Resets.csv'}\n"
+    assert sorted(path.name for path in out.iterdir()) == [
+        "Clocks & Resets.csv",
+        "Pin-Assignments.csv",
+    ]
+    assert (out / "Pin-Assignments.csv").read_bytes() == (
+        b'Signal,Width,Note\r\nready,1,\r\n<mask> | `x`,2.5,"two\nlines"\r\n'
     )
+    # openpyxl wrote no cached value for the formula, so its cell is empty.
+    assert (out / "Clocks & Resets.csv").read_bytes() == b"Name,,Edge\r\n"
+    assert capsys.readouterr().out == (
+        f"Written: {out / 'Pin-Assignments.csv'}\nSkipped (empty): Empty\n"
+        f"Written: {out / 'Clocks & Resets.csv'}\n"
+    )
+
+
+def test_excel_to_md_writes_the_pages_csv_to_md_writes_from_excel_to_csv(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = save_workbook(tmp_path / "pins.xlsx")
+    pages = tmp_path / "md"
+
+    assert main(["excel-to-md", str(source), "-o", str(pages)]) == 0
+
+    assert capsys.readouterr().out == (
+        f"Written: {pages / 'Pin-Assignments.md'}\nSkipped (empty): Empty\n"
+        f"Written: {pages / 'Clocks & Resets.md'}\n"
+    )
+    assert (pages / "Pin-Assignments.md").read_text(encoding="utf-8") == (
+        "# Pin Assignments\n\n"
+        "> Generated from the Pin-Assignments worksheet of pins.xlsx using md-doc-converter "
+        "(excel-to-md) — do not manually modify\n\n"
+        "| Signal | Width | Note |\n| --- | --- | --- |\n| ready | 1 | |\n"
+        "| &lt;mask&gt; \\| \\`x\\` | 2.5 | two<br>lines |\n"
+    )
+    # The name stays text, here an ampersand, which could start an entity such as &copy;.
+    assert (pages / "Clocks & Resets.md").read_text(encoding="utf-8").splitlines()[:3] == [
+        "# Clocks &amp; Resets",
+        "",
+        (
+            "> Generated from the Clocks &amp; Resets worksheet of pins.xlsx using "
+            "md-doc-converter (excel-to-md) — do not manually modify"
+        ),
+    ]
+    assert main(["excel-to-csv", str(source), "-o", str(tmp_path / "csv")]) == 0
+    assert main(["csv-to-md", str(tmp_path / "csv")]) == 0
+    names = sorted(path.name for path in pages.iterdir())
+    assert names == ["Clocks & Resets.md", "Pin-Assignments.md"]
+    for name in names:
+        direct = (pages / name).read_text(encoding="utf-8").splitlines()
+        two_steps = (tmp_path / "csv" / name).read_text(encoding="utf-8").splitlines()
+        # Only the notes, which name the sources, differ.
+        assert direct[:2] + direct[3:] == two_steps[:2] + two_steps[3:]
+
+
+def test_excel_to_md_dry_run_names_the_pages_beside_the_workbook(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = save_workbook(tmp_path / "pins.xlsx")
+
+    assert main(["excel-to-md", str(source), "--dry-run"]) == 0
+
+    assert capsys.readouterr().out == (
+        f"Would write: {tmp_path / 'Pin-Assignments.md'}\nSkipped (empty): Empty\n"
+        f"Would write: {tmp_path / 'Clocks & Resets.md'}\n"
+    )
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["pins.xlsx"]
 
 
 @pytest.mark.parametrize(
@@ -297,15 +369,16 @@ def test_excel_to_csv_writes_one_csv_per_worksheet(
         ),
     ],
 )
-def test_excel_to_csv_reports_an_unreadable_workbook(
-    tmp_path: Path, name: str, content: bytes | None, message: str
+@pytest.mark.parametrize("command", ["excel-to-md", "excel-to-csv"])
+def test_an_unreadable_workbook_is_reported(
+    tmp_path: Path, command: str, name: str, content: bytes | None, message: str
 ) -> None:
     source = tmp_path / name
     if content is not None:
         source.write_bytes(content)
-    with pytest.raises(SystemExit, match=f"^excel-to-csv: error: {message}"):
-        main(["excel-to-csv", str(source), "-o", str(tmp_path / "csv")])
-    assert not (tmp_path / "csv").exists()
+    with pytest.raises(SystemExit, match=f"^{command}: error: {message}"):
+        main([command, str(source), "-o", str(tmp_path / "out")])
+    assert not (tmp_path / "out").exists()
 
 
 def test_csv_to_md_converts_the_csv_files_that_git_does_not_ignore(
@@ -425,8 +498,9 @@ def test_the_delimiter_option_overrides_detection(
     assert table == ["| Name,alias | Value |", "| --- | --- |", "| x,y | 1 |"]
 
 
-def test_excel_to_csv_rejects_a_workbook_that_expands_too_far(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("command", ["excel-to-md", "excel-to-csv"])
+def test_a_workbook_that_expands_too_far_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str
 ) -> None:
     source = tmp_path / "workbook.xlsx"
     workbook = openpyxl.Workbook()
@@ -435,6 +509,6 @@ def test_excel_to_csv_rejects_a_workbook_that_expands_too_far(
     monkeypatch.setattr(packages, "MAX_EXPANDED_SIZE", 0)
     load = mock.Mock(side_effect=AssertionError("the workbook was opened"))
     monkeypatch.setattr(openpyxl, "load_workbook", load)
-    with pytest.raises(SystemExit, match=r"^excel-to-csv: error: .*workbook\.xlsx expands to"):
-        main(["excel-to-csv", str(source)])
+    with pytest.raises(SystemExit, match=rf"^{command}: error: .*workbook\.xlsx expands to"):
+        main([command, str(source)])
     load.assert_not_called()

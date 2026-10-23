@@ -59,7 +59,7 @@ md-doc-converter docx-to-md docs/spec.docx      # docs/spec.md and docs/.images/
 md-doc-converter md-to-html docs/spec.md        # docs/spec.html
 md-doc-converter md-to-pdf docs/spec.md --header "Design review"   # docs/spec.pdf
 md-doc-converter md-to-pdf docs                 # docs/docs.pdf, from every page in docs/
-md-doc-converter excel-to-csv data/pins.xlsx    # one CSV per worksheet, beside the workbook
+md-doc-converter excel-to-md data/pins.xlsx     # one Markdown page per worksheet, beside it
 md-doc-converter csv-to-md data                 # one Markdown page beside each CSV
 ```
 
@@ -70,6 +70,7 @@ command's options.
 | Command | Purpose |
 | --- | --- |
 | `docx-to-md DOCX [-o FILE.md]` | Convert a Word document to Markdown with its images; see [Word conversion](docs/word-conversion.md) |
+| `excel-to-md WORKBOOK [-o DIR] [--dry-run]` | Convert each worksheet to a Markdown page, `<sheet name>.md` |
 | `excel-to-csv WORKBOOK [-o DIR]` | Write each worksheet as `<sheet name>.csv` |
 | `csv-to-md PATH [-o DIR] [--dry-run] [--delimiter NAME]` | Convert a CSV file, or every CSV in a folder, to Markdown |
 | `md-to-html INPUT [-o FILE.html]` | Render a Markdown file or folder to standalone HTML; see [Rendering](docs/rendering.md) |
@@ -79,8 +80,11 @@ command's options.
 
 ## Excel and CSV
 
-`excel-to-csv` writes each worksheet as `<sheet name>.csv` beside the workbook,
-or in the `-o` folder. Like Word documents, a workbook that is encrypted, in the
+`excel-to-md` converts each worksheet to a Markdown page, `<sheet name>.md`,
+beside the workbook or in the `-o` folder. `excel-to-csv` writes
+`<sheet name>.csv` instead, from which `csv-to-md` writes the same page.
+Trailing empty rows and columns are left out, and empty worksheets and chart
+sheets are skipped. Like Word documents, a workbook that is encrypted, in the
 Excel 97-2003 format (`.xls`), or whose contents expand to more than 1,024 MiB
 is refused. Formulas are written as the values Excel saved with them;
 a workbook saved by a program that does not calculate formulas, such as a
@@ -89,8 +93,8 @@ worksheet should:
 
 - contain one table beginning in the first row and first column;
 - contain no populated cells outside the table;
-- be named for the file it becomes: a worksheet `Pin-Assignments` becomes
-  `Pin-Assignments.csv`, which `csv-to-md` titles "Pin Assignments".
+- be named for the page it becomes: a worksheet `Pin-Assignments` becomes
+  `Pin-Assignments.md`, titled "Pin Assignments".
 
 `csv-to-md` converts one CSV file, or every CSV in a folder and its subfolders
 (skipping Git-ignored files when the folder is in a Git work tree). Each page
@@ -104,16 +108,18 @@ CSV files are read as UTF-8, with or without the byte-order mark that Excel's
 line: a comma, or a semicolon or tab, as Excel writes in some languages and
 regions. `--delimiter comma`, `semicolon` or `tab` selects one for every file.
 
-Cell contents stay literal: backslashes, pipes, HTML-like text, entity names,
-code delimiters, and Markdown punctuation remain text, not formatting, and so do
-a citation-like `@name`, which Pandoc's Markdown reads as a citation, and an
-emoji code such as `:smile:`, which GitHub shows as an emoji. Identifiers such
-as `_ctl_s_ready` and e-mail addresses stay readable. Cell newlines become
-`<br>`, surrounding whitespace is trimmed, and tabs become spaces.
+Cell contents and page titles stay literal: backslashes, pipes, HTML-like text,
+entity names, code delimiters, and Markdown punctuation remain text, not
+formatting, and so do a citation-like `@name`, which Pandoc's Markdown reads as
+a citation, and an emoji code such as `:smile:`, which GitHub shows as an emoji.
+Identifiers such as `_ctl_s_ready` and e-mail addresses stay readable. Cell
+newlines become `<br>`, surrounding whitespace is trimmed, and tabs become
+spaces.
 
 After conversion, check empty rows and columns and the file names. It is usually
 easiest to correct problems in the workbook and convert again. Regenerate the
-Markdown whenever a CSV changes; wikis render the Markdown table, not the CSV.
+Markdown whenever the workbook or a CSV changes; wikis render the Markdown
+table, not the workbook.
 
 ## Word documents
 

@@ -9,6 +9,7 @@ from md_doc_converter.resources import package_version
 from md_doc_converter.toolchain.environment import prefer_installed_tools
 
 COMMANDS = {
+    "excel-to-md": "convert each worksheet of an Excel workbook to a Markdown page",
     "excel-to-csv": "write each worksheet of an Excel workbook as a CSV file",
     "csv-to-md": "convert CSV files to Markdown tables",
     "docx-to-md": "convert a Word document to Markdown, with its images",
@@ -43,10 +44,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     command = parser.parse_args(arguments[:1]).command
     remaining = arguments[1:]
-    if command == "excel-to-csv":
-        from md_doc_converter.converters.excel import main as excel_to_csv
+    if command in {"excel-to-md", "excel-to-csv"}:
+        from md_doc_converter.converters import excel
 
-        excel_to_csv(remaining)
+        (excel.markdown_main if command == "excel-to-md" else excel.csv_main)(remaining)
         return 0
     if command == "csv-to-md":
         from md_doc_converter.converters.csv import main as csv_to_md

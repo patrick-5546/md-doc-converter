@@ -25,3 +25,33 @@ def literal_cell(text: str) -> str:
 def table_row(cells: list[str]) -> str:
     """Render escaped cells with one space on either side of nonempty values."""
     return "|" + "|".join(f" {cell} " if cell else " " for cell in cells) + "|"
+
+
+def table_page(rows: list[list[str]], *, stem: str, source: str, command: str) -> str:
+    """The page *stem*.md that *command* writes from *source*, with *rows* as its table.
+
+    The page has a heading from *stem*, with hyphens as spaces, a note that it is generated,
+    and the table, whose first row is its header. Short rows are padded. A row wider than the
+    header raises ValueError, naming the row by its number, rather than losing cells.
+    """
+    header, *data = rows
+    lines = [
+        f"# {literal_cell(stem.replace('-', ' '))}",
+        "",
+        (
+            f"> Generated from {literal_cell(source)} using md-doc-converter ({command}) "
+            "— do not manually modify"
+        ),
+        "",
+        table_row([literal_cell(cell) for cell in header]),
+        table_row(["---"] * len(header)),
+    ]
+    for number, row in enumerate(data, 2):
+        if len(row) > len(header):
+            raise ValueError(
+                f"row {number} has {len(row)} cells but the header has {len(header)}; "
+                "refusing to discard data"
+            )
+        cells = row + [""] * (len(header) - len(row))
+        lines.append(table_row([literal_cell(cell) for cell in cells]))
+    return "\n".join(lines) + "\n"

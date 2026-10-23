@@ -28,14 +28,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from md_doc_converter.markdown.tables import literal_cell as _cell
-from md_doc_converter.markdown.tables import table_row as _row
-
-
-def _title_from_stem(stem: str) -> str:
-    """Derive a human-readable title from a filename stem."""
-    return stem.replace("-", " ")
-
+from md_doc_converter.markdown.tables import table_page
 
 # The delimiters that detection chooses from, by name; on a tie the first wins.
 DELIMITERS = {"comma": ",", "semicolon": ";", "tab": "\t"}
@@ -68,37 +61,12 @@ def csv_to_md(csv_path: Path, delimiter: str | None = None) -> str:
         io.StringIO(text, newline=""), delimiter=delimiter or detect_delimiter(text)
     )
     rows = list(reader)
-
     if not rows:
         return ""
-
-    title = _title_from_stem(csv_path.stem)
-    header = rows[0]
-    data = rows[1:]
-
-    lines: list[str] = [
-        f"# {title}",
-        "",
-        (
-            f"> Generated from {csv_path.name} using md-doc-converter (csv-to-md) "
-            "— do not manually modify"
-        ),
-        "",
-        _row([_cell(h) for h in header]),
-        _row(["---" for _ in header]),
-    ]
-
-    for number, row in enumerate(data, 2):
-        if len(row) > len(header):
-            raise ValueError(
-                f"{csv_path}: row {number} has {len(row)} cells but the header has "
-                f"{len(header)}; refusing to discard data"
-            )
-        cells = row + [""] * (len(header) - len(row))
-        lines.append(_row([_cell(cell) for cell in cells]))
-
-    lines.append("")  # trailing newline
-    return "\n".join(lines)
+    try:
+        return table_page(rows, stem=csv_path.stem, source=csv_path.name, command="csv-to-md")
+    except ValueError as error:
+        raise ValueError(f"{csv_path}: {error}") from error
 
 
 def convert(
