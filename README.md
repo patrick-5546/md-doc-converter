@@ -104,9 +104,11 @@ line: a comma, or a semicolon or tab, as Excel writes in some languages and
 regions. `--delimiter comma`, `semicolon` or `tab` selects one for every file.
 
 Cell contents stay literal: backslashes, pipes, HTML-like text, entity names,
-code delimiters, and Markdown punctuation remain text, not formatting.
-Identifiers such as `_ctl_s_ready` stay readable. Cell newlines become `<br>`,
-surrounding whitespace is trimmed, and tabs become spaces.
+code delimiters, and Markdown punctuation remain text, not formatting, and so do
+a citation-like `@name`, which Pandoc's Markdown reads as a citation, and an
+emoji code such as `:smile:`, which GitHub shows as an emoji. Identifiers such
+as `_ctl_s_ready` and e-mail addresses stay readable. Cell newlines become
+`<br>`, surrounding whitespace is trimmed, and tabs become spaces.
 
 After conversion, check empty rows and columns and the file names. It is usually
 easiest to correct problems in the workbook and convert again. Regenerate the

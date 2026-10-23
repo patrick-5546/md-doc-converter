@@ -2,10 +2,47 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from md_doc_converter.rendering import header as header_module
 from md_doc_converter.rendering import pipeline as render
+
+
+def css_string_value(token: str) -> str:
+    """The value of a CSS string token, decoded as CSS Syntax 4.3.5 consumes one."""
+    assert token[0] == token[-1] == '"'
+    body = token[1:-1]
+    value: list[str] = []
+    index = 0
+    while index < len(body):
+        character = body[index]
+        assert character not in '"\n\r\f', "the character would end the string"
+        if character != "\\":
+            value.append(character)
+            index += 1
+            continue
+        digits = re.match(r"[0-9a-fA-F]{1,6}", body[index + 1 :])
+        if digits is None:
+            value.append(body[index + 1])
+            index += 2
+            continue
+        value.append(chr(int(digits[0], 16)))
+        index += 1 + len(digits[0])
+        # One whitespace character ends a hexadecimal escape.
+        if body[index : index + 1] in {" ", "\t", "\n"}:
+            index += 1
+    return "".join(value)
+
+
+@given(st.text(st.characters(exclude_characters="\0")))
+def test_page_text_is_a_css_string_of_itself_that_html_cannot_end(text: str) -> None:
+    written = header_module.css_string(text)
+    assert css_string_value(written) == text
+    assert "<" not in written
 
 
 @pytest.mark.parametrize(

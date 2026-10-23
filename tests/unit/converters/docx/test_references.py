@@ -5,11 +5,14 @@ from __future__ import annotations
 import json
 import re
 import sys
+import unicodedata
 from collections.abc import Callable
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from md_doc_converter.converters.docx import models as _models
 from md_doc_converter.converters.docx import publication as _publication
@@ -280,3 +283,55 @@ def test_parsed_raw_html_keeps_comments_and_closes_empty_elements() -> None:
 def test_malformed_raw_html_is_an_error(markup: str, message: str) -> None:
     with pytest.raises(_models.ConversionError, match=re.escape(message)):
         _reference.parse_html(markup)
+
+
+def words(text: str) -> str:
+    """*text* in NFC, the form Pandoc's GFM reader gives text, with its spaces as single spaces."""
+    return " ".join(unicodedata.normalize("NFC", text).split())
+
+
+def link_titles(value: JSONValue) -> list[str]:
+    """The titles of the links in Pandoc JSON *value*."""
+    if isinstance(value, dict):
+        content = value.get("c")
+        if value.get("t") == "Link" and isinstance(content, list):
+            target = content[2]
+            assert isinstance(target, list)
+            title = target[1]
+            assert isinstance(title, str)
+            return [title, *link_titles(content[1])]
+        return [title for item in value.values() for title in link_titles(item)]
+    if isinstance(value, list):
+        return [title for item in value for title in link_titles(item)]
+    return []
+
+
+@pytest.mark.parametrize(
+    "reader",
+    ["gfm", "markdown-implicit_figures-yaml_metadata_block+gfm_auto_identifiers"],
+    ids=["gfm", "renderer"],
+)
+@given(title=st.text(st.characters(categories=("L", "M", "N", "P", "S", "Zs")), min_size=1))
+def test_any_word_screen_tip_reads_back_as_the_link_title(
+    reader: str, title: str, pandoc: str
+) -> None:
+    link: JSONValue = {
+        "t": "Link",
+        "c": [["", [], []], [{"t": "Str", "c": "Spec"}], ["https://e.test", title]],
+    }
+    document: JSONValue = {
+        "pandoc-api-version": [1, 23, 1],
+        "meta": {},
+        "blocks": [{"t": "Para", "c": [link]}],
+    }
+    markdown = _reference.run_command(
+        [pandoc, "--from=json", "--to=gfm+raw_html", "--wrap=none"],
+        "Link title test",
+        input_text=_reference.gfm_input(document),
+    )
+    read = _reference.run_command(
+        [pandoc, f"--from={reader}", "--to=json"], "Link title test", input_text=markdown
+    )
+    # The link survives with the title's words; Pandoc's Markdown reader writes each run of
+    # spaces in a title as one plain space.
+    assert [words(text) for text in link_titles(json.loads(read))] == [words(title)]

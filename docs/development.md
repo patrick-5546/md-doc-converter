@@ -119,6 +119,14 @@ executables, which `tests/support/fake_tool.py` implements, installs a fake
 toolchain and reads the calls they recorded); and its module's own. Independent
 cases are `pytest.mark.parametrize` cases with readable ids.
 
+pytest-randomly runs the tests in a random order, printed as `--randomly-seed`
+in the header, so no test depends on another; `--randomly-seed=N`
+repeats an order, and `-p no:randomly` turns it off. Properties of the escaping
+that keeps text literal, such as table cells, CSV rows, link titles and page
+header text, are [Hypothesis](https://hypothesis.readthedocs.io/) tests, which
+read the generated text back through Pandoc's GFM reader and the renderer's.
+They run 50 examples each; `HYPOTHESIS_PROFILE=thorough` runs 1,000.
+
 Every Markdown page that the Word conversion tests publish is also checked with
 rumdl, against the rules in `tests/support/converted.rumdl.toml`.
 

@@ -16,6 +16,9 @@ def literal_cell(text: str) -> str:
     text = re.sub(r"-{2,}|\.{3,}", _escape_run, text)
     # Escape possible closing delimiters, not leading/intra-word signal underscores.
     text = re.sub(r"_(?![^\W_])", r"\\_", text)
+    # A citation in Pandoc's Markdown, @key, unless a letter or digit precedes it, as in an
+    # e-mail address; and a GFM emoji shortcode, such as :smile:.
+    text = re.sub(r"(?<![^\W_])@|:(?=[\w+-]+:)", lambda match: "\\" + match[0], text)
     return text.replace("\n", "<br>")
 
 

@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 import csv
+import re
 import subprocess
 import sys
+import tempfile
+import unicodedata
 from html.parser import HTMLParser
 from pathlib import Path
 from unittest import mock
 
 import openpyxl
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 from typing_extensions import override
 
 from md_doc_converter.__main__ import main
@@ -31,13 +36,14 @@ READERS = [
 class TableContents(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
+        self.headers: list[str] = []
         self.cells: list[str] = []
         self.current: list[str] | None = None
         self.markup: list[str] = []
 
     @override
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag == "td":
+        if tag in {"td", "th"}:
             self.current = []
         elif self.current is not None:
             if tag == "br":
@@ -52,8 +58,8 @@ class TableContents(HTMLParser):
 
     @override
     def handle_endtag(self, tag: str) -> None:
-        if tag == "td" and self.current is not None:
-            self.cells.append("".join(self.current))
+        if tag in {"td", "th"} and self.current is not None:
+            (self.cells if tag == "td" else self.headers).append("".join(self.current))
             self.current = None
 
 
@@ -92,6 +98,97 @@ def test_literal_cells_do_not_create_markup_or_extra_columns(reader: str, pandoc
     table = rendered_table(markdown, pandoc, reader)
     assert table.cells == values
     assert table.markup == []
+
+
+@pytest.mark.parametrize(
+    ("text", "written"),
+    [
+        pytest.param('it\'s "quoted"', 'it\\\'s \\"quoted\\"', id="quotes"),
+        pytest.param("user@example.com and @mention", "user@example.com and \\@mention", id="at"),
+        pytest.param("12:30, :smile: and a:b:c", "12:30, \\:smile: and a\\:b:c", id="colons"),
+        pytest.param("snake_case_name and _x_", "snake_case_name and _x\\_", id="underscores"),
+        pytest.param("<b> & \u00a9", "&lt;b&gt; &amp; \u00a9", id="html"),
+    ],
+)
+def test_literal_cells_escape_only_what_would_be_read_as_markup(text: str, written: str) -> None:
+    assert literal_cell(text) == written
+
+
+# Text a cell may hold: letters, digits, punctuation, symbols, spaces and line breaks.
+CELL_TEXT = st.text(
+    st.characters(categories=("L", "N", "P", "S")) | st.sampled_from(" \n"), max_size=30
+)
+
+
+def shown(text: str) -> str:
+    """Cell text as a reader shows it: trimmed, a line break for each line ending, a space for
+    each tab, runs of spaces as one, and in NFC, the form Pandoc's GFM reader gives text."""
+    text = text.strip().replace("\r\n", "\n").replace("\r", "\n").replace("\t", " ")
+    return unicodedata.normalize("NFC", re.sub(r" {2,}", " ", text))
+
+
+@pytest.mark.parametrize("reader", READERS)
+@given(values=st.lists(CELL_TEXT, min_size=1, max_size=8))
+def test_any_cell_text_reads_back_literally(reader: str, pandoc: str, values: list[str]) -> None:
+    markdown = table_row(["Value"]) + "\n" + table_row(["---"]) + "\n"
+    markdown += "\n".join(table_row([literal_cell(value)]) for value in values) + "\n"
+    table = rendered_table(markdown, pandoc, reader)
+    assert [shown(cell) for cell in table.cells] == [shown(value) for value in values]
+    assert table.markup == []
+
+
+# CSV cells may also hold tabs and carriage returns, which a CSV file quotes.
+CSV_CELL = st.text(
+    st.characters(categories=("L", "N", "P", "S")) | st.sampled_from(" \t\r\n"), max_size=20
+)
+# The column names a reader shows a header row for: some text besides spaces.
+COLUMN_NAME = CSV_CELL.filter(lambda text: shown(text) != "")
+
+
+@st.composite
+def csv_tables(draw: st.DrawFn, names: st.SearchStrategy[str] = COLUMN_NAME) -> list[list[str]]:
+    """A header row and up to four rows as wide."""
+    width = draw(st.integers(1, 4))
+    header = draw(st.lists(names, min_size=width, max_size=width))
+    rows = draw(st.lists(st.lists(CSV_CELL, min_size=width, max_size=width), max_size=4))
+    return [header, *rows]
+
+
+def write_csv(path: Path, rows: list[list[str]], delimiter: str) -> None:
+    with path.open("w", encoding="utf-8", newline="") as file:
+        csv.writer(file, delimiter=delimiter).writerows(rows)
+
+
+@pytest.mark.parametrize("reader", READERS)
+@given(table=csv_tables(), delimiter=st.sampled_from(list(csv_to_md.DELIMITERS.values())))
+def test_any_csv_rows_read_back_through_both_readers(
+    reader: str, pandoc: str, table: list[list[str]], delimiter: str
+) -> None:
+    with tempfile.TemporaryDirectory() as folder:
+        source = Path(folder) / "table.csv"
+        write_csv(source, table, delimiter)
+        markdown = csv_to_md.csv_to_md(source, delimiter)
+    contents = rendered_table(markdown, pandoc, reader)
+    assert [shown(cell) for cell in contents.headers] == [shown(cell) for cell in table[0]]
+    assert [shown(cell) for cell in contents.cells] == [
+        shown(cell) for row in table[1:] for cell in row
+    ]
+    assert contents.markup == []
+
+
+@given(
+    table=csv_tables(CSV_CELL.filter(lambda text: not set(text) & set(",;\t"))).filter(
+        lambda table: len(table[0]) > 1
+    ),
+    delimiter=st.sampled_from(list(csv_to_md.DELIMITERS.values())),
+)
+def test_the_delimiter_is_detected_from_a_header_of_several_columns(
+    table: list[list[str]], delimiter: str
+) -> None:
+    with tempfile.TemporaryDirectory() as folder:
+        source = Path(folder) / "table.csv"
+        write_csv(source, table, delimiter)
+        assert csv_to_md.detect_delimiter(source.read_text(encoding="utf-8")) == delimiter
 
 
 @pytest.mark.parametrize("reader", READERS)

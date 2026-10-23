@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Generator
 from pathlib import Path
 
 import pytest
+from hypothesis import settings
 
 from tests.support import suites
 from tests.support.fake_tools import FakeTools
+
+# Properties that run Pandoc take tens of milliseconds an example, so they have no deadline
+# and fewer examples than Hypothesis's default; HYPOTHESIS_PROFILE=thorough runs many more.
+settings.register_profile("md-doc-converter", deadline=None, max_examples=50)
+settings.register_profile("thorough", deadline=None, max_examples=1000)
+settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "md-doc-converter"))
 
 
 def pytest_configure(config: pytest.Config) -> None:
