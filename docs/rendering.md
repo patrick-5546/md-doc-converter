@@ -170,9 +170,11 @@ an extra stylesheet can use.
 and footer, for additional branding or layout. It is inlined into the HTML, so
 it must not contain `</style`. Files it references with `url()`, such as fonts
 or a logo, are embedded: paths, absolute or relative to the stylesheet, and
-URLs, which are downloaded. Keep content
-within the page width: when anything is wider, Chrome shrinks every page of the
-PDF to fit it.
+URLs, which are downloaded. Keep content other than tables within the page
+width: when anything is wider, Chrome shrinks every page of the PDF to fit it.
+A table wider than the page is printed smaller instead, as
+[Table styling](#table-styling) describes; the page size and margins that the
+stylesheet's `@page` rules give count.
 
 The shared styles provide:
 
@@ -201,6 +203,11 @@ setting, and any previous output is left unchanged. HTML rendering does not use
 the limit.
 
 ## Table styling
+
+In a PDF, a table wider than the page, such as one whose columns hold long
+identifiers that cannot wrap, is printed smaller to fit the page, down to half
+its size; one still too wide then breaks its words wherever it must. The rest
+of the document keeps its size.
 
 Wrap a Markdown table in a classed `div` when it needs tighter PDF layout.
 Blank lines before and after the table are required.
