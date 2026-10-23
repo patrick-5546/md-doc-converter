@@ -358,16 +358,18 @@ def _prepare_headings(
     list_item: Callable[[ET.Element], bool],
     in_table: Callable[[ET.Element], bool],
     report: TransformReport,
-) -> list[ET.Element]:
+) -> tuple[list[ET.Element], list[ET.Element]]:
     """Give each heading a "heading N" style at its final level, and make the rest paragraphs.
 
     A heading by Word's outline level or style keeps its level, up to 6; one that shows no
     text, or only a picture, is a paragraph. A numbered heading by outline level, not by a
     heading style, stays the list item that Word numbers. A heading more than one level below
     the heading it belongs to moves up, with its subheadings, as markdownlint's MD001 asks;
-    headings in tables are left out of that. Return the headings, in document order.
+    headings in tables are left out of that. Return the headings, in document order, and the
+    numbered headings that stay list items.
     """
     levels: dict[ET.Element, int] = {}
+    listed: list[ET.Element] = []
     for index, paragraph in enumerate(_ooxml.scoped_iter(root, WORD + "p")):
         try:
             level = _ooxml.heading_level(paragraph, styles.definitions)
@@ -394,6 +396,7 @@ def _prepare_headings(
             and list_item(paragraph)
         ):
             report.skipped("headings", _LISTED_HEADING, f"paragraph {index + 1}: {_LISTED_HEADING}")
+            listed.append(paragraph)
             continue
         if not _shows_text(paragraph):
             reason = _PICTURE_HEADING if _has_picture(paragraph) else _EMPTY_HEADING
@@ -422,7 +425,7 @@ def _prepare_headings(
                 for node in properties.findall(WORD + name):
                     properties.remove(node)
         report.applied("headings")
-    return list(levels)
+    return list(levels), listed
 
 
 def _split_code_edges(run: ET.Element, parent: ET.Element) -> None:
@@ -1066,13 +1069,17 @@ def prepare_document(
             return False
 
     headings: list[ET.Element] = []
+    listed: list[ET.Element] = []
     with transform(report, "headings"):
-        headings = _prepare_headings(root, styles, list_item, in_table, report)
+        headings, listed = _prepare_headings(root, styles, list_item, in_table, report)
     with transform(report, "code"):
         _prepare_code(root, styles, package, set(headings), list_item, report)
     images: dict[str, PreparedImage] = {}
     with transform(report, "images"):
-        images = _prepare_images(root, relationships, package, set(headings), modified, report)
+        # A numbered heading kept as a list item still heads a picture directly below it.
+        images = _prepare_images(
+            root, relationships, package, {*headings, *listed}, modified, report
+        )
     bookmarks = _prepare_links(root, relationships, paths, report)
     _keep_metadata_in_body(root, styles, numbered)
     _plain_layout(root, styles)

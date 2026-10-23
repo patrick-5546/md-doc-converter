@@ -2154,6 +2154,26 @@ def test_an_image_directly_below_a_heading_takes_its_text(convert: Converter) ->
     assert warnings.count("Unresolved alt text") == 1
 
 
+def test_an_image_below_a_heading_kept_as_a_list_item_takes_its_text(
+    convert: Converter,
+) -> None:
+    # Word numbers this outline-level heading, so it stays a list item, but it heads the image.
+    outlined = numbered("Trackers")
+    properties = outlined.find(W + "pPr")
+    assert properties is not None
+    ET.SubElement(properties, W + "outlineLvl", {W + "val": "1"})
+    result, report, warnings = convert.reported(
+        [outlined, image(alt=None)],
+        relations=(("image", "image", "media/image.png", "Internal"),),
+        media={"image.png": PNG},
+        extras={"word/numbering.xml": numbering_xml()},
+    )
+    assert re.search(r"7\.\s+Trackers\n", result)
+    assert "![Trackers](.images/" in result
+    assert "  images: applied (1, 1 image(s) described by the heading above)" in report.summary()
+    assert "Unresolved alt text" not in warnings
+
+
 def test_repeated_and_nested_media_keep_exact_occurrences(convert: Converter, pandoc: str) -> None:
     result, stats = convert(
         [image(), table(row(cell(image(), "Table picture")), columns=1), image()],

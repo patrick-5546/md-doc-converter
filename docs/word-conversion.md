@@ -66,9 +66,10 @@ accepted.
 - **Text boxes:** the text of a text box follows the paragraph that holds it.
 - **Images** keep their place, without Word's display size. An image's alt
   text is the title of its figure caption, or else Word's alt text, or else the
-  text of a heading right above it; otherwise it is empty, and reported. EMF
-  and WMF drawings become SVG, cropped to the drawing. An SVG image that
-  contains a script is replaced by the PNG copy that Word keeps with it.
+  text of a heading right above it, also one kept as a list item; otherwise it
+  is empty, and reported. EMF and WMF drawings become SVG, cropped to the
+  drawing. An SVG image that contains a script is replaced by the PNG copy that
+  Word keeps with it.
 - **Spaces:** no-break and other Unicode spaces become plain spaces, except
   spaces that indent a line, which stay no-break spaces so that the indent
   shows. Zero-width spaces are dropped.
