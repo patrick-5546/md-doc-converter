@@ -98,6 +98,34 @@ def test_image_parent_symlink_cannot_escape_containment(source: Path, tmp_path: 
         _publication.validate_paths(source, None, replace_generated=True)
 
 
+@pytest.mark.parametrize("depth", [-1, 7])
+def test_split_depth_is_from_0_to_6(source: Path, depth: int) -> None:
+    with pytest.raises(
+        _models.ConversionError, match=f"^Split depth must be between 0 and 6, got {depth}$"
+    ):
+        _publication.validate_paths(source, None, split_depth=depth)
+
+
+def test_output_must_be_markdown(source: Path, tmp_path: Path) -> None:
+    with pytest.raises(_models.ConversionError, match=r"filename ending in \.md"):
+        _publication.validate_paths(source, tmp_path / "output.txt")
+
+
+def test_a_mount_point_is_protected_as_page_tree(
+    source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mounted = tmp_path / "mounted"
+    mounted.mkdir()
+    is_mount = Path.is_mount
+    monkeypatch.setattr(Path, "is_mount", lambda path: path == mounted or is_mount(path))
+    with pytest.raises(
+        _models.ConversionError, match="protected filesystem, home, or repository root"
+    ):
+        _publication.validate_paths(
+            source, tmp_path / "mounted.md", split_depth=1, replace_generated=True
+        )
+
+
 def test_output_types_are_checked_before_mutation(source: Path, tmp_path: Path) -> None:
     output = tmp_path / "output.md"
     output.mkdir()

@@ -111,4 +111,6 @@ def test_backslashes_before_punctuation_survive_the_commonmark_writer(
     )
     parsed = _reference.pandoc_html(written, pandoc)
     assert "".join(parsed.itertext()).strip() == text
-    assert ("&#92;" in written) == (text != "C:\\tools")
+    # Only a backslash before punctuation needs protecting.
+    protected = _reference.BACKSLASH_REFERENCE in written
+    assert protected == (text != "C:\\tools")

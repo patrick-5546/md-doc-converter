@@ -360,6 +360,10 @@ def gfm_input(value: JSONValue) -> str:
     return json.dumps(protect_backslashes(fence_code_blocks(escape_link_titles(value))))
 
 
+# A backslash written as a character reference, which Markdown and HTML read as a backslash.
+BACKSLASH_REFERENCE = "&#92;"
+
+
 def protect_backslashes(value: JSONValue, *, table_cell: bool = False) -> JSONValue:
     r"""Give text that Pandoc's CommonMark writers garble a form that reads back unchanged.
 
@@ -399,7 +403,7 @@ def protect_backslashes(value: JSONValue, *, table_cell: bool = False) -> JSONVa
             if character == "\\" and (not following or following in string.punctuation):
                 if index > start:
                     result.append({"t": "Str", "c": text[start:index]})
-                result.append({"t": "RawInline", "c": ["html", "&#92;"]})
+                result.append({"t": "RawInline", "c": ["html", BACKSLASH_REFERENCE]})
                 start = index + 1
         if start < len(text):
             result.append({"t": "Str", "c": text[start:]})

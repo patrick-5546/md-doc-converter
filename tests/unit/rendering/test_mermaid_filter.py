@@ -108,13 +108,11 @@ def test_all_diagrams_render_in_one_run_and_keep_their_place(
     assert "--artefacts" in call
 
 
-def test_documents_without_diagrams_need_no_mmdc(
-    convert: Convert, fake_tools: FakeTools, tmp_path: Path
-) -> None:
+def test_documents_without_diagrams_need_no_mmdc(convert: Convert, tmp_path: Path) -> None:
+    # The mmdc given does not exist: running it would fail the conversion.
     result = convert("```python\nprint('kept')\n```\n", tmp_path / "missing")
     assert result.returncode == 0, result.stderr
     assert images(json.loads(result.stdout)) == []
-    assert mmdc_calls(fake_tools) == []
 
 
 def test_missing_mmdc_names_setup(convert: Convert, tmp_path: Path) -> None:

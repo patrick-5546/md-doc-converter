@@ -11,7 +11,6 @@ from pathlib import Path
 
 import pytest
 
-from md_doc_converter.rendering.header import css_string
 from md_doc_converter.toolchain.environment import PANDOC_VERSION, Toolchain
 from md_doc_converter.toolchain.install import PANDOC
 from tests.support.fake_tools import FakeTools
@@ -189,65 +188,6 @@ def test_wrong_output_suffix_is_rejected_before_rendering(
     assert "Output must end in .pdf" in result.stderr
     assert fake_tools.calls() == []
     assert not (workspace / "out.html").exists()
-
-
-def test_header_and_footer_flags_override_the_environment(
-    run_cli: CommandLine, fake_tools: FakeTools, docs: Path
-) -> None:
-    environment = {
-        "MD_DOC_CONVERTER_HEADER": "Environment header",
-        "MD_DOC_CONVERTER_FOOTER": "Environment footer",
-    }
-    run_cli("md-to-html", "docs/input.md", environment=environment)
-    header = 'Review "A" & $value </style>'
-    run_cli(
-        "md-to-html", "docs/input.md", "--header", header, "--footer", "", environment=environment
-    )
-    first, second = (str(call["styles"]) for call in fake_tools.calls("pandoc"))
-    assert 'content: "Environment header"' in first
-    assert 'content: "Environment footer"' in first
-    assert f"content: {css_string(header)}" in second
-    assert "Environment" not in second
-    # The header's "</style>" is escaped, so it ends no style element.
-    assert second.count("</style>") == second.count("<style>")
-    assert "Review" in (docs / "input.html").read_text(encoding="utf-8")
-
-
-@pytest.mark.parametrize(
-    ("arguments", "environment", "seconds"),
-    [
-        pytest.param([], None, "600", id="default"),
-        pytest.param([], {"MD_DOC_CONVERTER_PDF_TIMEOUT": "0"}, "0", id="environment"),
-        pytest.param(
-            ["--pdf-timeout", "30"],
-            {"MD_DOC_CONVERTER_PDF_TIMEOUT": "0"},
-            "30",
-            id="flag-over-environment",
-        ),
-    ],
-)
-def test_pdf_timeout_flag_environment_and_default(
-    arguments: list[str],
-    environment: dict[str, str] | None,
-    seconds: str,
-    run_cli: CommandLine,
-    fake_tools: FakeTools,
-) -> None:
-    run_cli("md-to-pdf", "docs/input.md", *arguments, environment=environment)
-    command = fake_tools.calls("node")[-1]["arguments"]
-    assert isinstance(command, list)
-    assert str(command[command.index("--timeout-seconds") + 1]) == seconds
-
-
-def test_pdf_timeout_must_be_whole_seconds(run_cli: CommandLine) -> None:
-    result = run_cli(
-        "md-to-pdf",
-        "docs/input.md",
-        environment={"MD_DOC_CONVERTER_PDF_TIMEOUT": "soon"},
-        check=False,
-    )
-    assert result.returncode == 1
-    assert "--pdf-timeout (MD_DOC_CONVERTER_PDF_TIMEOUT) must be whole seconds" in result.stderr
 
 
 def test_missing_toolchain_fails_without_rendering(

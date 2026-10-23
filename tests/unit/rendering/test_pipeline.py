@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import re
+import stat
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -255,7 +256,11 @@ def test_pdf_timeout_accepts_whole_seconds_and_defaults_when_blank(
     ],
 )
 def test_pdf_timeout_rejects_anything_but_whole_seconds_up_to_the_maximum(value: str) -> None:
-    with pytest.raises(render.RenderError, match=r"--pdf-timeout"):
+    message = (
+        "--pdf-timeout (MD_DOC_CONVERTER_PDF_TIMEOUT) must be whole seconds from 0 (no limit) "
+        f"to {render.PDF_TIMEOUT_MAX}: {value!r}"
+    )
+    with pytest.raises(render.RenderError, match=f"^{re.escape(message)}$"):
         render.pdf_timeout_seconds(value)
 
 
@@ -319,7 +324,10 @@ def test_command_line_flags_override_environment_defaults(
     assert "Footer from environment" not in fake.styles[1]
     messages, errors = capsys.readouterr()
     assert f"-> {tmp_path / 'cache.v2 spec.pdf'}" in messages
-    assert "--pdf-timeout" in errors
+    assert (
+        "md-doc-converter: --pdf-timeout (MD_DOC_CONVERTER_PDF_TIMEOUT) must be whole seconds "
+        f"from 0 (no limit) to {render.PDF_TIMEOUT_MAX}: '-5'\n"
+    ) in errors
 
 
 def test_extra_stylesheet_is_inlined_last_and_protected(
@@ -390,7 +398,7 @@ def test_publication_keeps_the_rendered_file_mode(tmp_path: Path) -> None:
     destination = tmp_path / "new folder" / "doc.pdf"
     render.publish(staged, destination)
     assert destination.read_text(encoding="utf-8") == "new"
-    assert destination.stat().st_mode & 511 == 416
+    assert stat.S_IMODE(destination.stat().st_mode) == 0o640
 
 
 def test_intermediates_are_kept_on_request_even_when_rendering_fails(

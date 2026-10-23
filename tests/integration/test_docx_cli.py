@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -34,34 +35,29 @@ def test_options_default_to_one_unqualified_page_beside_the_input() -> None:
     assert not args.qualify_duplicate_headings
 
 
-@pytest.mark.parametrize(
-    "flag",
-    [
-        "--image-dir",
-        "--mode",
-        "--review-report",
-        "--repair-headings",
-        "--normalize-status",
-        "--omit-index",
-        "--list-style",
-    ],
-)
-def test_only_approved_options_are_accepted(flag: str) -> None:
-    with pytest.raises(SystemExit):
-        _cli.parse_args(["input.docx", flag, "value"])
+def test_unknown_options_are_refused(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as stopped:
+        _cli.parse_args(["input.docx", "--image-dir", "images"])
+    assert stopped.value.code == 2
+    assert "error: unrecognized arguments: --image-dir images" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(
-    "value",
+    ("value", "message"),
     [
-        pytest.param("-1", id="negative"),
-        pytest.param("7", id="too-deep"),
-        pytest.param("text", id="not-a-number"),
+        # Python 3.14 quotes the value; earlier versions do not.
+        pytest.param("-1", "invalid choice: '?-1'?", id="negative"),
+        pytest.param("7", "invalid choice: '?7'?", id="too-deep"),
+        pytest.param("text", "invalid int value: 'text'", id="not-a-number"),
     ],
 )
-def test_split_range_is_enforced(value: str) -> None:
-    with pytest.raises(SystemExit):
+def test_split_range_is_enforced(
+    value: str, message: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit) as stopped:
         _cli.parse_args(["input.docx", "--split-depth", value])
+    assert stopped.value.code == 2
+    assert re.search(f"error: argument --split-depth: {message}", capsys.readouterr().err)
 
 
 def test_actual_cli_preserves_caller_relative_paths(tmp_path: Path) -> None:

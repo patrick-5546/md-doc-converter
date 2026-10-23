@@ -240,6 +240,11 @@ def test_csv_to_md_reports_a_missing_input(tmp_path: Path) -> None:
             b'"Name, full";Value\n"alpha, a";1\n', "| Name, full | Value |", id="quoted-comma"
         ),
         pytest.param(b"Name;alias,Value\nx;y,1\n", "| Name;alias | Value |", id="tie-is-comma"),
+        pytest.param(
+            b"Name;Price, EUR;Count\nx;1,5;2\n",
+            "| Name | Price, EUR | Count |",
+            id="semicolon-outnumbers-a-comma",
+        ),
         pytest.param(b"Name\nalpha\n", "| Name |", id="one-column"),
     ],
 )
@@ -251,6 +256,50 @@ def test_csv_encoding_and_delimiter_are_detected(
     table = [line for line in csv_to_md.csv_to_md(source).splitlines() if line.startswith("|")]
     assert table[0] == header
     assert len(table) == 3
+
+
+def test_csv_to_md_titles_the_table_by_its_file_name(tmp_path: Path) -> None:
+    source = tmp_path / "pin-assignments.csv"
+    source.write_text("Pin\nA1\n", encoding="utf-8")
+    assert csv_to_md.csv_to_md(source).splitlines()[0] == "# pin assignments"
+
+
+def test_csv_to_md_names_the_row_wider_than_the_header(tmp_path: Path) -> None:
+    source = tmp_path / "pins.csv"
+    source.write_text("Pin,Ball\nA1,B2\nA2,B3,extra\n", encoding="utf-8")
+    with pytest.raises(
+        ValueError, match=r"row 3 has 3 cells but the header has 2; refusing to discard data$"
+    ):
+        csv_to_md.csv_to_md(source)
+
+
+def test_csv_to_md_converts_every_csv_file_of_a_folder_outside_git(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = tmp_path / "tables"
+    for name in ("kept.csv", "nested/deeper/also kept.csv"):
+        (source / name).parent.mkdir(parents=True, exist_ok=True)
+        (source / name).write_text("Name\nvalue\n", encoding="utf-8")
+    output = tmp_path / "converted"
+    nested = output / "nested" / "deeper" / "also kept.md"
+
+    assert main(["csv-to-md", str(source), "--dry-run", "-o", str(output)]) == 0
+    assert not output.exists()
+    assert capsys.readouterr().out == (
+        f"Would write: {output / 'kept.md'}\nWould write: {nested}\n"
+    )
+    assert main(["csv-to-md", str(source), "-o", str(output)]) == 0
+    assert sorted(path.relative_to(output).as_posix() for path in output.rglob("*.md")) == [
+        "kept.md",
+        "nested/deeper/also kept.md",
+    ]
+
+
+def test_an_unknown_delimiter_name_is_refused(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as stopped:
+        main(["csv-to-md", "table.csv", "--delimiter", "pipe"])
+    assert stopped.value.code == 2
+    assert "argument --delimiter: invalid choice: 'pipe'" in capsys.readouterr().err
 
 
 def test_the_delimiter_option_overrides_detection(

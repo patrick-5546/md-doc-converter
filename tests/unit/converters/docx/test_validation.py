@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from xml.etree import ElementTree as ET
 
 import pytest
 
 from md_doc_converter.converters.docx import publication as _publication
 from md_doc_converter.converters.docx import validation as _validation
-from md_doc_converter.converters.docx.models import SectionTarget, SourceDocument, SourceTable
+from md_doc_converter.converters.docx.models import (
+    ImageDescription,
+    SectionTarget,
+    SourceDocument,
+    SourceImage,
+    SourceTable,
+)
 from tests.support.docx import W, cell, row, table
 
 SVG = '<svg xmlns="http://www.w3.org/2000/svg"><g id="layer"/></svg>'
@@ -26,7 +33,7 @@ class Validator:
 
     def __call__(
         self,
-        pages: dict[str, str],
+        pages: Mapping[str, str],
         source: SourceDocument | None = None,
         *,
         split_depth: int = 0,
@@ -66,6 +73,8 @@ def word_document(
     bookmark_targets: dict[str, SectionTarget] | None = None,
     tables: list[SourceTable] | None = None,
     markdown_tables: set[str] | None = None,
+    images: list[SourceImage] | None = None,
+    link_targets: list[str] | None = None,
 ) -> SourceDocument:
     return SourceDocument(
         ET.Element(W + "document"),
@@ -74,53 +83,73 @@ def word_document(
         bookmark_targets=bookmark_targets or {},
         tables=tables or [],
         markdown_tables=markdown_tables or set(),
+        images=images or [],
+        link_targets=link_targets or [],
     )
 
 
-@pytest.mark.parametrize(
-    ("markdown", "reason"),
-    [
-        pytest.param(
-            '<a id="x"></a>\n\n<a id="x"></a>\n', "duplicate anchors on a page", id="duplicate-ids"
-        ),
-        pytest.param('<img alt="Figure">\n', "retained media has no source", id="no-source"),
-        pytest.param(
-            "![x](https://example.test/x.png)\n",
-            "an image is remote or was not recovered",
-            id="remote-image",
-        ),
-        pytest.param(
-            "![x](elsewhere/x.png)\n",
-            "an image is outside the image directory",
-            id="image-outside",
-        ),
-        pytest.param(
-            "![x](.images/guide/missing.png)\n", "an image file is missing", id="missing-image"
-        ),
-        pytest.param(
-            "![x](file://host/x.png)\n", "an image source cannot be checked", id="remote-file-image"
-        ),
-        pytest.param(
-            "![x](file:x.png)\n", "an image source cannot be checked", id="relative-file-url"
-        ),
-        pytest.param(
-            "[x](file://host/doc.pdf)\n", "a link target cannot be checked", id="remote-file-link"
-        ),
-        pytest.param(
-            "[x](.images/guide/missing.png)\n",
-            "a linked image file is missing",
-            id="missing-linked-image",
-        ),
-        pytest.param(
-            "[x](missing.pdf)\n", "a local link target does not exist", id="missing-local-file"
-        ),
-        pytest.param("[x](#nowhere)\n", "a link fragment does not resolve", id="missing-section"),
-    ],
-)
+# A page with each problem that a page check looks for, and the reason it reports.
+PAGE_PROBLEMS = [
+    pytest.param(
+        '<a id="x"></a>\n\n<a id="x"></a>\n', "duplicate anchors on a page", id="duplicate-ids"
+    ),
+    pytest.param('<img alt="Figure">\n', "retained media has no source", id="no-source"),
+    pytest.param(
+        "![x](https://example.test/x.png)\n",
+        "an image is remote or was not recovered",
+        id="remote-image",
+    ),
+    pytest.param(
+        "![x](elsewhere/x.png)\n",
+        "an image is outside the image directory",
+        id="image-outside",
+    ),
+    pytest.param(
+        "![x](.images/guide/missing.png)\n", "an image file is missing", id="missing-image"
+    ),
+    pytest.param(
+        "![x](file://host/x.png)\n", "an image source cannot be checked", id="remote-file-image"
+    ),
+    pytest.param("![x](file:x.png)\n", "an image source cannot be checked", id="relative-file-url"),
+    pytest.param(
+        "[x](file://host/doc.pdf)\n", "a link target cannot be checked", id="remote-file-link"
+    ),
+    pytest.param(
+        "[x](.images/guide/missing.png)\n",
+        "a linked image file is missing",
+        id="missing-linked-image",
+    ),
+    pytest.param(
+        "[x](missing.pdf)\n", "a local link target does not exist", id="missing-local-file"
+    ),
+    pytest.param("[x](#nowhere)\n", "a link fragment does not resolve", id="missing-section"),
+]
+
+
+@pytest.mark.parametrize(("markdown", "reason"), PAGE_PROBLEMS)
 def test_each_page_check_reports_its_problem(
     validate: Validator, markdown: str, reason: str
 ) -> None:
     assert validate({"guide.md": markdown}) == [reason]
+
+
+def test_every_problem_on_a_page_is_reported(validate: Validator) -> None:
+    page = "\n".join(str(problem.values[0]) for problem in PAGE_PROBLEMS)
+    assert sorted(validate({"guide.md": page})) == sorted(
+        str(problem.values[1]) for problem in PAGE_PROBLEMS
+    )
+
+
+@pytest.mark.parametrize("kind", ["empty", "symbolic-link"])
+def test_an_empty_or_linked_image_file_is_missing(
+    validate: Validator, kind: str, tmp_path: Path
+) -> None:
+    if kind == "empty":
+        validate.stage("pic.png", "")
+    else:
+        (tmp_path / "real.png").write_text("png", encoding="utf-8")
+        (validate.staged / "pic.png").symlink_to(tmp_path / "real.png")
+    assert validate({"guide.md": "![x](.images/guide/pic.png)\n"}) == ["an image file is missing"]
 
 
 def test_a_valid_page_reports_nothing(validate: Validator) -> None:
@@ -188,6 +217,13 @@ def test_fragments_into_local_files_are_checked_in_the_file(
     assert validate({"guide.md": f"[x]({target}) [y]({target})\n"}) == 2 * reasons
 
 
+def test_split_pages_with_one_title_each_report_nothing(validate: Validator) -> None:
+    pages = {"guide.md": "# Guide\n\n[A](guide/a.md#a)\n", "guide/a.md": "# A\n"}
+    assert validate(pages, split_depth=1) == []
+    # A document that splitting leaves as one page needs no title.
+    assert validate({"guide.md": "Text\n"}, split_depth=1) == []
+
+
 def test_split_pages_need_one_title_and_links_need_their_page(validate: Validator) -> None:
     pages = {
         "guide.md": "# Guide\n\n[Missing](guide/missing.md) [Present](guide/a.md#a)\n",
@@ -240,6 +276,54 @@ def test_images_must_match_the_word_document(validate: Validator) -> None:
     assert validate(pages, word_document(), compare=frozenset({"tables", "links"})) == []
 
 
+# One picture of the Word document.
+PICTURE = SourceImage(
+    "I0", "word/media/pic.png", PurePosixPath("pic.png"), ImageDescription("Picture", 0)
+)
+
+
+@pytest.mark.parametrize(
+    ("shown", "reasons"),
+    [
+        pytest.param(2, [], id="each-use"),
+        pytest.param(1, ["image occurrences differ from the Word document"], id="one-use-lost"),
+    ],
+)
+def test_each_use_of_an_image_counts(validate: Validator, shown: int, reasons: list[str]) -> None:
+    validate.stage("pic.png", "png")
+    pages = {"guide.md": "![x](.images/guide/pic.png)\n\n" * shown}
+    assert validate(pages, word_document(images=[PICTURE, PICTURE])) == reasons
+
+
+@pytest.mark.parametrize("target", ["https://example.test/", "#overview"], ids=["web", "section"])
+@pytest.mark.parametrize(
+    ("shown", "reasons"),
+    [
+        pytest.param(2, [], id="each-use"),
+        pytest.param(
+            1, ["a recovered Word hyperlink is missing from the output"], id="one-use-lost"
+        ),
+    ],
+)
+def test_each_use_of_a_word_hyperlink_counts(
+    validate: Validator, target: str, shown: int, reasons: list[str]
+) -> None:
+    page = "# Overview\n\n" + f"[Link]({target})\n\n" * shown
+    assert validate({"guide.md": page}, word_document(link_targets=[target, target])) == reasons
+
+
+def test_references_include_named_anchors_and_every_media_source() -> None:
+    page = ET.fromstring(
+        '<body><a name="legacy"></a><span name="ignored"></span><area href="map.html"/>'
+        '<object data="diagram.svg"></object><video src="clip.mp4" poster="poster.png"></video>'
+        "</body>"
+    )
+    references = _validation.collect_references(page)
+    assert references.anchors == ["legacy"]
+    assert references.links == []
+    assert references.images == ["diagram.svg", "clip.mp4", "poster.png"]
+
+
 WORD_TABLE = table(row(cell("a"), cell("b")), row(cell("1"), cell("2")))
 PIPE_TABLE = "| a | b |\n| --- | --- |\n| 1 | 2 |\n"
 
@@ -285,6 +369,12 @@ def test_pipe_tables_must_keep_the_word_table(
             "<table><tr><td>a</td></tr><tr><td>1</td><td>2</td></tr></table>",
             "a final table changed Word header/merge structure",
             id="lost-merge",
+        ),
+        pytest.param(
+            table(row(cell("a", colspan=2), header=True), row(cell("1"), cell("2"))),
+            '<table><tr><td colspan="2">a</td></tr><tr><td>1</td><td>2</td></tr></table>',
+            "a final table changed Word header/merge structure",
+            id="header-cell-as-data",
         ),
     ],
 )

@@ -2859,6 +2859,15 @@ def test_unnamed_and_duplicate_bookmarks_are_reported(convert: Converter) -> Non
     }
 
 
+# Every page that splitting the document writes, the deepest at split depth 3 or more.
+ALL_PAGES = [
+    "guide.md",
+    "guide/01-first.md",
+    "guide/01-first/01-third.md",
+    "guide/01-first/01-third/01-detail.md",
+]
+
+
 # The page of the level-3 heading at split depth 3 or more, and its link up.
 DETAIL_PAGE = ("guide/01-first/01-third/01-detail.md", "# Detail\n\n[Up](../../01-first.md#first)")
 
@@ -2907,7 +2916,10 @@ def test_split_depths_follow_closed_heading_levels_and_bookmark_links(
     stats = _pipeline.convert_docx(source, tmp_path / "guide.md", split_depth=depth)
     for page, text in pages:
         assert text in (tmp_path / page).read_text(encoding="utf-8")
-    assert stats["pages"] >= 1
+    # The document's page, then one for each heading the depth splits at: First, Third, Detail.
+    written = sorted(page.relative_to(tmp_path).as_posix() for page in tmp_path.rglob("*.md"))
+    assert written == ALL_PAGES[: min(depth, 3) + 1]
+    assert stats["pages"] == len(written)
 
 
 def test_depth_zero_preserves_previous_page_tree(convert: Converter, tmp_path: Path) -> None:
@@ -3103,7 +3115,8 @@ def test_urls_as_link_text_stay_one_link(convert: Converter, pandoc: str) -> Non
         ),
     )
     assert "[[" not in result
-    assert "&#92;" not in result
+    # Link text and autolinks keep underscores without protected backslashes.
+    assert _reference.BACKSLASH_REFERENCE not in result
     links = [
         (node.get("href"), "".join(node.itertext()))
         for node in _reference.pandoc_html(result, pandoc).iter("a")
