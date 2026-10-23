@@ -47,7 +47,7 @@ def test_unknown_options_are_refused(capsys: pytest.CaptureFixture[str]) -> None
 @pytest.mark.parametrize(
     ("value", "message"),
     [
-        # Python 3.14 quotes the value; earlier versions do not.
+        # Python 3.14 and later quote the value; earlier versions do not.
         pytest.param("-1", "invalid choice: '?-1'?", id="negative"),
         pytest.param("7", "invalid choice: '?7'?", id="too-deep"),
         pytest.param("text", "invalid int value: 'text'", id="not-a-number"),

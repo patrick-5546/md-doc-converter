@@ -122,7 +122,7 @@ tagging and fonts, and the PDF time limit. It needs the installed toolchain,
 Node.js, LibreOffice (`libreoffice` or `soffice`) and Poppler's `pdftocairo`,
 `pdfinfo`, `pdftotext`, `pdftohtml` and `pdffonts` on `PATH`.
 
-`.python-version` selects the newest supported Python, 3.14; to test the
+`.python-version` selects the newest supported Python, 3.15; to test the
 oldest, 3.11:
 
 ```sh
@@ -180,7 +180,7 @@ newer push to a pull request cancels its run in progress. Actions are pinned by
 commit SHA, checkouts keep no credentials, and each job has a time limit. The
 jobs:
 
-- `lint-and-core`: lint, then the core suite on Python 3.11 and 3.14, with the
+- `lint-and-core`: lint, then the core suite on Python 3.11 and 3.15, with the
   pinned Pandoc cached by `toolchain/install.py`;
 - `render`: installs Node.js 24, LibreOffice and Poppler, runs `setup` (cached
   by the npm manifests and the toolchain code) and the render suite;
