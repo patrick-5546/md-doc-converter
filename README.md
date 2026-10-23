@@ -89,7 +89,8 @@ worksheet should:
 
 - contain one table beginning in the first row and first column;
 - contain no populated cells outside the table;
-- use the desired output name, conventionally `##-File-Name`.
+- be named for the file it becomes: a worksheet `Pin-Assignments` becomes
+  `Pin-Assignments.csv`, which `csv-to-md` titles "Pin Assignments".
 
 `csv-to-md` converts one CSV file, or every CSV in a folder and its subfolders
 (skipping Git-ignored files when the folder is in a Git work tree). Each page
