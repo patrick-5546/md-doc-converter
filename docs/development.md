@@ -148,9 +148,11 @@ come separately. To update by hand:
 - **npm packages:** edit `src/md_doc_converter/toolchain/package.json`, then run
   `make lock-npm`. The next `setup` reinstalls the packages because the
   manifests' digest changes. A test checks that every locked package resolves
-  from `registry.npmjs.org`. When a package needs a newer Node.js, raise
-  `NODE_MINIMUM` in `toolchain/environment.py`, which `setup` and `doctor`
-  check.
+  from `registry.npmjs.org`. An override gives every package the KaTeX that the
+  math filter uses, so one copy is installed and Mermaid's math matches KaTeX's
+  stylesheet; a render test draws math inside a diagram. When a package needs a
+  newer Node.js, raise `NODE_MINIMUM` in `toolchain/environment.py`, which
+  `setup` and `doctor` check.
 - **Pandoc:** update `PANDOC_VERSION` in `toolchain/environment.py` and the
   `PANDOC` checksum in `toolchain/install.py` (the `sha256sum` of the release's
   `linux-amd64` archive), then update tests that compare exact Pandoc output.
