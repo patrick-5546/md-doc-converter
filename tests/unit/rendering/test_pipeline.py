@@ -48,9 +48,9 @@ class FakeRenderer:
     pandoc_calls: list[tuple[list[str], dict[str, object]]] = field(default_factory=list)
     printer_commands: list[list[str]] = field(default_factory=list)
 
-    def prepare(self, source: Path, *, respect_gitignore: bool) -> str:
+    def prepare(self, source: Path, *, respect_gitignore: bool) -> preprocess.PreparedMarkdown:
         self.prepare_calls.append((source, respect_gitignore))
-        return "# Prepared Markdown\n"
+        return preprocess.PreparedMarkdown("# Prepared Markdown\n")
 
     def run(self, command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         if command[0] == "git":
@@ -638,3 +638,17 @@ def test_an_escaped_pipe_in_table_code_renders_as_gfm_shows_it(pandoc: str) -> N
     )
     assert "<code>a|b</code>" in result.stdout
     assert "<code>c\\|d</code>" in result.stdout
+
+
+def test_pandoc_does_not_repeat_the_warnings_for_images_left_as_references() -> None:
+    reported = frozenset({"/docs/outside%20folder/a.png", "https://example.test/b.png"})
+    stderr = (
+        "[WARNING] Could not fetch resource /docs/outside folder/a.png\n"
+        "[WARNING] Could not fetch resource https://example.test/b.png\n"
+        "[WARNING] Could not fetch resource clip.mp4\n"
+        "[WARNING] Duplicate identifier 'a' at line 3\n"
+    )
+    assert render.pandoc_messages(stderr, reported) == (
+        "[WARNING] Could not fetch resource clip.mp4\n"
+        "[WARNING] Duplicate identifier 'a' at line 3\n"
+    )

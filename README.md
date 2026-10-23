@@ -198,9 +198,9 @@ Only `setup` downloads software: Pandoc from GitHub, npm packages from your npm
 registry, and chrome-headless-shell through Puppeteer from Google's Chrome for
 Testing downloads. Conversion and rendering run locally and do not upload
 documents. Rendering downloads nothing that a document names, nor reads a file
-it names outside its folder, so a document from elsewhere cannot copy your files
-into its HTML or PDF; it downloads only the files that your own `--extra-css`
-stylesheet names by URL. Rendered HTML embeds its images,
+it names outside its Git repository or folder, so a document from elsewhere
+cannot copy your files into its HTML or PDF; it downloads only the files that
+your own `--extra-css` stylesheet names by URL. Rendered HTML embeds its images,
 stylesheets and fonts, so opening it, or printing it to PDF, needs no network.
 
 ## Troubleshooting

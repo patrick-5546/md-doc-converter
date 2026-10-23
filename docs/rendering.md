@@ -49,20 +49,22 @@ opens anywhere without a network, and printing it to PDF needs none either.
 Links to other local files point to their absolute paths on the machine that
 rendered them.
 
-Rendering is safe for documents from elsewhere. It embeds only image files in
-the input's folder (the folder rendered, or the folder of the file), and reads
-no other file and downloads nothing that a document names, so a document
-cannot copy your files, such as SSH keys, into its HTML or PDF, nor tell its
-author when and where it was rendered. An image outside that folder, or one
-referenced by URL, stays a reference, with a warning: the HTML loads it when it
-is opened, and the PDF is printed without it. Rendered HTML runs no script: its
+Rendering is safe for documents from elsewhere. It embeds only image files
+inside the input's Git repository or, outside Git, inside the folder that holds
+the input: the file's folder, or the parent of a folder, where the folder's
+title page and its Word images are. It reads no other file and downloads
+nothing that a document names, so a document cannot copy your files, such as
+SSH keys, into its HTML or PDF, nor tell its author when and where it was
+rendered. Any other image, including one referenced by URL, stays a reference,
+with a warning: the HTML loads it when it is opened, and the PDF is printed
+without it. Rendered HTML runs no script: its
 content security policy allows none. The PDF is printed with JavaScript off,
 and the browser loads nothing but the HTML.
 
 ## Pipeline
 
 1. Preprocess the source Markdown into a private temporary file, embedding
-   the images in the input's folder.
+   its images.
 2. Convert it to self-contained HTML with Pandoc, in its sandbox, with Mermaid
    diagrams and KaTeX math, embedding the GitHub Markdown stylesheet, then the
    shared styles, the page header and footer and any extra stylesheet.

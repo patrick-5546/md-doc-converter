@@ -490,7 +490,7 @@ def test_failed_writer_is_an_explicit_error(monkeypatch: pytest.MonkeyPatch) -> 
         document.render(normalize_references=True)
 
 
-def test_only_image_files_inside_the_folder_are_embedded(
+def test_only_image_files_inside_the_root_are_embedded(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     folder = tmp_path / "docs"
@@ -504,16 +504,21 @@ def test_only_image_files_inside_the_folder_are_embedded(
         str(secret),
         secret.as_uri(),
         str(folder / "pictures" / "escape.png"),
+        str(folder / "pictures"),
         str(folder / "notes.txt"),
         "https://example.test/remote.png",
+        str(folder / "missing.png"),
     ]
-    markdown = (
+    document = MarkdownDocument(
         f'![chart]({chart}#part) <img src="{chart}">\n\n'
         + " ".join(f"![kept]({target})" for target in kept)
         + "\n\n![data](data:image/png;base64,ZGF0YQ==) [link](https://example.test/page)\n"
     )
+    embed = preprocess.ImageEmbedder(folder)
 
-    result = preprocess.embed_images(markdown, folder)
+    embed(document)
+    embed(MarkdownDocument(f"![again]({secret})\n"))
+    result = document.render()
 
     assert "data:image/png;base64,Y2hhcnQ=#part" in result
     assert '<img src="data:image/png;base64,Y2hhcnQ=">' in result
@@ -521,16 +526,34 @@ def test_only_image_files_inside_the_folder_are_embedded(
         assert f"]({target})" in result
     assert "](data:image/png;base64,ZGF0YQ==)" in result
     assert "[link](https://example.test/page)" in result
+    assert embed.unembedded == set(kept)
+    # Each is reported once, except a missing image, which warn_broken_images reports.
     assert capsys.readouterr().err.splitlines() == [
-        f"WARNING: image {secret} is not embedded: it is not a file in {folder}",
-        f"WARNING: image {secret.as_uri()} is not embedded: it is not a file in {folder}",
+        f"WARNING: image {secret} is not embedded: it is outside {folder}",
+        f"WARNING: image {secret.as_uri()} is not embedded: it is outside {folder}",
         (
             f"WARNING: image {folder / 'pictures' / 'escape.png'} is not embedded: "
-            f"it is not a file in {folder}"
+            f"it is outside {folder}"
         ),
+        f"WARNING: image {folder / 'pictures'} is not embedded: it is not a file",
         f"WARNING: image {folder / 'notes.txt'} is not embedded: it is not an image",
         (
             "WARNING: image https://example.test/remote.png is not embedded: "
             "rendering downloads nothing"
         ),
     ]
+
+
+@pytest.mark.parametrize("git", [True, False], ids=["in-a-repository", "outside-git"])
+@pytest.mark.parametrize("kind", ["file", "folder"])
+def test_images_are_embedded_from_the_repository_or_the_folder_holding_the_input(
+    tmp_path: Path, git: bool, kind: str
+) -> None:
+    project = tmp_path / "project"
+    pages = project / "docs" / "guide"
+    pages.mkdir(parents=True)
+    if git:
+        subprocess.run(["git", "init", "--quiet", str(project)], check=True)
+    source = pages if kind == "folder" else pages / "page.md"
+    holder = project if git else source.parent.resolve()
+    assert preprocess.image_root(source) == holder.resolve()

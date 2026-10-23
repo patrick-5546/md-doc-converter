@@ -15,7 +15,7 @@ import urllib.request
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from urllib.parse import unquote, urlsplit
 
 from md_doc_converter.media_types import FONT_TYPES, IMAGE_TYPES
@@ -23,6 +23,9 @@ from md_doc_converter.rendering.header import page_css
 from md_doc_converter.resources import asset_path
 from md_doc_converter.toolchain.checks import render_problems
 from md_doc_converter.toolchain.environment import Toolchain, render_environment, toolchain
+
+if TYPE_CHECKING:
+    from md_doc_converter.markdown.preprocess import PreparedMarkdown
 
 PDF_PRINTER = Path(__file__).with_name("print-pdf.mjs")
 # Stylesheets in the installed npm packages.
@@ -274,7 +277,7 @@ def _filter_gitignored(choice: bool | None, source: Path) -> bool:
     return in_git_work_tree(source)
 
 
-def _prepare_markdown(source: Path, *, respect_gitignore: bool) -> str:
+def _prepare_markdown(source: Path, *, respect_gitignore: bool) -> PreparedMarkdown:
     # Imported here so command-line help does not load the Markdown toolchain.
     from md_doc_converter.markdown.document import MarkdownError
     from md_doc_converter.markdown.headings import HeadingError
@@ -284,6 +287,22 @@ def _prepare_markdown(source: Path, *, respect_gitignore: bool) -> str:
         return prepare_markdown(source, respect_gitignore=respect_gitignore)
     except (MarkdownError, HeadingError, ValueError) as error:
         raise RenderError(f"cannot prepare {source}: {error}") from error
+
+
+# How Pandoc reports a resource that it cannot embed, such as an image outside its sandbox.
+_NOT_FETCHED = "[WARNING] Could not fetch resource "
+
+
+def pandoc_messages(stderr: str, reported: frozenset[str]) -> str:
+    """Pandoc's messages, without its warnings for the images that preparation reported."""
+    known = {unquote(target) for target in reported}
+    return "".join(
+        line
+        for line in stderr.splitlines(keepends=True)
+        if not (
+            line.startswith(_NOT_FETCHED) and unquote(line[len(_NOT_FETCHED) :].strip()) in known
+        )
+    )
 
 
 def _keep(work: Path, directory: Path) -> None:
@@ -350,9 +369,8 @@ def render_markdown(
             name = destination.stem
             prepared = work / "markdown" / f"{name}.md"
             prepared.parent.mkdir()
-            prepared.write_text(
-                _prepare_markdown(source, respect_gitignore=filter_gitignored), encoding="utf-8"
-            )
+            markdown = _prepare_markdown(source, respect_gitignore=filter_gitignored)
+            prepared.write_text(markdown.text, encoding="utf-8")
 
             styles_file = work / "page-styles.html"
             styles_file.write_text(
@@ -364,25 +382,31 @@ def render_markdown(
             staged_dir = work / "render"
             staged_dir.mkdir()
             html = staged_dir / f"{name}.html"
-            subprocess.run(
-                [
-                    "pandoc",
-                    # Read no file and fetch no URL that the document names; images it may
-                    # show are embedded during preparation.
-                    "--sandbox",
-                    "--defaults",
-                    str(asset_path("pandoc-defaults.yaml")),
-                    "--standalone",
-                    "--include-in-header",
-                    str(styles_file),
-                    "-o",
-                    str(html),
-                    str(prepared),
-                ],
+            command = [
+                "pandoc",
+                # Read no file and fetch no URL that the document names; the images that it
+                # may show are embedded during preparation.
+                "--sandbox",
+                "--defaults",
+                str(asset_path("pandoc-defaults.yaml")),
+                "--standalone",
+                "--include-in-header",
+                str(styles_file),
+                "-o",
+                str(html),
+                str(prepared),
+            ]
+            converted = subprocess.run(
+                command,
                 cwd=work,
                 env={**environment, KATEX_STYLESHEET_VARIABLE: katex_file.as_uri()},
-                check=True,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
             )
+            sys.stderr.write(pandoc_messages(converted.stderr or "", markdown.unembedded))
+            if converted.returncode:
+                raise subprocess.CalledProcessError(converted.returncode, command)
             staged = html
             if pdf:
                 staged = staged_dir / f"{name}.pdf"

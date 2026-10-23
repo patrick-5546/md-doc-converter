@@ -458,6 +458,7 @@ def _prepare_document(
     stats: dict[str, Counter[str]] | None = None,
     *,
     single_file: bool = False,
+    embed: Callable[[MarkdownDocument], None] | None = None,
 ) -> MarkdownDocument:
     """Run text cleanup and target transforms with one parse per source file.
 
@@ -474,6 +475,8 @@ def _prepare_document(
         warn_crossfile_md_links(document, source_path, stats["warn_crossfile_md_links"])
     for target_transform in TARGET_TRANSFORMS:
         target_transform(document, source_path, stats[target_transform.__name__])
+    if embed is not None:
+        embed(document)
 
     # Definitions are file-scoped, even when their labels are unused locally.
     # The parser resolves full, collapsed and shortcut references, not this check.
@@ -496,9 +499,12 @@ def preprocess(
     stats: dict[str, Counter[str]] | None = None,
     *,
     single_file: bool = False,
+    embed: Callable[[MarkdownDocument], None] | None = None,
 ) -> str:
     """Return private, prepared Markdown without changing its source."""
-    return _prepare_document(text, source_path, stats, single_file=single_file).render()
+    return _prepare_document(
+        text, source_path, stats, single_file=single_file, embed=embed
+    ).render()
 
 
 def print_stats(stats: dict[str, Counter[str]]) -> None:
@@ -563,7 +569,11 @@ def _git_ignored(names: list[str], directory: Path) -> set[str]:
 
 
 def collect_directory(
-    root: Path, stats: dict[str, Counter[str]], respect_gitignore: bool = False
+    root: Path,
+    stats: dict[str, Counter[str]],
+    respect_gitignore: bool = False,
+    *,
+    embed: Callable[[MarkdownDocument], None] | None = None,
 ) -> str:
     """Collect all .md files in a directory tree into one document.
 
@@ -633,7 +643,7 @@ def collect_directory(
         """Read a markdown file, run all transforms, and record its heading anchors."""
         print(f"  {file_path}", file=sys.stderr)
         content = file_path.read_text(encoding="utf-8")
-        document = _prepare_document(content, source_path=str(file_path), stats=stats)
+        document = _prepare_document(content, source_path=str(file_path), stats=stats, embed=embed)
         normalized = os.path.normpath(file_path)
         return _CollectedMarkdown(normalized, document.render(), document.headings, document)
 
@@ -804,61 +814,106 @@ def _file_link_resolver(
     return _replace
 
 
-def embed_images(markdown: str, root: Path) -> str:
-    """Embed each image file inside *root* that *markdown* shows, as a data URI.
+@dataclass(frozen=True)
+class PreparedMarkdown:
+    """Markdown ready for Pandoc, and the image targets in it that were not embedded."""
 
-    Rendering runs Pandoc in its sandbox, which reads no file and fetches no URL that a
-    document names, so a document from elsewhere cannot copy files from outside its folder,
-    such as ~/.ssh, into the HTML or PDF, nor tell its author where it was rendered. Other
-    images stay references, with a warning: the HTML loads them when it is opened, and the
-    PDF is printed without them.
+    text: str
+    # Each was reported with its reason, so Pandoc, which cannot read them, need not repeat it.
+    unembedded: frozenset[str] = frozenset()
+
+
+def _git_toplevel(directory: Path) -> Path | None:
+    """The root of the Git work tree that holds *directory*, if Git is available."""
+    if shutil.which("git") is None:
+        return None
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(directory), "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    top = proc.stdout.strip()
+    return Path(top).resolve() if proc.returncode == 0 and top else None
+
+
+def image_root(source: Path) -> Path:
+    """The folder whose image files rendering *source* may embed.
+
+    That is the Git work tree that holds *source*, or else the folder that holds it: a file's
+    folder, or a folder's parent, which holds the folder's title page and the images that
+    docx-to-md writes beside it.
     """
-    root = root.resolve()
-    document = MarkdownDocument(markdown)
-    warnings: list[str] = []
+    top = _git_toplevel(source if source.is_dir() else source.parent)
+    return top if top is not None else source.parent.resolve()
 
-    def _embed(target: str, image: bool) -> str:
+
+class ImageEmbedder:
+    """Embeds the image files that documents show as data URIs, if they are inside *root*.
+
+    Rendering runs Pandoc in its sandbox, which reads no file and fetches no URL that a document
+    names, so a document from elsewhere cannot copy files from outside *root*, such as ~/.ssh,
+    into the HTML or PDF, nor tell its author where it was rendered. Any other image stays a
+    reference, reported once: the HTML loads it when it is opened, and the PDF is printed
+    without it.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self.root = root.resolve()
+        self.unembedded: set[str] = set()
+
+    def __call__(self, document: MarkdownDocument) -> None:
+        document.transform_targets(self._embed)
+
+    def _left(self, target: str, reason: str | None) -> str:
+        """Leave *target* as it is, reporting why, once, unless another check already did."""
+        if target not in self.unembedded and reason is not None:
+            print(f"WARNING: image {target} is not embedded: {reason}", file=sys.stderr)
+        self.unembedded.add(target)
+        return target
+
+    def _embed(self, target: str, image: bool) -> str:
         url = urlsplit(target)
         scheme = url.scheme.casefold()
         if not image or scheme == "data" or not (url.path or url.netloc):
             return target
         if url.netloc or scheme not in {"", "file"}:
-            warnings.append(f"{target} is not embedded: rendering downloads nothing")
-            return target
+            return self._left(target, "rendering downloads nothing")
         try:
             path = Path(unquote(url.path)).resolve(strict=True)
         except (OSError, RuntimeError):
-            return target  # warn_broken_images names an image that does not exist.
-        if not path.is_relative_to(root) or not path.is_file():
-            warnings.append(f"{target} is not embedded: it is not a file in {root}")
-            return target
+            return self._left(target, None)  # warn_broken_images names a missing image.
+        if not path.is_relative_to(self.root):
+            return self._left(target, f"it is outside {self.root}")
+        if not path.is_file():
+            return self._left(target, "it is not a file")
         kind = IMAGE_TYPES.get(path.suffix.casefold())
         if kind is None:
-            warnings.append(f"{target} is not embedded: it is not an image")
-            return target
+            return self._left(target, "it is not an image")
         data = base64.b64encode(path.read_bytes()).decode("ascii")
         fragment = f"#{url.fragment}" if url.fragment else ""
         return f"data:{kind};base64,{data}{fragment}"
 
-    document.transform_targets(_embed)
-    for warning in dict.fromkeys(warnings):
-        print(f"WARNING: image {warning}", file=sys.stderr)
-    return document.render()
 
-
-def prepare_markdown(source: Path, *, respect_gitignore: bool = False) -> str:
+def prepare_markdown(source: Path, *, respect_gitignore: bool = False) -> PreparedMarkdown:
     """Prepare a Markdown file, or every Markdown file in a folder, for Pandoc.
 
     Report what changed on stderr. *respect_gitignore* skips what Git ignores in a folder.
-    Images in the folder, or in the file's folder, are embedded; see embed_images.
+    The images in image_root(source) are embedded; see ImageEmbedder.
     """
     # Per-transform change counts, shared across every file processed.
     stats: dict[str, Counter[str]] = defaultdict(Counter)
+    embed = ImageEmbedder(image_root(source))
     if source.is_dir():
         # Each file is preprocessed during collection.
-        result = collect_directory(source, stats, respect_gitignore=respect_gitignore)
+        result = collect_directory(source, stats, respect_gitignore=respect_gitignore, embed=embed)
     else:
         text = source.read_text(encoding="utf-8")
-        result = preprocess(text, source_path=str(source), stats=stats, single_file=True)
+        result = preprocess(
+            text, source_path=str(source), stats=stats, single_file=True, embed=embed
+        )
     print_stats(stats)
-    return embed_images(result, source if source.is_dir() else source.parent)
+    return PreparedMarkdown(result, frozenset(embed.unembedded))
