@@ -171,10 +171,13 @@ def test_reference_folder_renders_linked_html_and_pdf_with_images(tmp_path: Path
     assert 'class="katex"' in html
     assert 'class="katex-display"' in html
     assert 'class="katex-error"' in html
-    # KaTeX's stylesheet is embedded with its WOFF2 fonts only, and nothing is linked.
-    assert re.search(r"font-family:KaTeX_Main;[^}]*src:url\(data:font/woff2;base64,", html)
-    assert 'format("woff")' not in html
-    assert "<link" not in html
+    # KaTeX's stylesheet is embedded, as a data URI, with its WOFF2 fonts only; nothing else
+    # is linked.
+    [katex] = re.findall(r'<link href="data:text/css;base64,([^"]+)" rel="stylesheet" />', html)
+    katex_css = base64.b64decode(katex).decode("utf-8")
+    assert re.search(r"font-family:KaTeX_Main;[^}]*src:url\(data:font/woff2;base64,", katex_css)
+    assert 'format("woff")' not in katex_css
+    assert html.count("<link") == 1
     assert 'content: "Package layout validation"' in html
     assert 'content: "Draft"' in html
 
@@ -199,3 +202,39 @@ def test_reference_folder_renders_linked_html_and_pdf_with_images(tmp_path: Path
         assert path.read_text(encoding="utf-8") == text
     assert image.read_bytes() == pixel_png()
     assert sorted(path.name for path in docs.glob("*.md")) == ["a.md", "b page.md"]
+
+
+def test_a_document_from_elsewhere_cannot_read_local_files_into_its_output(
+    tmp_path: Path,
+) -> None:
+    secret = tmp_path / "secret.png"
+    secret.write_bytes(b"top-secret-token")
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "pixel.png").write_bytes(pixel_png())
+    read_secret = (
+        f'var request = new XMLHttpRequest(); request.open("GET", "{secret.as_uri()}", false); '
+        'request.send(); document.getElementById("leak").textContent = "LEAKED " + '
+        "request.responseText;"
+    )
+    (docs / "page.md").write_text(
+        "# Page\n\n![inside](pixel.png)\n\n"
+        f"![absolute]({secret}) ![relative](../secret.png)\n\n"
+        f'<img src="{secret.as_uri()}">\n\n<p id="leak">Kept</p>\n\n'
+        f"<script>\n{read_secret}\n</script>\n",
+        encoding="utf-8",
+    )
+
+    command(tmp_path, *CLI, "md-to-html", "docs/page.md")
+    html = (docs / "page.html").read_text(encoding="utf-8")
+    assert "data:image/png;base64," + base64.b64encode(pixel_png()).decode("ascii") in html
+    assert "top-secret-token" not in html
+    assert base64.b64encode(b"top-secret-token").decode("ascii") not in html
+    assert '<meta http-equiv="Content-Security-Policy"' in html
+
+    command(tmp_path, *CLI, "md-to-pdf", "docs/page.md")
+    text = subprocess.run(
+        ["pdftotext", str(docs / "page.pdf"), "-"], capture_output=True, text=True, check=True
+    ).stdout
+    assert "Kept" in text
+    assert "LEAKED" not in text

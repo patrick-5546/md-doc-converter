@@ -281,6 +281,14 @@ def _validate_svg_root(root: ET.Element, path: Path | str) -> None:
     if len(ids) != len(set(ids)):
         raise ConversionError(f"Duplicate SVG fragment identities in {path}")
     targets: list[str] = []
+    for node in root.iter():
+        name = node.tag.rsplit("}", 1)[-1] if isinstance(node.tag, str) else ""
+        handlers = [
+            key for key in node.attrib if key.rsplit("}", 1)[-1].casefold().startswith("on")
+        ]
+        # A script would run where the SVG is opened as a page rather than shown as an image.
+        if name == "script" or handlers:
+            raise ConversionError(f"SVG contains script: {path}")
     css_attributes = {
         "style",
         "clip-path",

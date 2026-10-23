@@ -1,7 +1,8 @@
 // Render math with KaTeX: a Pandoc JSON filter, which Pandoc runs with Node.js, that
 // replaces each Math element with the HTML KaTeX renders for it. Invalid TeX is shown in
 // KaTeX's error color instead of failing the render. A document with math gets the
-// stylesheet MD_DOC_CONVERTER_KATEX_CSS names, which Pandoc then embeds with its fonts.
+// stylesheet that MD_DOC_CONVERTER_KATEX_CSS names, with its fonts, as a data URI: Pandoc
+// renders in its sandbox, which reads no file that the document names.
 //
 // katex is loaded from MD_DOC_CONVERTER_NODE_MODULES, the node_modules directory that
 // `md-doc-converter setup` installs. The filter uses only import(), so Node.js can run it
@@ -40,6 +41,8 @@ function addStylesheet(document, stylesheet) {
 async function main() {
 	const { createRequire } = await import("node:module");
 	const { join } = await import("node:path");
+	const { readFile } = await import("node:fs/promises");
+	const { fileURLToPath } = await import("node:url");
 	const nodeModules = process.env.MD_DOC_CONVERTER_NODE_MODULES;
 	if (!nodeModules) {
 		throw new Error("MD_DOC_CONVERTER_NODE_MODULES is not set");
@@ -55,7 +58,8 @@ async function main() {
 		if (!stylesheet) {
 			throw new Error("MD_DOC_CONVERTER_KATEX_CSS is not set");
 		}
-		addStylesheet(document, stylesheet);
+		const css = await readFile(fileURLToPath(stylesheet));
+		addStylesheet(document, `data:text/css;base64,${css.toString("base64")}`);
 	}
 	process.stdout.write(JSON.stringify(document));
 }

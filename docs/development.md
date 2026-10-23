@@ -6,6 +6,7 @@
 src/md_doc_converter/
   __main__.py               # command-line entry point with lazy command dispatch
   resources.py, pandoc.py   # packaged file paths, version, typed Pandoc parsing
+  media_types.py            # media types of the images and fonts that rendering embeds
   markdown/                 # preprocessing, headings, code regions, literal cells
   converters/
     excel.py, csv.py

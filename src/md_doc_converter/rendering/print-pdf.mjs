@@ -68,12 +68,25 @@ const timeout = timeoutSeconds * 1000;
 try {
 	const browser = await puppeteer.launch({
 		headless: "shell",
-		args: ["--disable-dev-shm-usage", "--allow-file-access-from-files"],
+		args: ["--disable-dev-shm-usage"],
 		protocolTimeout: timeout,
 	});
 	const page = await browser.newPage();
 	page.setDefaultTimeout(timeout);
-	await page.goto(pathToFileURL(input).href, { waitUntil: "load" });
+	// The HTML embeds everything it shows and needs no script: a document from elsewhere
+	// can neither run code nor load a file or URL while it is printed.
+	const document = pathToFileURL(input).href;
+	await page.setJavaScriptEnabled(false);
+	await page.setRequestInterception(true);
+	page.on("request", (request) => {
+		const url = request.url();
+		if (url === document || url.startsWith("data:")) {
+			request.continue();
+		} else {
+			request.abort();
+		}
+	});
+	await page.goto(document, { waitUntil: "load" });
 	const pdf = await page.pdf({
 		preferCSSPageSize: true,
 		printBackground: true,

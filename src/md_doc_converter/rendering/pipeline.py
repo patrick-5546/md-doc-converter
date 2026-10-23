@@ -3,17 +3,22 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import mimetypes
 import os
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.request
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Literal
+from urllib.parse import unquote, urlsplit
 
+from md_doc_converter.media_types import FONT_TYPES, IMAGE_TYPES
 from md_doc_converter.rendering.header import page_css
 from md_doc_converter.resources import asset_path
 from md_doc_converter.toolchain.checks import render_problems
@@ -29,6 +34,15 @@ KATEX_STYLESHEET_VARIABLE = "MD_DOC_CONVERTER_KATEX_CSS"
 KATEX_FONT_SOURCES = re.compile(
     r'src:url\(fonts/([^()]+\.woff2)\) format\("woff2"\)(?:,url\([^()]*\) format\("[^"]*"\))*'
 )
+# Rendered pages run no script and load nothing but the images and media they show; the
+# rest is embedded. The PDF printer also runs without JavaScript and blocks other requests.
+CONTENT_SECURITY_POLICY = (
+    '<meta http-equiv="Content-Security-Policy" content="'
+    "default-src 'none'; img-src * data:; media-src * data:; style-src 'unsafe-inline' data:; "
+    "font-src data:; base-uri 'none'; form-action 'none'\">"
+)
+# A url() in a stylesheet, its address quoted or not.
+_CSS_URL = re.compile(r"""url\(\s*(?:"([^"]*)"|'([^']*)'|([^)\s"']*))\s*\)""")
 PDF_TIMEOUT_DEFAULT = 600
 # Node timers overflow above 2**31 - 1 milliseconds.
 PDF_TIMEOUT_MAX = 2_147_483
@@ -136,7 +150,48 @@ def _read_extra_css(path: Path) -> str:
         raise RenderError(f"Cannot read extra stylesheet {path}: {error}") from error
     if "</style" in text.lower():
         raise RenderError(f"Extra stylesheet must not contain '</style': {path}")
-    return text
+    return embed_stylesheet_files(text, path.parent)
+
+
+def embed_stylesheet_files(css: str, folder: Path) -> str:
+    """Embed the files that the url()s of the user's stylesheet name, as data URIs.
+
+    Pandoc reads none of them in its sandbox. Local paths are relative to *folder*, and
+    http(s) URLs are downloaded; one that cannot be read stays as it is, with a warning.
+    """
+
+    def embed(match: re.Match[str]) -> str:
+        target = next((group for group in match.groups() if group is not None), "")
+        url = urlsplit(target)
+        scheme = url.scheme.casefold()
+        if scheme in {"http", "https"}:
+            reader = f"{target} could not be downloaded"
+        elif scheme in {"", "file"} and url.path and not url.netloc:
+            reader = f"{target} could not be read"
+        else:
+            return match[0]
+        try:
+            if scheme in {"http", "https"}:
+                with urllib.request.urlopen(target, timeout=60) as response:
+                    data = response.read()
+                    kind = response.headers.get_content_type()
+            else:
+                path = folder / unquote(url.path)
+                data = path.read_bytes()
+                suffix = path.suffix.casefold()
+                kind = (
+                    FONT_TYPES.get(suffix)
+                    or IMAGE_TYPES.get(suffix)
+                    or mimetypes.guess_type(path.name)[0]
+                    or "application/octet-stream"
+                )
+        except (OSError, ValueError) as error:
+            print(f"WARNING: extra stylesheet: {reader}: {error}", file=sys.stderr)
+            return match[0]
+        fragment = f"#{url.fragment}" if url.fragment else ""
+        return f'url("data:{kind};base64,{base64.b64encode(data).decode("ascii")}{fragment}")'
+
+    return _CSS_URL.sub(embed, css)
 
 
 def page_styles(header: str = "", footer: str = "", extra_css: str = "") -> str:
@@ -169,7 +224,9 @@ def katex_stylesheet(tools: Toolchain) -> str:
         font = dist / "fonts" / match[1]
         if not font.is_file():
             missing.append(match[1])
-        return f'src:url({font.as_uri()}) format("woff2")'
+            return match[0]
+        data = base64.b64encode(font.read_bytes()).decode("ascii")
+        return f'src:url(data:font/woff2;base64,{data}) format("woff2")'
 
     try:
         css, fonts = KATEX_FONT_SOURCES.subn(
@@ -299,7 +356,8 @@ def render_markdown(
 
             styles_file = work / "page-styles.html"
             styles_file.write_text(
-                f"<style>\n{base_css.strip()}\n</style>\n{styles}", encoding="utf-8"
+                f"{CONTENT_SECURITY_POLICY}\n<style>\n{base_css.strip()}\n</style>\n{styles}",
+                encoding="utf-8",
             )
             katex_file = work / "katex.css"
             katex_file.write_text(math_css, encoding="utf-8")
@@ -309,6 +367,9 @@ def render_markdown(
             subprocess.run(
                 [
                     "pandoc",
+                    # Read no file and fetch no URL that the document names; images it may
+                    # show are embedded during preparation.
+                    "--sandbox",
                     "--defaults",
                     str(asset_path("pandoc-defaults.yaml")),
                     "--standalone",

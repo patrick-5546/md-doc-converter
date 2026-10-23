@@ -538,3 +538,21 @@ def test_a_caption_or_word_alt_text_wins_over_the_heading() -> None:
         paragraph("Other", "Heading1"),
         image(alt="Word"),
     ) == [("Caption", False), ("Word", False)]
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        pytest.param("<script>alert(1)</script>", id="script"),
+        pytest.param('<rect onload="alert(1)"/>', id="event-handler"),
+        pytest.param(
+            '<foreignObject><body xmlns="http://www.w3.org/1999/xhtml">'
+            "<script>alert(1)</script></body></foreignObject>",
+            id="html-script",
+        ),
+    ],
+)
+def test_svgs_with_script_are_refused(content: str) -> None:
+    svg = f'<svg xmlns="http://www.w3.org/2000/svg">{content}</svg>'.encode()
+    with pytest.raises(_models.ConversionError, match=r"SVG contains script"):
+        _media.validate_svg_bytes(svg, "drawing.svg")

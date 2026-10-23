@@ -2105,6 +2105,28 @@ def test_native_svg_extension_is_preferred_over_raster_fallback(convert: Convert
     assert stats["unique_images"] == 1
 
 
+def test_a_word_svg_with_script_takes_its_raster_fallback(convert: Converter) -> None:
+    content = image("png")
+    blip = content.find(f".//{_ooxml.DRAWING}blip")
+    assert blip is not None
+    extension = ET.SubElement(
+        ET.SubElement(blip, _ooxml.DRAWING + "extLst"), _ooxml.DRAWING + "ext"
+    )
+    ET.SubElement(extension, _ooxml.SVG_DRAWING + "svgBlip", {R + "embed": "svg"})
+    scripted = SVG.replace(b"<path", b"<script>alert(1)</script><path")
+    result, _report, warnings = convert.reported(
+        [content],
+        relations=(
+            ("png", "image", "media/fallback.png", "Internal"),
+            ("svg", "image", "media/vector.svg", "Internal"),
+        ),
+        media={"fallback.png": PNG, "vector.svg": scripted},
+    )
+    assert "fallback.png" in result
+    assert "vector.svg" not in result
+    assert "SVG contains script" in warnings
+
+
 @pytest.mark.parametrize("kind", ["pict", "object"])
 def test_legacy_picture_and_object_previews_keep_metadata(
     kind: str, convert: Converter, pandoc: str

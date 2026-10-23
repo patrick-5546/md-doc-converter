@@ -46,16 +46,26 @@ md-doc-converter md-to-pdf docs/spec.md --keep-intermediates /tmp/spec-render
 The HTML is self-contained: it embeds its images, the GitHub Markdown
 stylesheet and, for a document with math, KaTeX's stylesheet and fonts. It
 opens anywhere without a network, and printing it to PDF needs none either.
-Images that the Markdown references by URL are downloaded and embedded too; one
-that cannot be downloaded stays a link, with a warning. Links to other local
-files point to their absolute paths on the machine that rendered them.
+Links to other local files point to their absolute paths on the machine that
+rendered them.
+
+Rendering is safe for documents from elsewhere. It embeds only image files in
+the input's folder (the folder rendered, or the folder of the file), and reads
+no other file and downloads nothing that a document names, so a document
+cannot copy your files, such as SSH keys, into its HTML or PDF, nor tell its
+author when and where it was rendered. An image outside that folder, or one
+referenced by URL, stays a reference, with a warning: the HTML loads it when it
+is opened, and the PDF is printed without it. Rendered HTML runs no script: its
+content security policy allows none. The PDF is printed with JavaScript off,
+and the browser loads nothing but the HTML.
 
 ## Pipeline
 
-1. Preprocess the source Markdown into a private temporary file.
-2. Convert it to self-contained HTML with Pandoc, Mermaid diagrams and KaTeX
-   math, embedding the images and the GitHub Markdown stylesheet, then the shared
-   styles, the page header and footer and any extra stylesheet.
+1. Preprocess the source Markdown into a private temporary file, embedding
+   the images in the input's folder.
+2. Convert it to self-contained HTML with Pandoc, in its sandbox, with Mermaid
+   diagrams and KaTeX math, embedding the GitHub Markdown stylesheet, then the
+   shared styles, the page header and footer and any extra stylesheet.
 3. For `md-to-pdf`, print the HTML with headless Chrome, which lays out the
    pages from the stylesheet's page rules, to a tagged PDF with heading
    bookmarks and clickable links, limited by [`--pdf-timeout`](#pdf-time-limit).
@@ -166,7 +176,8 @@ an extra stylesheet can use.
 `--extra-css FILE` applies a stylesheet after the shared styles and the header
 and footer, for additional branding or layout. It is inlined into the HTML, so
 it must not contain `</style`. Files it references with `url()`, such as fonts
-or a logo, are embedded; give them as absolute paths or URLs. Keep content
+or a logo, are embedded: paths, absolute or relative to the stylesheet, and
+URLs, which are downloaded. Keep content
 within the page width: when anything is wider, Chrome shrinks every page of the
 PDF to fit it.
 

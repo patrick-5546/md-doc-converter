@@ -29,6 +29,7 @@ matching heading), and unresolved ones are reported on stderr.
 that git ignores.
 """
 
+import base64
 import os
 import posixpath
 import re
@@ -50,6 +51,7 @@ from md_doc_converter.markdown.syntax import (
     markdown_prose_lines,
     transform_outside_code,
 )
+from md_doc_converter.media_types import IMAGE_TYPES
 
 if TYPE_CHECKING:
     from md_doc_converter.markdown.headings import Heading
@@ -802,10 +804,53 @@ def _file_link_resolver(
     return _replace
 
 
+def embed_images(markdown: str, root: Path) -> str:
+    """Embed each image file inside *root* that *markdown* shows, as a data URI.
+
+    Rendering runs Pandoc in its sandbox, which reads no file and fetches no URL that a
+    document names, so a document from elsewhere cannot copy files from outside its folder,
+    such as ~/.ssh, into the HTML or PDF, nor tell its author where it was rendered. Other
+    images stay references, with a warning: the HTML loads them when it is opened, and the
+    PDF is printed without them.
+    """
+    root = root.resolve()
+    document = MarkdownDocument(markdown)
+    warnings: list[str] = []
+
+    def _embed(target: str, image: bool) -> str:
+        url = urlsplit(target)
+        scheme = url.scheme.casefold()
+        if not image or scheme == "data" or not (url.path or url.netloc):
+            return target
+        if url.netloc or scheme not in {"", "file"}:
+            warnings.append(f"{target} is not embedded: rendering downloads nothing")
+            return target
+        try:
+            path = Path(unquote(url.path)).resolve(strict=True)
+        except (OSError, RuntimeError):
+            return target  # warn_broken_images names an image that does not exist.
+        if not path.is_relative_to(root) or not path.is_file():
+            warnings.append(f"{target} is not embedded: it is not a file in {root}")
+            return target
+        kind = IMAGE_TYPES.get(path.suffix.casefold())
+        if kind is None:
+            warnings.append(f"{target} is not embedded: it is not an image")
+            return target
+        data = base64.b64encode(path.read_bytes()).decode("ascii")
+        fragment = f"#{url.fragment}" if url.fragment else ""
+        return f"data:{kind};base64,{data}{fragment}"
+
+    document.transform_targets(_embed)
+    for warning in dict.fromkeys(warnings):
+        print(f"WARNING: image {warning}", file=sys.stderr)
+    return document.render()
+
+
 def prepare_markdown(source: Path, *, respect_gitignore: bool = False) -> str:
     """Prepare a Markdown file, or every Markdown file in a folder, for Pandoc.
 
     Report what changed on stderr. *respect_gitignore* skips what Git ignores in a folder.
+    Images in the folder, or in the file's folder, are embedded; see embed_images.
     """
     # Per-transform change counts, shared across every file processed.
     stats: dict[str, Counter[str]] = defaultdict(Counter)
@@ -816,4 +861,4 @@ def prepare_markdown(source: Path, *, respect_gitignore: bool = False) -> str:
         text = source.read_text(encoding="utf-8")
         result = preprocess(text, source_path=str(source), stats=stats, single_file=True)
     print_stats(stats)
-    return result
+    return embed_images(result, source if source.is_dir() else source.parent)

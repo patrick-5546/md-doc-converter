@@ -6,12 +6,14 @@ pandoc and the PDF printer, and with `tools`, a toolchain with only the npm pack
 
 from __future__ import annotations
 
+import email.message
 import os
 import re
 import stat
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Self
 from unittest import mock
 from urllib.parse import unquote, urlsplit
 
@@ -195,17 +197,24 @@ def test_render_publishes_only_the_deliverable_and_keeps_scratch_private(
         assert isinstance(environment, dict)
         assert environment["PATH"].startswith(str(tools.node_bin) + os.pathsep)
         assert environment["PUPPETEER_CACHE_DIR"] == str(tools.puppeteer_cache)
-        # No stylesheet is linked: Pandoc embeds KaTeX's, and the others are inlined.
+        # Pandoc reads no file or URL that the document names.
+        assert "--sandbox" in command
+        # No stylesheet is linked: katex.js adds KaTeX's as a data URI, the others are inlined.
         assert "--css" not in command
         katex = Path(unquote(urlsplit(environment[render.KATEX_STYLESHEET_VARIABLE]).path))
         assert katex.parent == scratch
-    # The GitHub Markdown stylesheet comes first, so the shared styles override it.
-    assert fake.styles[0].startswith("<style>\n.markdown-body { color: #1f2328; }\n</style>")
+    # A content security policy that allows no script, then the GitHub Markdown stylesheet,
+    # so the shared styles override it.
+    assert fake.styles[0].startswith(
+        render.CONTENT_SECURITY_POLICY + "\n<style>\n.markdown-body { color: #1f2328; }\n</style>"
+    )
+    assert "script-src" not in render.CONTENT_SECURITY_POLICY
+    assert "default-src 'none'" in render.CONTENT_SECURITY_POLICY
     assert fake.styles[0].index("#1f2328") < fake.styles[0].index(".table-cols table")
-    fonts = tools.node_modules / "katex/dist/fonts"
+    # KaTeX's fonts are embedded in its stylesheet: "wOF2" is the fake font's content.
     assert fake.katex_stylesheets[0] == (
         "@font-face{font-family:KaTeX_Main;"
-        f'src:url({(fonts / "KaTeX_Main-Regular.woff2").as_uri()}) format("woff2")}}'
+        'src:url(data:font/woff2;base64,d09GMg==) format("woff2")}'
         ".katex{font:normal 1.21em KaTeX_Main}"
     )
 
@@ -347,6 +356,53 @@ def test_extra_stylesheet_is_inlined_last_and_protected(
     extra.write_text("</STYLE><script>alert(1)</script>", encoding="utf-8")
     with pytest.raises(render.RenderError, match=r"must not contain"):
         render.render_markdown(source, FORMAT.HTML, options=Options(extra_css=extra), tools=tools)
+
+
+def test_files_that_the_extra_stylesheet_names_are_embedded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "fonts").mkdir()
+    (tmp_path / "fonts" / "brand.woff2").write_bytes(b"font")
+    logo = tmp_path / "logo.png"
+    logo.write_bytes(b"logo")
+
+    class Response:
+        headers = email.message.Message()
+        headers["Content-Type"] = "image/svg+xml"
+
+        def __enter__(self) -> Self:
+            return self
+
+        def __exit__(self, *_details: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b"<svg/>"
+
+    downloads: list[str] = []
+
+    def urlopen(url: str, timeout: float) -> Response:
+        downloads.append(url)
+        assert timeout > 0
+        return Response()
+
+    monkeypatch.setattr(render.urllib.request, "urlopen", urlopen)
+    css = (
+        "@font-face { src: url(fonts/brand.woff2) format('woff2'); }\n"
+        f'.logo {{ background: url("{logo}"), url(https://example.test/mark.svg#top); }}\n'
+        ".mask { mask: url(#shape), url(data:image/png;base64,AA==), url(missing.png); }\n"
+    )
+
+    embedded = render.embed_stylesheet_files(css, tmp_path)
+
+    assert embedded == (
+        "@font-face { src: url(\"data:font/woff2;base64,Zm9udA==\") format('woff2'); }\n"
+        '.logo { background: url("data:image/png;base64,bG9nbw=="), '
+        'url("data:image/svg+xml;base64,PHN2Zy8+#top"); }\n'
+        ".mask { mask: url(#shape), url(data:image/png;base64,AA==), url(missing.png); }\n"
+    )
+    assert downloads == ["https://example.test/mark.svg#top"]
+    assert "WARNING: extra stylesheet: missing.png could not be read" in capsys.readouterr().err
 
 
 def test_conversion_failure_leaves_previous_deliverable_and_cleans_scratch(

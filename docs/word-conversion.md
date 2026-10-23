@@ -152,7 +152,9 @@ image-directory override or separate output-name setting. A document without
 images gets no image directory; converting again without images removes the
 previous one, and `.images/` when nothing else is in it. Existing
 author-owned Markdown images are not moved or bundled by rendering. Images use
-Markdown image syntax, `![alt](path)`, so Word's display size is not kept.
+Markdown image syntax, `![alt](path)`, so Word's display size is not kept. A
+Word SVG image that contains a script, which would run where the SVG is opened
+as a page, is replaced by the PNG that Word keeps with it.
 
 ## Transforms and the conversion report
 

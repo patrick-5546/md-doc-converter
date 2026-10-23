@@ -11,20 +11,20 @@ from md_doc_converter.rendering.pipeline import PDF_PRINTER
 from md_doc_converter.toolchain.environment import render_environment, toolchain
 
 PAGE = (
-    "<!doctype html><html><head><title>Timeout</title>{script}</head>"
+    "<!doctype html><html><head><title>Timeout</title>{style}</head>"
     "<body><h1>Timeout</h1></body></html>"
 )
-# A script that never returns keeps the page from loading, which stalls the first
-# browser step deterministically.
-STALL = "<script>while (true) {}</script>"
+# A page tens of thousands of pages long, which no browser prints within a second. (The
+# printer runs no script, so a document cannot stall it with one.)
+LONG = "<style>body { height: 30000000px; }</style>"
 
 
 def print_pdf(
-    directory: Path, timeout: str, script: str = "", *, node_modules: bool = True
+    directory: Path, timeout: str, style: str = "", *, node_modules: bool = True
 ) -> tuple[subprocess.CompletedProcess[str], Path]:
-    """Print a page with *script* from *directory*; return the result and the PDF's path."""
+    """Print a page with *style* from *directory*; return the result and the PDF's path."""
     html = directory / "page.html"
-    html.write_text(PAGE.format(script=script), encoding="utf-8")
+    html.write_text(PAGE.format(style=style), encoding="utf-8")
     pdf = html.with_suffix(".pdf")
     tools = toolchain()
     command = ["node", str(PDF_PRINTER)]
@@ -49,8 +49,8 @@ def test_zero_timeout_is_accepted(tmp_path: Path) -> None:
     assert pdf.read_bytes().startswith(b"%PDF-")
 
 
-def test_stalled_page_names_the_setting_to_raise(tmp_path: Path) -> None:
-    result, pdf = print_pdf(tmp_path, "1", STALL)
+def test_a_print_over_the_limit_names_the_setting_to_raise(tmp_path: Path) -> None:
+    result, pdf = print_pdf(tmp_path, "1", LONG)
     assert result.returncode == 1, result.stderr
     assert "exceeded 1 seconds; raise --pdf-timeout" in result.stderr
     assert not pdf.exists()

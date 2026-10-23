@@ -488,3 +488,49 @@ def test_failed_writer_is_an_explicit_error(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(subprocess, "run", mock.Mock(return_value=completed))
     with pytest.raises(MarkdownError, match=r"writer failure"):
         document.render(normalize_references=True)
+
+
+def test_only_image_files_inside_the_folder_are_embedded(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    folder = tmp_path / "docs"
+    (folder / "pictures").mkdir(parents=True)
+    (folder / "pictures" / "chart.png").write_bytes(b"chart")
+    (folder / "notes.txt").write_text("notes", encoding="utf-8")
+    (tmp_path / "secret.png").write_bytes(b"secret")
+    (folder / "pictures" / "escape.png").symlink_to(tmp_path / "secret.png")
+    chart, secret = folder / "pictures" / "chart.png", tmp_path / "secret.png"
+    kept = [
+        str(secret),
+        secret.as_uri(),
+        str(folder / "pictures" / "escape.png"),
+        str(folder / "notes.txt"),
+        "https://example.test/remote.png",
+    ]
+    markdown = (
+        f'![chart]({chart}#part) <img src="{chart}">\n\n'
+        + " ".join(f"![kept]({target})" for target in kept)
+        + "\n\n![data](data:image/png;base64,ZGF0YQ==) [link](https://example.test/page)\n"
+    )
+
+    result = preprocess.embed_images(markdown, folder)
+
+    assert "data:image/png;base64,Y2hhcnQ=#part" in result
+    assert '<img src="data:image/png;base64,Y2hhcnQ=">' in result
+    for target in kept:
+        assert f"]({target})" in result
+    assert "](data:image/png;base64,ZGF0YQ==)" in result
+    assert "[link](https://example.test/page)" in result
+    assert capsys.readouterr().err.splitlines() == [
+        f"WARNING: image {secret} is not embedded: it is not a file in {folder}",
+        f"WARNING: image {secret.as_uri()} is not embedded: it is not a file in {folder}",
+        (
+            f"WARNING: image {folder / 'pictures' / 'escape.png'} is not embedded: "
+            f"it is not a file in {folder}"
+        ),
+        f"WARNING: image {folder / 'notes.txt'} is not embedded: it is not an image",
+        (
+            "WARNING: image https://example.test/remote.png is not embedded: "
+            "rendering downloads nothing"
+        ),
+    ]
