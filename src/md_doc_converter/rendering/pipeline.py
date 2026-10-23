@@ -415,6 +415,10 @@ def render_markdown(
             sys.stderr.write(pandoc_messages(converted.stderr or "", markdown.unembedded))
             if converted.returncode:
                 raise subprocess.CalledProcessError(converted.returncode, command)
+            if markdown.images:
+                # Pandoc read a short placeholder for each embedded image's data.
+                written = html.read_bytes().decode("utf-8")
+                html.write_bytes(markdown.embed_images(written).encode("utf-8"))
             staged = html
             if pdf:
                 staged = staged_dir / f"{name}.pdf"

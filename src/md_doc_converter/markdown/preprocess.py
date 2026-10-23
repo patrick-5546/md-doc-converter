@@ -33,12 +33,13 @@ import base64
 import os
 import posixpath
 import re
+import secrets
 import shutil
 import subprocess
 import sys
 from collections import Counter, defaultdict
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import quote, unquote, urldefrag, urlsplit, urlunsplit
@@ -892,11 +893,30 @@ def _file_link_resolver(
 
 @dataclass(frozen=True)
 class PreparedMarkdown:
-    """Markdown ready for Pandoc, and the image targets in it that were not embedded."""
+    """Markdown ready for Pandoc, the image targets in it that were not embedded, and the data
+    of those that were."""
 
     text: str
     # Each was reported with its reason, so Pandoc, which cannot read them, need not repeat it.
     unembedded: frozenset[str] = frozenset()
+    # The base64 data of each embedded image, by the placeholder that stands for it in *text*.
+    images: Mapping[str, str] = field(default_factory=dict)
+
+    def embed_images(self, text: str) -> str:
+        """*text*, such as the HTML that Pandoc writes, with each image's data in its place."""
+        return embed_images(text, self.images)
+
+
+# Stands for an embedded image's data in the Markdown that Pandoc reads; see ImageEmbedder.
+# Pandoc drops an image whose data URI is not base64, so placeholders are: 32 base64 letters.
+IMAGE_PLACEHOLDER = re.compile(r"MdcImage[0-9a-f]{16}[0-9]{8}")
+
+
+def embed_images(text: str, images: Mapping[str, str]) -> str:
+    """*text* with each placeholder in *images* replaced by the image data it stands for."""
+    if not images:
+        return text
+    return IMAGE_PLACEHOLDER.sub(lambda match: images.get(match.group(), match.group()), text)
 
 
 def _git_toplevel(directory: Path) -> Path | None:
@@ -935,16 +955,34 @@ class ImageEmbedder:
     into the HTML or PDF, nor tell its author where it was rendered. With *download*, images
     shown by http(s) URL are downloaded and embedded too. Any other image stays a reference,
     reported once: the HTML loads it when it is opened, and the PDF is printed without it.
+
+    Pandoc reads large data URIs slowly and in a lot of memory (over 5 GB for 30 MB of images),
+    so each data URI holds a short placeholder instead of the image's data, one per distinct
+    image, unique to this embedder. *images* maps each placeholder to its data, which
+    embed_images() puts in the HTML that Pandoc writes.
     """
 
     def __init__(self, root: Path, *, download: bool = False) -> None:
         self.root = root.resolve()
         self.download = download
         self.unembedded: set[str] = set()
+        self.images: dict[str, str] = {}
         self._downloads: dict[str, str] = {}  # Data URIs, by URL without its fragment.
+        self._placeholders: dict[str, str] = {}  # By the data they stand for.
+        self._prefix = f"MdcImage{secrets.token_hex(8)}"
 
     def __call__(self, document: MarkdownDocument) -> None:
         document.transform_targets(self._embed)
+
+    def _data_uri(self, kind: str, data: bytes) -> str:
+        """A data URI of type *kind* whose placeholder stands for *data*."""
+        encoded = base64.b64encode(data).decode("ascii")
+        placeholder = self._placeholders.get(encoded)
+        if placeholder is None:
+            placeholder = f"{self._prefix}{len(self._placeholders):08d}"
+            self._placeholders[encoded] = placeholder
+            self.images[placeholder] = encoded
+        return f"data:{kind};base64,{placeholder}"
 
     def _left(self, target: str, reason: str | None) -> str:
         """Leave *target* as it is, reporting why, once, unless another check already did."""
@@ -975,9 +1013,8 @@ class ImageEmbedder:
         kind = IMAGE_TYPES.get(path.suffix.casefold())
         if kind is None:
             return self._left(target, "it is not an image")
-        data = base64.b64encode(path.read_bytes()).decode("ascii")
         fragment = f"#{url.fragment}" if url.fragment else ""
-        return f"data:{kind};base64,{data}{fragment}"
+        return f"{self._data_uri(kind, path.read_bytes())}{fragment}"
 
     def _download(self, target: str) -> str:
         """Download the image at http(s) URL *target* as a data URI, once per URL."""
@@ -991,9 +1028,7 @@ class ImageEmbedder:
                 return self._left(target, str(error))
             if not kind.startswith("image/"):
                 return self._left(target, f"the server sent {kind}, not an image")
-            self._downloads[address] = (
-                f"data:{kind};base64,{base64.b64encode(data).decode('ascii')}"
-            )
+            self._downloads[address] = self._data_uri(kind, data)
         uri = self._downloads[address]
         return f"{uri}#{fragment}" if fragment else uri
 
@@ -1019,4 +1054,4 @@ def prepare_markdown(
             text, source_path=str(source), stats=stats, single_file=True, embed=embed
         )
     print_stats(stats)
-    return PreparedMarkdown(result, frozenset(embed.unembedded))
+    return PreparedMarkdown(result, frozenset(embed.unembedded), dict(embed.images))

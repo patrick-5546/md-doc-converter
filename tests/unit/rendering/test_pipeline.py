@@ -35,24 +35,30 @@ Options = render.RenderOptions
 class FakeRenderer:
     """Prepares Markdown, and runs git, pandoc and the PDF printer, recording what they get.
 
-    git reports whether the input is in a work tree. pandoc writes placeholder HTML, or fails with
-    status 7; the PDF printer writes a placeholder PDF. Any other command fails the test.
+    git reports whether the input is in a work tree. pandoc writes *html*, or fails with
+    status 7; the PDF printer records the HTML it gets and writes a placeholder PDF. Any other
+    command fails the test.
     """
 
     git_work_tree: bool = False
     pandoc_fails: bool = False
+    markdown: preprocess.PreparedMarkdown = field(
+        default_factory=lambda: preprocess.PreparedMarkdown("# Prepared Markdown\n")
+    )
+    html: str = "<html>rendered</html>"
     prepare_calls: list[tuple[Path, bool, bool]] = field(default_factory=list)
     prepared: list[Path] = field(default_factory=list)
     styles: list[str] = field(default_factory=list)
     katex_stylesheets: list[str] = field(default_factory=list)
     pandoc_calls: list[tuple[list[str], dict[str, object]]] = field(default_factory=list)
     printer_commands: list[list[str]] = field(default_factory=list)
+    printed: list[str] = field(default_factory=list)
 
     def prepare(
         self, source: Path, *, respect_gitignore: bool, download_images: bool
     ) -> preprocess.PreparedMarkdown:
         self.prepare_calls.append((source, respect_gitignore, download_images))
-        return preprocess.PreparedMarkdown("# Prepared Markdown\n")
+        return self.markdown
 
     def run(self, command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         if command[0] == "git":
@@ -62,7 +68,7 @@ class FakeRenderer:
             self.prepared.append(Path(command[-1]))
             if self.pandoc_fails:
                 raise subprocess.CalledProcessError(7, command)
-            assert self.prepared[-1].read_text(encoding="utf-8") == "# Prepared Markdown\n"
+            assert self.prepared[-1].read_text(encoding="utf-8") == self.markdown.text
             styles = Path(command[command.index("--include-in-header") + 1])
             self.styles.append(styles.read_text(encoding="utf-8"))
             environment = kwargs["env"]
@@ -70,12 +76,10 @@ class FakeRenderer:
             katex = Path(unquote(urlsplit(environment[render.KATEX_STYLESHEET_VARIABLE]).path))
             self.katex_stylesheets.append(katex.read_text(encoding="utf-8"))
             self.pandoc_calls.append((command, kwargs))
-            Path(command[command.index("-o") + 1]).write_text(
-                "<html>rendered</html>", encoding="utf-8"
-            )
+            Path(command[command.index("-o") + 1]).write_text(self.html, encoding="utf-8")
         elif command[:2] == ["node", str(render.PDF_PRINTER)]:
             self.printer_commands.append(command)
-            assert Path(command[-1]).is_file()
+            self.printed.append(Path(command[-1]).read_bytes().decode("utf-8"))
             Path(command[command.index("-o") + 1]).write_bytes(b"PDF")
         else:
             pytest.fail(f"Unexpected command: {command}")
@@ -273,6 +277,25 @@ def test_pdf_timeout_rejects_anything_but_whole_seconds_up_to_the_maximum(value:
     )
     with pytest.raises(render.RenderError, match=f"^{re.escape(message)}$"):
         render.pdf_timeout_seconds(value)
+
+
+def test_embedded_image_data_goes_into_the_html_after_pandoc(
+    fake: FakeRenderer, source: Path, tools: Toolchain
+) -> None:
+    # Pandoc reads a short placeholder for each image's data; the HTML, and so the PDF, get it,
+    # and nothing else in the HTML changes.
+    placeholder = "MdcImage0123456789abcdef00000000"
+    fake.markdown = preprocess.PreparedMarkdown(
+        f"![chart](data:image/png;base64,{placeholder}#top)\n", images={placeholder: "Y2hhcnQ="}
+    )
+    fake.html = f'<p>\r\n<img src="data:image/png;base64,{placeholder}#top"></p>'
+    embedded = '<p>\r\n<img src="data:image/png;base64,Y2hhcnQ=#top"></p>'
+
+    html = render.render_markdown(source, FORMAT.HTML, tools=tools)
+    render.render_markdown(source, FORMAT.PDF, tools=tools)
+
+    assert html.read_bytes().decode("utf-8") == embedded
+    assert fake.printed == [embedded]
 
 
 def test_pdf_printer_receives_node_modules_and_timeouts(

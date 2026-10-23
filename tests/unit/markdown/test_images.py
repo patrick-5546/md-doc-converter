@@ -41,8 +41,12 @@ def test_only_image_files_inside_the_root_are_embedded(
 
     embed(document)
     embed(MarkdownDocument(f"![again]({secret})\n"))
-    result = document.render()
+    prepared = document.render()
+    result = preprocess.embed_images(prepared, embed.images)
 
+    # Pandoc reads a short placeholder for the chart's data, which the HTML gets after it.
+    assert "Y2hhcnQ=" not in prepared
+    assert list(embed.images.values()) == ["Y2hhcnQ="]
     assert "data:image/png;base64,Y2hhcnQ=#part" in result
     assert '<img src="data:image/png;base64,Y2hhcnQ=">' in result
     for target in kept:
@@ -69,6 +73,61 @@ def test_only_image_files_inside_the_root_are_embedded(
             "it is neither a local file nor an http(s) URL"
         ),
     ]
+
+
+def test_placeholders_are_unique_to_each_render_and_only_its_own_are_replaced(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "a.png").write_bytes(b"a")
+    first, second = preprocess.ImageEmbedder(tmp_path), preprocess.ImageEmbedder(tmp_path)
+
+    first(MarkdownDocument(f"![a]({tmp_path / 'a.png'})\n"))
+    second(MarkdownDocument(f"![a]({tmp_path / 'a.png'})\n"))
+    [mine], [other] = first.images, second.images
+
+    assert mine != other
+    assert preprocess.IMAGE_PLACEHOLDER.fullmatch(mine)
+    # A document cannot know a render's placeholders, and another render's stay text.
+    assert preprocess.embed_images(f"{mine} {other} {mine}x", first.images) == (
+        f"YQ== {other} YQ==x"
+    )
+
+
+def test_pandoc_keeps_the_placeholders_that_the_image_data_replaces(
+    pandoc: str, tmp_path: Path
+) -> None:
+    # Pandoc drops an image whose data URI it cannot decode, so a placeholder must be base64.
+    chart = tmp_path / "chart.png"
+    chart.write_bytes(b"chart")
+    document = MarkdownDocument(f'![chart]({chart})\n\n<img src="{chart}">\n')
+    embed = preprocess.ImageEmbedder(tmp_path)
+    embed(document)
+    prepared = tmp_path / "prepared.md"
+    prepared.write_text(document.render(), encoding="utf-8")
+
+    html = subprocess.run(
+        [
+            pandoc,
+            "--sandbox",
+            "--embed-resources",
+            "--standalone",
+            "--metadata",
+            "title=t",
+            "--from",
+            "markdown-implicit_figures",
+            "--to",
+            "html",
+            str(prepared),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+
+    assert (
+        preprocess.embed_images(html, embed.images).count('src="data:image/png;base64,Y2hhcnQ="')
+        == 2
+    )
 
 
 @pytest.mark.parametrize("git", [True, False], ids=["in-a-repository", "outside-git"])
@@ -99,8 +158,11 @@ def test_images_shown_by_url_are_downloaded_once_each(
     embed = preprocess.ImageEmbedder(tmp_path, download=True)
 
     embed(document)
+    prepared = document.render()
 
-    assert document.render() == (
+    assert "PHN2Zy8+" not in prepared
+    assert list(embed.images.values()) == ["PHN2Zy8+"]
+    assert preprocess.embed_images(prepared, embed.images) == (
         "![a](data:image/svg+xml;base64,PHN2Zy8+#top) ![b](data:image/svg+xml;base64,PHN2Zy8+) "
         f"[link]({page})\n\n![c]({page}) ![d]({missing}) ![e]({missing})\n"
     )

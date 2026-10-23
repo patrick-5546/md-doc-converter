@@ -36,7 +36,8 @@ def test_a_page_shows_an_image_from_a_shared_folder_of_its_repository(tmp_path: 
 
     prepared = prepare_markdown(page)
 
-    assert f"![Logo]({EMBEDDED})" in prepared.text
+    assert EMBEDDED not in prepared.text
+    assert f"![Logo]({EMBEDDED})" in prepared.embed_images(prepared.text)
     assert prepared.unembedded == frozenset()
 
 
@@ -54,7 +55,9 @@ def test_a_split_word_document_outside_git_shows_its_images(tmp_path: Path) -> N
 
     prepared = prepare_markdown(tmp_path / "guide")
 
-    assert prepared.text.count(EMBEDDED) == 2
+    assert prepared.embed_images(prepared.text).count(EMBEDDED) == 2
+    # Both pages show one image, whose data the HTML holds for each.
+    assert len(prepared.images) == 1
     assert prepared.unembedded == frozenset()
 
 
