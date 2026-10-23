@@ -121,7 +121,10 @@ cell produces a warning with its line: Pandoc's Markdown reader ends the cell at
 that tag and drops the rest, although GFM renderers show it. Write such a cell's
 lines with `<br>`, or make the table HTML. An escaped pipe in a table cell's code
 span, `` `a\|b` ``, renders as the pipe GFM shows, not with the backslash
-Pandoc's Markdown reader keeps.
+Pandoc's Markdown reader keeps. As on GitHub, a code block's language is the
+first word of its info string, and the rest is ignored: `` ```python title="x.py" ``
+opens a Python code block, which Pandoc's Markdown reader alone reads as inline
+code.
 
 ## Mermaid diagrams
 

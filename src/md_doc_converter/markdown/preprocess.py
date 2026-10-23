@@ -43,9 +43,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import quote, unquote, urldefrag, urlsplit, urlunsplit
 
+from md_doc_converter import pandoc as _pandoc
 from md_doc_converter.download import DownloadError, download
 from md_doc_converter.markdown.document import READER as _RENDERER_READER
-from md_doc_converter.markdown.document import MarkdownDocument
+from md_doc_converter.markdown.document import MarkdownDocument, MarkdownError
 from md_doc_converter.markdown.syntax import (
     container_line,
     inline_code_spans,
@@ -159,6 +160,79 @@ def warn_block_html_in_table_cells(text: str, source_path: str | None, stats: Co
             )
         index = end
     return text
+
+
+# A fence whose info string has more words after its first, such as ```python title="x.py".
+# The first word is its language, unless it begins with "{", Pandoc's attribute syntax.
+_LONG_INFO_STRING_RE = re.compile(r"(?:`{3,}|~{3,})[ \t]*[^\s{]\S*[ \t]+\S")
+_LONG_INFO_FENCE_RE = re.compile(
+    r"(?P<container>(?:[ \t]*(?:>|[-+*]|\d{1,9}[.)]))*[ \t]*)(?P<fence>`{3,}|~{3,})[ \t]*"
+    r"(?P<info>(?P<language>[^\s{]\S*)[ \t]+\S.*)"
+)
+# Lines as CommonMark counts them, each with its line ending.
+_LINES_RE = re.compile(r"[^\r\n]*(?:\r\n?|\n)|[^\r\n]+$")
+
+
+def _parsed_blocks(markdown: str, reader: str) -> list[_pandoc.JSONValue]:
+    try:
+        parsed = _pandoc.parse_markdown(markdown, reader=reader, description="preparing Markdown")
+        return parsed.blocks
+    except _pandoc.PandocError as error:
+        raise MarkdownError(str(error)) from error
+
+
+def _info_string_lines(node: object) -> set[int]:
+    """The lines on which the fences with an info string in Pandoc JSON *node*, read with
+    sourcepos, start: those of the code blocks with a class."""
+    lines: set[int] = set()
+    if isinstance(node, list):
+        for child in node:
+            lines |= _info_string_lines(child)
+    elif isinstance(node, dict) and node.get("t") != "CodeBlock":
+        for child in node.values():
+            lines |= _info_string_lines(child)
+    elif isinstance(node, dict):
+        match node.get("c"):
+            case [[_, [_, *_], [*attributes]], _]:
+                for attribute in attributes:
+                    match attribute:
+                        case ["data-pos", str(position)] if line := re.match(r"(\d+):", position):
+                            lines.add(int(line.group(1)) - 1)
+    return lines
+
+
+def trim_fence_info_strings(text: str, source_path: str | None, stats: Counter[str]) -> str:
+    """Read a fence's info string as GitHub does: by its first word, the language.
+
+    Pandoc's Markdown reader reads a fence with more words, such as ```python title="x.py" or
+    ```js {1,3}, as the start of inline code, which runs the block's lines together. Such a
+    fence keeps only its language. A fence that Pandoc reads, such as
+    ```python {.numberLines}, is left as it is, and so is one shown inside a code block.
+    """
+    if not _LONG_INFO_STRING_RE.search(text):
+        return text
+    lines = _LINES_RE.findall(text)
+    # GitHub's reading of the document says which lines open code blocks.
+    openers = _info_string_lines(_parsed_blocks(text, "gfm-yaml_metadata_block+sourcepos"))
+    fences = [
+        (index, fence)
+        for index in sorted(openers)
+        if (fence := _LONG_INFO_FENCE_RE.fullmatch(lines[index].rstrip("\r\n")))
+    ]
+    # One parse says which of them Pandoc reads; each is in a div of its own.
+    probe = "".join(
+        f"::: probe\n{fence['fence']}{fence['info']}\nx\n{fence['fence']}\n\n:::\n\n"
+        for _, fence in fences
+    )
+    divs = _parsed_blocks(probe, _RENDERER_READER)
+    for (index, fence), div in zip(fences, divs, strict=True):
+        match div.get("c") if isinstance(div, dict) else None:
+            case [_, [dict() as first, *_]] if first.get("t") == "CodeBlock":
+                continue
+        ending = lines[index][len(lines[index].rstrip("\r\n")) :]
+        lines[index] = f"{fence['container']}{fence['fence']}{fence['language']}{ending}"
+        stats["fence info strings trimmed"] += 1
+    return "".join(lines)
 
 
 def strip_ado_macros(text: str, source_path: str | None, stats: Counter[str]) -> str:
@@ -446,6 +520,7 @@ class _CollectedMarkdown:
 # Append new transform functions here to extend the pipeline.
 TEXT_TRANSFORMS = [
     warn_block_html_in_table_cells,
+    trim_fence_info_strings,
     strip_ado_macros,
     escape_bit_ranges,
     warn_undefined_references,
