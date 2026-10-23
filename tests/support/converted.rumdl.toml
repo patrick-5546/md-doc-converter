@@ -18,8 +18,6 @@ disable = [
     # Conversion checks links and fragments itself, with Pandoc's identifiers.
     "MD051",
     "MD057",
-    # Pandoc's writer indents a list item's later paragraphs by four spaces.
-    "MD077",
 ]
 
 [MD033]

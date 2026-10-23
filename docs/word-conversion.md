@@ -104,7 +104,7 @@ These transforms apply, in this order:
 | `lists` | Omits empty items and writes lists tight where Markdown means the same. |
 | `tables` | Writes tables as Markdown or minimal HTML. |
 | `code` | Writes monospace text as code. |
-| `cleanup` | Writes one space after list numbers, trims trailing spaces, and removes escapes that nothing needs. |
+| `cleanup` | Writes one space after list numbers, with each item's other lines indented to its text, trims trailing spaces, and removes escapes that nothing needs. |
 | `duplicate-headings` | Distinguishes repeated headings, with `--qualify-duplicate-headings`. |
 | `pages` | Settles heading IDs and links, and splits pages for `--split-depth`. |
 | `title` | Makes the Title paragraph the only `#` heading. |
@@ -177,7 +177,7 @@ keeps Word's numbers. The blank lines let the nested list start at 7:
 
 8. Beta
 
-    7. Beta one
+   7. Beta one
 
 9. Gamma
 ```

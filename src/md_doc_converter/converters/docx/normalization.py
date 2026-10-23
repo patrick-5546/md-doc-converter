@@ -21,19 +21,40 @@ from md_doc_converter.pandoc import JSONValue
 def normalize_ordered_list_spacing(markdown: str) -> tuple[str, int]:
     """Write one space after each ordered list marker, as Markdown linters expect.
 
-    Pandoc pads a marker to four columns, as in "1.  Item". The item's other lines keep their
-    indentation, which still reaches the item's content.
+    Pandoc pads a marker to four columns, as in "1.  Item", and indents the item's other lines
+    to its content, such as later paragraphs, nested lists and code; they move left with the
+    content, keeping their own indentation.
     """
     lines = markdown.splitlines(keepends=True)
     fixes = 0
-    for index in _syntax.markdown_prose_lines(markdown):
-        quote, line = _syntax.container_line(lines[index])
-        match = re.match(r"([ \t]*\d{1,9}[.)]) {2,4}(?=\S)", line)
+    for index in sorted(_syntax.markdown_prose_lines(markdown)):
+        quote, line = _split_quote(lines[index])
+        match = re.match(r"([ \t]*\d{1,9}[.)])( {2,4})(?=\S)", line)
         if match is None:
             continue
         lines[index] = quote + match.group(1) + " " + line[match.end() :]
         fixes += 1
+        # The item's other lines are indented to its content, in the same block quote.
+        removed, depth = len(match.group(2)) - 1, quote.count(">")
+        for following in range(index + 1, len(lines)):
+            prefix, rest = _split_quote(lines[following])
+            if not rest.strip():
+                continue
+            if prefix.count(">") != depth or len(rest) - len(rest.lstrip(" ")) < match.end():
+                break
+            lines[following] = prefix + rest[removed:]
     return "".join(lines), fixes
+
+
+_QUOTE_MARKERS = re.compile(r"(?: {0,3}>[ \t]?)*")
+
+
+def _split_quote(line: str) -> tuple[str, str]:
+    """The block quote markers that open *line*, each with one space after it, and the rest,
+    whose indentation is the line's own."""
+    prefix = _QUOTE_MARKERS.match(line)
+    end = prefix.end() if prefix else 0
+    return line[:end], line[end:]
 
 
 def trim_trailing_whitespace(markdown: str) -> tuple[str, int]:

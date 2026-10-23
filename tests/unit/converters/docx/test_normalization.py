@@ -62,9 +62,23 @@ def test_final_newline_only() -> None:
 def test_ordered_list_markers_get_one_space() -> None:
     text = "1.  Alpha\n\n    continued\n\n2)   Beta\n\n10. Ten\n    1.  Nested\n> 3.  Quoted\n"
     assert _normalization.normalize_ordered_list_spacing(text) == (
-        "1. Alpha\n\n    continued\n\n2) Beta\n\n10. Ten\n    1. Nested\n> 3. Quoted\n",
+        "1. Alpha\n\n   continued\n\n2) Beta\n\n10. Ten\n    1. Nested\n> 3. Quoted\n",
         4,
     )
+
+
+def test_an_items_other_lines_move_left_with_its_content() -> None:
+    text = (
+        "1.  Alpha\n\n    More about alpha.\n\n    1.  Nested\n\n        Nested more.\n\n"
+        "    ```\n    code\n\n      indented code\n    ```\n\nAfter the list.\n\n"
+        "> 2.   Quoted\n>\n>      Quoted more.\n>\n> Quoted paragraph.\n"
+    )
+    expected = (
+        "1. Alpha\n\n   More about alpha.\n\n   1. Nested\n\n      Nested more.\n\n"
+        "   ```\n   code\n\n     indented code\n   ```\n\nAfter the list.\n\n"
+        "> 2. Quoted\n>\n>    Quoted more.\n>\n> Quoted paragraph.\n"
+    )
+    assert _normalization.normalize_ordered_list_spacing(text) == (expected, 3)
 
 
 def test_ordered_list_spacing_leaves_literal_regions_and_code_items() -> None:

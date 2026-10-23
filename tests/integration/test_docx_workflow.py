@@ -547,7 +547,7 @@ def test_numbering_off_paragraphs_stay_with_the_list_item_before_them(convert: C
     )
     assert report.status("lists") == "applied"
     assert re.search(
-        r"7\.\s+Alpha\n+ {4}More alpha\n+8\.\s+Beta\n+ {4}More beta\n\nOutro\n\nLoose", result
+        r"7\.\s+Alpha\n+ {3}More alpha\n+8\.\s+Beta\n+ {3}More beta\n\nOutro\n\nLoose", result
     )
     assert "lists:" not in warnings
 
@@ -1805,7 +1805,7 @@ def test_line_breaks_in_list_items_formatting_and_links(convert: Converter) -> N
     )
     # Link text is one line; the list stays tight.
     assert (
-        result == "7. Alpha\\\n    continued\n8. Beta\n\n**Bold\\\ntext**\n\n"
+        result == "7. Alpha\\\n   continued\n8. Beta\n\n**Bold\\\ntext**\n\n"
         "[Line one Line two](https://example.test/)\n"
     )
     assert report.status("lists") == "applied"
@@ -1816,12 +1816,12 @@ def test_line_breaks_in_list_items_formatting_and_links(convert: Converter) -> N
     ("kind", "start", "expected"),
     [
         pytest.param("bullet", 1, "- First\n- Second\n  - Nested\n- Third\n", id="bullets"),
-        pytest.param("decimal", 1, "1. First\n2. Second\n    1. Nested\n3. Third\n", id="numbers"),
+        pytest.param("decimal", 1, "1. First\n2. Second\n   1. Nested\n3. Third\n", id="numbers"),
         # A nested list numbered from other than 1 cannot follow a paragraph in a tight list.
         pytest.param(
             "decimal",
             7,
-            "7. First\n\n8. Second\n\n    7. Nested\n\n9. Third\n",
+            "7. First\n\n8. Second\n\n   7. Nested\n\n9. Third\n",
             id="nested-from-7",
         ),
     ],
