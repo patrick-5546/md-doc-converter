@@ -44,6 +44,8 @@ def _tree_markdown(
     prepared = _prepare.prepare_document(package, paths, work, report)
     tree = _tree.read_docx(prepared.path, work / "pandoc-media", pandoc)
     blocks, api = _tree.items(tree["blocks"]), tree["pandoc-api-version"]
+    with _diagnostics.transform(report, "symbols"):
+        _transforms.plain_arrows(blocks, report)
     resolved: dict[str, str] = {}
     with _diagnostics.transform(report, "bookmarks"):
         resolved = _bookmarks.read_probe(blocks, prepared.probe, prepared.bookmarks)

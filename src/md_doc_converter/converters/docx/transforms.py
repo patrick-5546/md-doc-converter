@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 import uuid
 from collections import Counter
 from dataclasses import dataclass, field
@@ -33,6 +34,49 @@ def _children(element: Element, position: int) -> list[Element]:
 def _paragraph(block: Element) -> Element:
     """A plain block, which Markdown would run into the next one, as a paragraph."""
     return _tree.element("Para", block["c"]) if block["t"] == "Plain" else block
+
+
+# Pandoc reads the arrows of symbol fonts, such as Wingdings, as characters of Unicode's
+# Supplemental Arrows-C block, which few fonts have, so PDFs and browsers show boxes for them.
+# Each that points one way becomes the arrow that every font has. Unicode never renames a
+# character, so the block as Unicode 7.0 defined it maps the same with every Python.
+_ARROW_DIRECTIONS = (
+    ("NORTH WEST", "\u2196"),
+    ("NORTH EAST", "\u2197"),
+    ("SOUTH EAST", "\u2198"),
+    ("SOUTH WEST", "\u2199"),
+    ("LEFT RIGHT", "\u2194"),
+    ("UP DOWN", "\u2195"),
+    ("LEFTWARDS", "\u2190"),
+    ("UPWARDS", "\u2191"),
+    ("RIGHTWARDS", "\u2192"),
+    ("DOWNWARDS", "\u2193"),
+)
+
+
+def _arrow_table() -> dict[int, str]:
+    table: dict[int, str] = {}
+    for code in range(0x1F800, 0x1F8AE):
+        name = unicodedata.name(chr(code), "")
+        arrows = {arrow for words, arrow in _ARROW_DIRECTIONS if words in name}
+        if len(arrows) == 1:
+            table[code] = arrows.pop()
+    return table
+
+
+PLAIN_ARROWS = _arrow_table()
+
+
+def plain_arrows(blocks: list[JSONValue], report: TransformReport) -> None:
+    """Write each symbol font's arrow, in text and image alt text, as the arrow every font has."""
+    changed = 0
+    for element in _tree.walk(blocks):
+        if element["t"] == "Str" and isinstance(text := element["c"], str):
+            plain = text.translate(PLAIN_ARROWS)
+            if plain != text:
+                changed += sum(ord(character) in PLAIN_ARROWS for character in text)
+                element["c"] = plain
+    report.applied("symbols", count=changed)
 
 
 def unwrap_containers(blocks: list[JSONValue]) -> None:

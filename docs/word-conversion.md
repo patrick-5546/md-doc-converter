@@ -73,6 +73,10 @@ accepted.
 - **Spaces:** no-break and other Unicode spaces become plain spaces, except
   spaces that indent a line, which stay no-break spaces so that the indent
   shows. Zero-width spaces are dropped.
+- **Symbols:** an arrow in a symbol font, such as Wingdings, becomes the arrow
+  that every font has, such as → or ↖, by its direction. Pandoc reads these
+  arrows as characters that few fonts have, which PDFs and browsers show as
+  boxes.
 
 ## What is left out
 
@@ -90,6 +94,7 @@ These transforms apply, in this order:
 | `fields` | Keeps the text of Word fields and drops table-of-contents page numbers. |
 | `hidden-text` | Drops text formatted as Hidden. |
 | `spaces` | Writes Unicode spaces as plain spaces, except in indents, and drops zero-width spaces. |
+| `symbols` | Writes the arrows of symbol fonts, such as Wingdings, as the arrows that every font has. |
 | `underline` | Drops underline from links, headings and monospace text. |
 | `images` | Publishes each image once, with alt text from its caption. |
 | `image-conversion` | Converts EMF and WMF drawings to cropped SVG. |
@@ -118,6 +123,10 @@ fields: a caption number held in a simple field
 hidden-text: a word formatted as Hidden
   Before: Shown draft text.
   After:  Shown text.
+
+symbols: an arrow in the Wingdings font
+  Before: Request 🡪 response
+  After:  Request → response
 
 images: published beside the Markdown, with its caption's title as alt text
   Before: <img src="media/image1.png" style="width:2.1in" alt="A diagram of a computer" />

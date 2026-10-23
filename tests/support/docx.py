@@ -40,6 +40,11 @@ def paragraph(text: str = "", style: str | None = None, *, bold: bool = False) -
 
 def code_run(text: str, *, font: str = "Courier New") -> ET.Element:
     """A run of *text* in a monospace font."""
+    return font_run(text, font)
+
+
+def font_run(text: str, font: str) -> ET.Element:
+    """A run of *text* in *font*, such as a monospace or symbol font."""
     result = _ooxml.word_run(text)
     properties = ET.Element(W + "rPr")
     ET.SubElement(properties, W + "rFonts", {W + "ascii": font, W + "hAnsi": font})

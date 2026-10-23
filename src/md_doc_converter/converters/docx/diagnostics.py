@@ -24,6 +24,7 @@ TRANSFORMS = (
     "fields",
     "hidden-text",
     "spaces",
+    "symbols",
     "underline",
     "images",
     "image-conversion",

@@ -43,6 +43,7 @@ from tests.support.docx import (
     boundary_hyperlink_field,
     cell,
     code_run,
+    font_run,
     formatted,
     grouped_image,
     hyperlink,
@@ -2744,6 +2745,27 @@ def test_unicode_spaces_become_spaces_except_an_indent(convert: Converter) -> No
     assert result.count("\xa0") == 6
     assert "  spaces: applied (11)" in report.summary()
     assert report.status("checks") == "applied", warnings
+
+
+def test_symbol_font_arrows_become_arrows_that_every_font_has(convert: Converter) -> None:
+    # Pandoc reads Wingdings' arrows as Supplemental Arrows-C characters, which few fonts have.
+    def arrow(before: str, symbol: str, after: str) -> ET.Element:
+        word = _ooxml.word_run
+        return paragraph_of(word(before), font_run(symbol, "Wingdings"), word(after))
+
+    result, report, _warnings = convert.reported(
+        [
+            arrow("Request ", "\u00e0", " response"),
+            arrow("Address ", "\u00df", " counter"),
+            table(
+                row(cell("Path"), header=True), row(cell(arrow("a ", "\u00e0", " b"))), columns=1
+            ),
+        ]
+    )
+    assert "Request → response" in result
+    assert "Address ← counter" in result
+    assert "| a → b |" in result
+    assert "  symbols: applied (3)" in report.summary()
 
 
 def test_header_breaks_become_spaces_and_cells_lose_empty_edge_lines(convert: Converter) -> None:
