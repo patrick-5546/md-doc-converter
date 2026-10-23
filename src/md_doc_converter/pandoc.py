@@ -6,14 +6,27 @@ import copy
 import json
 import subprocess
 import sys
+from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import TypeAlias
+from typing import TypeAlias, TypeVar
 
 JSONValue: TypeAlias = bool | int | float | str | list["JSONValue"] | dict[str, "JSONValue"] | None
+Result = TypeVar("Result")
 
 
 class PandocError(RuntimeError):
     pass
+
+
+def run_all(calls: Sequence[Callable[[], Result]]) -> list[Result]:
+    """The results of *calls*, made at once: each runs Pandoc, in a process of its own, so the
+    runs overlap. The first call's exception, in order, is raised."""
+    if len(calls) < 2:
+        return [call() for call in calls]
+    with ThreadPoolExecutor(max_workers=len(calls)) as pool:
+        futures = [pool.submit(call) for call in calls]
+        return [future.result() for future in futures]
 
 
 def run(

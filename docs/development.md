@@ -55,7 +55,8 @@ Parsed Markdown retains its input text and reader. DOCX heading discovery and
 page-link rewriting reuse an unchanged page parse; rewriting copies the AST and
 rejects mismatched content or readers. There is no global parse cache, and
 semantic checks after text transformations still parse the changed text
-independently.
+independently. Such a check's parses, such as of a page before and after a
+rewrite, run at once with `pandoc.run_all`, each in a Pandoc process of its own.
 
 ## Environment
 

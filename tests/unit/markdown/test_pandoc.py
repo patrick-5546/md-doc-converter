@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import subprocess
+import threading
+from collections.abc import Callable
 from pathlib import Path
 from unittest import mock
 
@@ -12,6 +14,29 @@ import pytest
 from md_doc_converter import pandoc
 from md_doc_converter.converters.docx import navigation, reference
 from md_doc_converter.converters.docx.models import ConversionError, SectionTarget
+
+
+def test_pandoc_runs_overlap_and_their_results_keep_their_order() -> None:
+    # Each call waits for the other: run one after the other, they would time out.
+    both = threading.Barrier(2, timeout=10)
+
+    def wait_then(value: int) -> Callable[[], int]:
+        def call() -> int:
+            both.wait()
+            return value
+
+        return call
+
+    def failing(message: str) -> Callable[[], int]:
+        def call() -> int:
+            raise pandoc.PandocError(message)
+
+        return call
+
+    assert pandoc.run_all([wait_then(1), wait_then(2)]) == [1, 2]
+    assert pandoc.run_all([lambda: 3]) == [3]
+    with pytest.raises(pandoc.PandocError, match="first"):
+        pandoc.run_all([failing("first"), failing("second")])
 
 
 def test_explicit_reader_is_used_and_document_is_parsed_once(

@@ -11,6 +11,7 @@ import urllib.parse
 import uuid
 from collections import defaultdict
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 
 from md_doc_converter.converters.docx import diagnostics as _diagnostics
@@ -32,7 +33,7 @@ from md_doc_converter.converters.docx.models import (
 from md_doc_converter.converters.docx.tree import MathSyntax
 from md_doc_converter.markdown import syntax as _syntax
 from md_doc_converter.markdown.headings import Heading, HeadingError, collect_headings
-from md_doc_converter.pandoc import JSONValue, PandocError, ParsedMarkdown
+from md_doc_converter.pandoc import JSONValue, PandocError, ParsedMarkdown, run_all
 
 
 def qualify_duplicate_headings(markdown: str) -> tuple[str, list[HeadingChange]]:
@@ -305,7 +306,10 @@ def rewrite_page_references(
         def structure(text: str) -> JSONValue:
             return _reference.markdown_ast(text, pandoc, "List marker spacing validation").ast
 
-        result = spaced if structure(spaced) == structure(result) else result
+        spaced_structure, structure_before = run_all(
+            [partial(structure, spaced), partial(structure, result)]
+        )
+        result = spaced if spaced_structure == structure_before else result
     result = _normalization.trim_trailing_whitespace(result)[0]
     result = _normalization.normalize_final_newline(_normalization.compact_markdown_tables(result))
     return _normalization.simplify_identifier_escapes(result, pandoc)
@@ -564,7 +568,7 @@ def _title_heading(markdown: str, title: str, pandoc: str, report: TransformRepo
         parsed = _reference.markdown_ast(text, pandoc, "Title heading validation")
         return [(item.level, item.identifier) for item in collect_headings(parsed.blocks)]
 
-    before, after = outline(markdown), outline(result)
+    before, after = run_all([partial(outline, markdown), partial(outline, result)])
     moved = [(level + 1, identifier) for level, identifier in before]
     if not after or after[0][0] != 1 or after[1:] != moved:
         report.skipped("title", _TITLE_CHANGES_IDS, f"Word title {title!r}: {_TITLE_CHANGES_IDS}")

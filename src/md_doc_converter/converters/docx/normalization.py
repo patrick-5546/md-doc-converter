@@ -7,6 +7,7 @@ import re
 import unicodedata
 from collections import Counter
 from collections.abc import Iterable, Mapping
+from functools import partial
 
 from md_doc_converter import pandoc as _pandoc
 from md_doc_converter.converters.docx import reference as _reference
@@ -141,7 +142,10 @@ def simplify_identifier_escapes(markdown: str, pandoc: str) -> str:
         return _reference.markdown_ast(text, pandoc, "Identifier escape validation").ast
 
     # An underscore can pair with a later delimiter outside the identifier.
-    return candidate if structure(candidate) == structure(markdown) else markdown
+    unescaped, escaped = _pandoc.run_all(
+        [partial(structure, candidate), partial(structure, markdown)]
+    )
+    return candidate if unescaped == escaped else markdown
 
 
 _ESCAPE_SEPARATOR = "<!-- md-doc-converter escape check -->"
@@ -303,11 +307,16 @@ def drop_unneeded_escapes(markdown: str, pandoc: str) -> tuple[str, int]:
         checked = len(pairs)
         pairs = pairs + context
         result = [True] * len(pairs)
-        for reader in readers:
+        texts = ([old for old, _new in pairs], [new for _old, new in pairs])
+        # Each reader parses the escaped and the unescaped texts, all four at once.
+        parses = _pandoc.run_all(
+            [partial(parse, joiner.join(side), reader) for reader in readers for side in texts]
+        )
+        for position, reader in enumerate(readers):
             parsed = []
-            for texts in ([old for old, _new in pairs], [new for _old, new in pairs]):
+            for blocks in parses[2 * position : 2 * position + 2]:
                 pieces: list[list[JSONValue]] = [[]]
-                for block in parse(joiner.join(texts), reader):
+                for block in blocks:
                     if [block] == separators[reader]:
                         pieces.append([])
                     else:
@@ -319,7 +328,13 @@ def drop_unneeded_escapes(markdown: str, pandoc: str) -> tuple[str, int]:
         return result[:checked]
 
     try:
-        separators = {reader: parse(_ESCAPE_SEPARATOR, reader) for reader in readers}
+        separators = dict(
+            zip(
+                readers,
+                _pandoc.run_all([partial(parse, _ESCAPE_SEPARATOR, reader) for reader in readers]),
+                strict=True,
+            )
+        )
         spans = [
             span for span in _escape_blocks(lines) if any(index in groups for index in range(*span))
         ]
@@ -353,7 +368,13 @@ def drop_unneeded_escapes(markdown: str, pandoc: str) -> tuple[str, int]:
         # Each block was checked by both readers with the page's headings and definitions;
         # the page as a whole is checked again by docx-to-md's reader, which, unlike
         # md-to-html's, reads a page of large HTML tables quickly.
-        if parse(result, _reference.DOCX_READER) != parse(markdown, _reference.DOCX_READER):
+        unescaped, escaped = _pandoc.run_all(
+            [
+                partial(parse, result, _reference.DOCX_READER),
+                partial(parse, markdown, _reference.DOCX_READER),
+            ]
+        )
+        if unescaped != escaped:
             return markdown, 0
     except (_pandoc.PandocError, _Unaligned):
         return markdown, 0
