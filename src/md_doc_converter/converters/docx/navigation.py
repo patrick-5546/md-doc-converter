@@ -345,7 +345,7 @@ def _split_sections(
         ):
             boundary -= 1
         if boundary in boundaries:
-            raise ConversionError("Overlapping Wiki section boundaries")
+            raise ConversionError("Page sections overlap")
         boundaries[boundary] = page_index
 
     def assign_paths(parent: int) -> None:
@@ -372,7 +372,7 @@ def _split_sections(
                 shifted = level - pages[current].source_level + 1
                 if not 1 <= shifted <= 6:
                     raise ConversionError(
-                        "Wiki heading translation would lose a source depth relationship"
+                        "A heading would lose its level relative to its page's heading"
                     )
                 line = "#" * shifted + " " + heading
         pages[current].lines.append(line)
@@ -652,7 +652,7 @@ def split_markdown_pages(
                 raise
             report.skipped(
                 "pages",
-                "the document could not be split into Wiki pages; it is written as one page",
+                "the document could not be split into pages; it is written as one page",
                 f"split at depth {split_depth}: {_diagnostics.describe(error)}; "
                 "it is written as one page",
             )

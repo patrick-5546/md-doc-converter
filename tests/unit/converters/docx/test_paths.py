@@ -40,7 +40,7 @@ def test_explicit_output_and_safe_symlink_parent(source: Path, tmp_path: Path) -
 
 def test_existing_derived_markdown_needs_permission_even_when_empty(source: Path) -> None:
     source.with_suffix(".md").touch()
-    with pytest.raises(_models.ConversionError, match="Derived Markdown already exists"):
+    with pytest.raises(_models.ConversionError, match="Markdown output already exists"):
         _publication.validate_paths(source, None)
     _publication.validate_paths(source, None, replace_generated=True)
     _publication.validate_paths(source, source.with_suffix(".md"))
@@ -94,7 +94,7 @@ def test_dangling_output_symlink_is_rejected(source: Path, tmp_path: Path) -> No
 
 def test_image_parent_symlink_cannot_escape_containment(source: Path, tmp_path: Path) -> None:
     (tmp_path / ".images").symlink_to(tmp_path, target_is_directory=True)
-    with pytest.raises(_models.ConversionError, match="must not be a symlink"):
+    with pytest.raises(_models.ConversionError, match="must not be a symbolic link"):
         _publication.validate_paths(source, None, replace_generated=True)
 
 

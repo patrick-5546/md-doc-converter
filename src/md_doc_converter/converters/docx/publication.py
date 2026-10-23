@@ -125,7 +125,7 @@ def validate_paths(
         raise ConversionError(f"Unsafe destination symlink: {output_entry}")
     image_parent = output_entry.parent / ".images"
     if image_parent.is_symlink():
-        raise ConversionError(f"Derived .images parent must not be a symlink: {image_parent}")
+        raise ConversionError(f"The .images folder must not be a symbolic link: {image_parent}")
     images = _entry_path(image_parent / output_entry.stem)
     pages = _entry_path(output_entry.with_suffix(""))
     diagnostics = _entry_path(keep_intermediates) if keep_intermediates is not None else None
@@ -150,7 +150,7 @@ def _validate_destinations(paths: ConversionPaths, *, diagnostics_empty: bool) -
         raise ConversionError("Image and page destinations must derive from the Markdown output")
     related = (paths.source, paths.source_entry, output, images, pages)
     if (output.parent / ".images").is_symlink() or _entry_path(images) != images:
-        raise ConversionError(f"Unsafe derived image parent: {images.parent}")
+        raise ConversionError(f"The .images folder must not be a symbolic link: {images.parent}")
     if any(_entry_path(path) != path for path in (output, pages)):
         raise ConversionError("Destination parent changed through a symlink")
     if output.exists() and not output.is_file():
@@ -159,8 +159,8 @@ def _validate_destinations(paths: ConversionPaths, *, diagnostics_empty: bool) -
         raise ConversionError(f"Markdown destination aliases the source DOCX: {output}")
     if output.exists() and not paths.explicit_output and not paths.replace_generated:
         raise ConversionError(
-            f"Derived Markdown already exists: {output}; select -o/--output explicitly "
-            "or use --replace-generated"
+            f"Markdown output already exists: {output}; name it with -o/--output, or use "
+            "--replace-generated, to replace it"
         )
     if overlaps(images, pages):
         raise ConversionError(f"Image and page destinations overlap: {images}, {pages}")

@@ -426,7 +426,6 @@ def write_diagnostics(
         "image_directory": str(paths.images),
         "page_directory": str(paths.pages) if paths.split_depth else None,
         "document_view": "accepted/final; review history is not archived",
-        "publication": "per-path replacement with rollback, not multi-artifact atomicity",
         "warnings": findings,
         "statistics": stats,
         "baseline": "MarkItDown",

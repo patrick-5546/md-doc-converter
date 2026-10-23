@@ -252,7 +252,7 @@ def validate_outputs(
             if not destination.is_relative_to(paths.images):
                 issue(
                     "an image is outside the image directory",
-                    f"Image escapes the derived image directory in {page}: {target}",
+                    f"Image outside the images folder in {page}: {target}",
                 )
                 continue
             staged = staged_images / destination.relative_to(paths.images)

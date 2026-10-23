@@ -14,17 +14,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="md-doc-converter docx-to-md",
         description=(
-            "Convert DOCX with MarkItDown, then layer on the Word structure that Pandoc "
-            "recovers; anything that cannot be applied is reported and left as MarkItDown made it"
+            "Convert a Word document to Markdown, with its images, and report what could not "
+            "be converted as Word shows it"
         ),
-        epilog="Publication is recoverable per-path replacement, not multi-artifact atomicity.",
     )
-    parser.add_argument("input", type=Path, help="Source DOCX file (never modified)")
+    parser.add_argument("input", type=Path, help="Word document (.docx), which is not changed")
     parser.add_argument(
         "-o",
         "--output",
         type=Path,
-        help="Markdown output (default: <provided-input-parent>/<provided-input-stem>.md)",
+        help="Markdown file to write (default: the input's name with .md, beside it)",
     )
     parser.add_argument(
         "--split-depth",
@@ -32,35 +31,44 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         choices=range(7),
         default=0,
         metavar="0..6",
-        help="Split headings through this source depth into Wiki pages (default: 0)",
+        help=(
+            "Write a page for each heading of levels 1 to this, in a folder named like the "
+            "output (default: 0, one file)"
+        ),
     )
     parser.add_argument(
         "--qualify-duplicate-headings",
         action="store_true",
-        help="Qualify duplicate titles without changing heading levels or punctuation",
+        help="Distinguish repeated headings by their context, keeping their levels",
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Convert and check in scratch; leave all final outputs unchanged",
+        help="Convert and check without writing the Markdown, images or pages",
     )
     parser.add_argument(
         "--replace-generated",
         action="store_true",
-        help="Permit replacing nonempty derived directories and existing derived Markdown",
+        help=(
+            "Allow replacing an existing Markdown file at the default output, and nonempty "
+            "images and pages folders"
+        ),
     )
     parser.add_argument(
         "--keep-intermediates",
         type=Path,
         metavar="DIR",
-        help="Retain a diagnostic bundle in a new/empty nonoverlapping directory, even in dry-run",
+        help=(
+            "Keep the intermediate files and a diagnostic report in a new or empty directory "
+            "apart from the input and outputs, also with --dry-run"
+        ),
     )
     parser.add_argument(
         "--explain",
         action="store_true",
         help=(
-            "After the transform summary, describe what the items each transform did not apply "
-            "have in common, with fixed labels and counts only (no document text)"
+            "After the report, describe what the items that each transform did not apply "
+            "have in common, in labels and counts, never document text"
         ),
     )
     return parser.parse_args(argv)
