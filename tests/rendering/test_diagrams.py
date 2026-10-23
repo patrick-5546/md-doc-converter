@@ -37,3 +37,26 @@ def test_math_in_a_diagram_is_drawn_with_katex(tmp_path: Path) -> None:
     [svg] = diagrams('```mermaid\nflowchart LR\n  A["$$x^2 + y_i$$"] --> B[Plain]\n```\n', tmp_path)
     assert "<math" in svg
     assert "$$" not in svg
+
+
+def test_zenuml_diagrams_are_drawn(tmp_path: Path) -> None:
+    # ZenUML's optional canvas package, which setup does not install, draws only in Node.js.
+    [svg] = diagrams(
+        "```mermaid\nzenuml\n  title Order\n  Client->Server: request()\n```\n", tmp_path
+    )
+    assert 'aria-roledescription="zenuml"' in svg
+    assert "request" in svg
+
+
+MINDMAP = "mindmap\n  root((Root))\n    Alpha\n      One\n      Two\n    Beta\n      Three\n"
+
+
+def test_the_tidy_tree_layout_is_installed(tmp_path: Path) -> None:
+    # Without its package, Mermaid draws its default layout instead, and reports nothing.
+    tidy, default = diagrams(
+        f"```mermaid\n---\nconfig:\n  layout: tidy-tree\n---\n{MINDMAP}```\n\n"
+        f"```mermaid\n{MINDMAP}```\n",
+        tmp_path,
+    )
+    view_box = re.compile(r'viewBox="([^"]*)"')
+    assert view_box.findall(tidy)[0] != view_box.findall(default)[0]

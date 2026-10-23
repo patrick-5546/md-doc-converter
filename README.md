@@ -164,8 +164,8 @@ Command-line options override these environment variables.
   from its GitHub release, verified against a pinned SHA-256 checksum (a 35 MB
   download, 158 MB on disk);
 - `node/`: the npm packages from the lockfile bundled with md-doc-converter,
-  installed with `npm ci --ignore-scripts`, since none needs its install
-  scripts (about 110 MB of downloads, 400 MB on disk);
+  installed with `npm ci --ignore-scripts --omit=optional`, since none needs
+  its install scripts or optional packages (about 110 MB of downloads, 400 MB on disk);
 - `puppeteer/`: chrome-headless-shell, the build of headless Chrome that the
   locked Puppeteer pins, which Mermaid and the PDF printer share (a 126 MB
   download, 273 MB on disk).

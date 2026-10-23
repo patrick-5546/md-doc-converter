@@ -84,9 +84,11 @@ def install_packages(tools: Toolchain, npm: str, *, force: bool) -> bool:
         shutil.copyfile(MANIFEST_DIR / name, tools.node_dir / name)
     print(f"npm packages: installing into {tools.node_modules}", flush=True)
     # No package needs its install scripts; Puppeteer's would download browsers that
-    # rendering does not use.
+    # rendering does not use. Nor are the optional packages used: ZenUML's canvas, for one,
+    # draws in Node.js, while Mermaid draws in the browser. The tidy-tree layout, optional for
+    # mermaid-cli, is a direct dependency, so it is installed.
     environment = {**os.environ, "PUPPETEER_CACHE_DIR": str(tools.puppeteer_cache)}
-    command = [npm, "ci", "--ignore-scripts", "--no-audit", "--no-fund"]
+    command = [npm, "ci", "--ignore-scripts", "--omit=optional", "--no-audit", "--no-fund"]
     try:
         subprocess.run(command, cwd=tools.node_dir, env=environment, check=True)
     except (OSError, subprocess.CalledProcessError) as error:

@@ -31,7 +31,7 @@ from md_doc_converter.toolchain.environment import (
 from tests.support.fake_tools import BROWSER_PATH, FakeTools
 
 LOCAL = Path.home() / ".local" / "share" / "md-doc-converter"
-NPM_CI = ("npm", ["ci", "--ignore-scripts", "--no-audit", "--no-fund"])
+NPM_CI = ("npm", ["ci", "--ignore-scripts", "--omit=optional", "--no-audit", "--no-fund"])
 BROWSER_INSTALL = ("puppeteer", ["browsers", "install", "chrome-headless-shell"])
 Release = Callable[..., install.Archive]
 

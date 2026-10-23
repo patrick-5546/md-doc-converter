@@ -150,7 +150,9 @@ come separately. To update by hand:
   manifests' digest changes. A test checks that every locked package resolves
   from `registry.npmjs.org`. An override gives every package the KaTeX that the
   math filter uses, so one copy is installed and Mermaid's math matches KaTeX's
-  stylesheet; a render test draws math inside a diagram. When a package needs a
+  stylesheet; a render test draws math inside a diagram. `setup` leaves out
+  optional packages, so one that rendering needs, such as Mermaid's tidy-tree
+  layout, is a direct dependency, which a render test checks. When a package needs a
   newer Node.js, raise `NODE_MINIMUM` in `toolchain/environment.py`, which
   `setup` and `doctor` check.
 - **Pandoc:** update `PANDOC_VERSION` in `toolchain/environment.py` and the
