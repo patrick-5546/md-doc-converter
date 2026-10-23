@@ -51,6 +51,10 @@ jobs:
     name: Rendering tests
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    env:
+      # Where apt keeps the cached package files: outside the home folder, which apt's
+      # download user cannot enter.
+      APT_ARCHIVES: /tmp/apt-archives
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -68,23 +72,23 @@ jobs:
         id: package-files
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~/apt-archives
+          path: ${{ env.APT_ARCHIVES }}
           key: apt-${{ runner.os }}-${{ steps.packages.outputs.digest }}
           restore-keys: apt-${{ runner.os }}-
       - name: Install LibreOffice and Poppler
         run: |
-          mkdir -p ~/apt-archives
+          mkdir -p "$APT_ARCHIVES"
           sudo apt-get install --yes --no-install-recommends \
-            -o Dir::Cache::Archives="$HOME/apt-archives" libreoffice-draw poppler-utils
+            -o Dir::Cache::Archives="$APT_ARCHIVES" libreoffice-draw poppler-utils
           # Keep only current package files, readable by the cache, without apt's lock.
-          sudo apt-get autoclean -qq -o Dir::Cache::Archives="$HOME/apt-archives"
-          sudo rm -rf ~/apt-archives/lock ~/apt-archives/partial
-          sudo chown -R "$(id -u):$(id -g)" ~/apt-archives
+          sudo apt-get autoclean -qq -o Dir::Cache::Archives="$APT_ARCHIVES"
+          sudo rm -rf "$APT_ARCHIVES/lock" "$APT_ARCHIVES/partial"
+          sudo chown -R "$(id -u):$(id -g)" "$APT_ARCHIVES"
       - name: Save the package files
         if: steps.package-files.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~/apt-archives
+          path: ${{ env.APT_ARCHIVES }}
           key: ${{ steps.package-files.outputs.cache-primary-key }}
       - name: Allow the browser sandbox
         # Ubuntu 23.10 and later restrict the unprivileged user namespaces that Chrome's sandbox uses.
