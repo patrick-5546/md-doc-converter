@@ -34,12 +34,19 @@ READERS = [
 
 
 class TableContents(HTMLParser):
+    """The text of each cell, and the markup in cells other than line breaks and autolinks.
+
+    GFM links a web or e-mail address written as text, as GitHub does in prose; the cell still
+    shows the text as written.
+    """
+
     def __init__(self) -> None:
         super().__init__()
         self.headers: list[str] = []
         self.cells: list[str] = []
         self.current: list[str] | None = None
         self.markup: list[str] = []
+        self.link: tuple[str, int] | None = None
 
     @override
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
@@ -48,6 +55,8 @@ class TableContents(HTMLParser):
         elif self.current is not None:
             if tag == "br":
                 self.current.append("\n")
+            elif tag == "a" and self.link is None:
+                self.link = (dict(attrs).get("href") or "", len(self.current))
             else:
                 self.markup.append(tag)
 
@@ -58,7 +67,13 @@ class TableContents(HTMLParser):
 
     @override
     def handle_endtag(self, tag: str) -> None:
-        if tag in {"td", "th"} and self.current is not None:
+        if tag == "a" and self.link is not None and self.current is not None:
+            target, start = self.link
+            shown = "".join(self.current[start:])
+            if target not in {shown, "mailto:" + shown, "http://" + shown}:
+                self.markup.append("a")
+            self.link = None
+        elif tag in {"td", "th"} and self.current is not None:
             (self.cells if tag == "td" else self.headers).append("".join(self.current))
             self.current = None
 
