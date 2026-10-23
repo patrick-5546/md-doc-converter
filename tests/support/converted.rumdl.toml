@@ -12,6 +12,7 @@ disable = [
     "MD036",
     "MD041",
     "MD045",
+    "MD059",
     # A link to a Word bookmark at the top of the document is "#".
     "MD042",
     # Conversion checks links and fragments itself, with Pandoc's identifiers.
@@ -23,9 +24,10 @@ disable = [
 
 [MD033]
 # Tables that Markdown cannot write are minimal HTML; underline, highlights, subscripts,
-# superscripts and line breaks in cells stay tags; and anchors mark bookmarks.
+# superscripts and line breaks in cells stay tags; and so does emphasis that Markdown would
+# not read as such.
 allowed-elements = [
-    "a", "br", "caption", "code", "del", "em", "h1", "h2", "h3", "h4", "h5", "h6", "img", "li",
-    "mark", "ol", "p", "pre", "strong", "sub", "sup", "table", "tbody", "td", "th", "thead",
-    "tr", "u", "ul",
+    "a", "br", "caption", "code", "del", "em", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "img",
+    "li", "mark", "ol", "p", "pre", "strong", "sub", "sup", "table", "tbody", "td", "th",
+    "thead", "tr", "u", "ul",
 ]

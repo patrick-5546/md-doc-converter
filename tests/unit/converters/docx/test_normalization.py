@@ -7,10 +7,8 @@ from unittest import mock
 import pytest
 
 from md_doc_converter import pandoc as _pandoc
-from md_doc_converter.converters.docx import models as _models
 from md_doc_converter.converters.docx import navigation as _navigation
 from md_doc_converter.converters.docx import normalization as _normalization
-from md_doc_converter.converters.docx import recovery as _recovery
 from md_doc_converter.converters.docx import reference as _reference
 
 
@@ -55,100 +53,6 @@ def test_compact_table_formatting_preserves_literal_regions() -> None:
         _normalization.compact_markdown_tables(table_text + "\n" + literal)
         == "| Name | Details |\n| --- | --- |\n| A \\| B | first |\n| :---: | ---: |\n\n" + literal
     )
-
-
-def test_normalizes_nested_lists_and_preserves_fences() -> None:
-    text = "* top\n  + nested\n    - child\n```\n* literal\n```\n"
-    assert _normalization.normalize_unordered_lists(text) == (
-        "- top\n  - nested\n    - child\n```\n* literal\n```\n",
-        2,
-    )
-
-
-def test_preserves_task_list_content_and_ordered_numbers() -> None:
-    text = "* [ ] pending\n+ [x] complete\n3. Third\n9) Ninth\n"
-    assert (
-        _normalization.normalize_unordered_lists(text)[0]
-        == "- [ ] pending\n- [x] complete\n3. Third\n9) Ninth\n"
-    )
-
-
-def test_nested_marker_chains() -> None:
-    assert (
-        _normalization.normalize_unordered_lists("* + - nested\n    + * child\n")[0]
-        == "- - - nested\n    - - child\n"
-    )
-
-
-@pytest.mark.parametrize("tag", ["pre", "script", "style", "div", "table", "details"])
-def test_does_not_touch_raw_html(tag: str) -> None:
-    text = f"<{tag}>\n\n* literal\n+ literal\n</{tag}>\n\n* item\n"
-    assert _normalization.normalize_unordered_lists(text)[0] == text.replace("* item", "- item")
-
-
-def test_fence_before_html_and_tilde_fences() -> None:
-    text = "~~~html\n<pre>\n~~~\n\n+ item\n"
-    assert _normalization.normalize_unordered_lists(text)[0] == text.replace("+ item", "- item")
-
-
-def test_indented_code_and_nested_list_code() -> None:
-    text = "    * literal\n    + literal\n\n* real\n\n      + nested code\n\n  + child\n"
-    assert _normalization.normalize_unordered_lists(text)[0] == text.replace(
-        "* real", "- real"
-    ).replace("  + child", "  - child")
-
-
-def test_comment_and_quoted_code() -> None:
-    text = "<!--\n* literal\n-->\n\n> ```\n> + literal\n> ```\n\n> + item\n"
-    assert _normalization.normalize_unordered_lists(text)[0] == text.replace("> + item", "> - item")
-
-
-def test_keeps_thematic_breaks_and_inline_code() -> None:
-    text = "* * *\n\n* `+ literal`\n"
-    assert _normalization.normalize_unordered_lists(text)[0] == "* * *\n\n- `+ literal`\n"
-
-
-def test_empty_list_items_also_use_dashes() -> None:
-    assert _normalization.normalize_unordered_lists("+\n*\n")[0] == "-\n-\n"
-
-
-def test_empty_nested_lists_do_not_turn_into_thematic_breaks() -> None:
-    assert _normalization.normalize_unordered_lists("+ + +\n")[0] == "-\n  -\n    -\n"
-
-
-def test_generic_raw_html_and_multiline_attributes_are_literal() -> None:
-    text = '<widget\n class="literal">\n\n* literal\n</widget>\n\n+ item\n'
-    assert _normalization.normalize_unordered_lists(text)[0] == text.replace("+ item", "- item")
-
-
-def test_raw_script_text_cannot_hide_subsequent_lists() -> None:
-    text = '<script>\nconst example = "<script>";\n</script>\n\n+ item\n'
-    assert _normalization.normalize_unordered_lists(text)[0] == text.replace("+ item", "- item")
-
-
-def test_self_closing_raw_tags_do_not_hide_lists() -> None:
-    text = '<widget\n value="x" />\n\n+ item\n'
-    assert _normalization.normalize_unordered_lists(text)[0] == text.replace("+ item", "- item")
-
-
-def test_unclosed_inline_backtick_does_not_hide_later_lists() -> None:
-    assert (
-        _normalization.normalize_unordered_lists("A literal `\n\n+ item\n")[0]
-        == "A literal `\n\n- item\n"
-    )
-
-
-def test_narrow_tooltip_repair() -> None:
-    text = '[ADO](https://example.test/item?id=1" \\o "Tooltip")\n'
-    assert _normalization.repair_word_tooltip_links(text) == (
-        "[ADO](https://example.test/item?id=1)\n",
-        1,
-    )
-
-
-def test_normal_quoted_links_and_fenced_tooltips_are_unchanged() -> None:
-    text = '[ADO](https://example.test/item "Tooltip")\n\n```\n[x](https://x" \\o "Tip")\n```\n'
-    assert _normalization.repair_word_tooltip_links(text) == (text, 0)
 
 
 def test_final_newline_only() -> None:
@@ -202,12 +106,6 @@ def test_trailing_whitespace_keeps_line_breaks_and_backslashes() -> None:
         "First line  \nsecond line\n\nEscaped \\ \n\n\xa0\n\nLast\n",
         1,
     )
-
-
-def test_source_heading_formatting_around_alignment_markers_is_preserved() -> None:
-    source = "#### **MARKBEGINTitle.MARKEND**\n"
-    result = _recovery._primary_heading(source, _models.SourceHeading("MARK", 4, False))
-    assert result == "#### **Title.**\n"
 
 
 def test_qualification_keeps_levels_periods_and_anchors() -> None:
@@ -379,8 +277,18 @@ def test_bit_notation_in_an_html_cell_does_not_define_a_link(pandoc: str) -> Non
     )
 
 
-def test_page_that_would_parse_differently_is_unchanged(pandoc: str) -> None:
-    text = r"See \[x\]." + "\n\n[x]: https://example.com\n"
+@pytest.mark.parametrize(
+    "definition",
+    [
+        pytest.param("[x]: https://example.com", id="link-reference"),
+        pytest.param("Noted[^x]\n\n[^x]: A note", id="footnote"),
+    ],
+)
+def test_brackets_a_definition_elsewhere_would_read_stay_escaped(
+    definition: str, pandoc: str
+) -> None:
+    caret = "^" if "^" in definition else ""
+    text = f"See \\[{caret}x\\].\n\n{definition}\n"
     assert _normalization.drop_unneeded_escapes(text, pandoc) == (text, 0)
 
 

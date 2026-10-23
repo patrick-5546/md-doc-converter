@@ -14,20 +14,22 @@ from collections.abc import Callable
 from pathlib import Path
 
 from md_doc_converter.converters.docx import diagnostics as _diagnostics
-from md_doc_converter.converters.docx import explain as _explain
 from md_doc_converter.converters.docx import media as _media
 from md_doc_converter.converters.docx import normalization as _normalization
 from md_doc_converter.converters.docx import reference as _reference
+from md_doc_converter.converters.docx import transforms as _transforms
+from md_doc_converter.converters.docx import tree as _tree
 from md_doc_converter.converters.docx.diagnostics import TransformReport
 from md_doc_converter.converters.docx.models import (
     BookmarkSection,
     ConversionError,
+    DocumentNavigation,
     HeadingChange,
     SectionTarget,
-    SourceDocument,
     SourceHeading,
     WikiPage,
 )
+from md_doc_converter.converters.docx.tree import MathSyntax
 from md_doc_converter.markdown import syntax as _syntax
 from md_doc_converter.markdown.headings import Heading, HeadingError, collect_headings
 from md_doc_converter.pandoc import JSONValue, PandocError, ParsedMarkdown
@@ -207,10 +209,12 @@ def rewrite_page_references(
     parsed: ParsedMarkdown | None = None,
     unresolved: list[str] | None = None,
     linked: list[int] | None = None,
+    math: MathSyntax = "github",
 ) -> str:
     """Retarget links for *page*; with *unresolved*, problem targets are kept and listed.
 
     Bare web and e-mail addresses become autolinks; *linked*, if given, gets their number.
+    Equations are written in the *math* syntax.
     """
 
     def rewrite(target: str) -> str:
@@ -279,18 +283,22 @@ def rewrite_page_references(
     count = _link_bare_addresses(data)
     if linked is not None:
         linked.append(count)
+    if isinstance(data, dict):
+        # The page is written by Pandoc again, which needs the same help as the first time.
+        blocks = _reference.json_list(data.get("blocks"))
+        _transforms.escape_rules_and_underlines(blocks)
+        _transforms.short_rules(blocks)
     result = _reference.run_command(
         [
             pandoc,
             "--from=json",
-            "--to=gfm+raw_html",
+            f"--to={_tree.gfm_writer(math)}+raw_html",
             "--wrap=none",
             "--markdown-headings=atx",
         ],
         "Split-page reference rendering",
         input_text=_reference.gfm_input(data),
     )
-    result = _normalization.normalize_unordered_lists(result)[0]
     spaced, spacing = _normalization.normalize_ordered_list_spacing(result)
     if spacing:
 
@@ -410,16 +418,16 @@ def _heading_mapping(body: list[SourceHeading], rendered: list[Heading]) -> dict
         if block.a - first == block.b - second and all(
             body[left].level == rendered[right].level for left, right in gap
         ):
-            mapping.update((body[left].token, right) for left, right in gap)
+            mapping.update((body[left].key, right) for left, right in gap)
         mapping.update(
-            (body[block.a + offset].token, block.b + offset) for offset in range(block.size)
+            (body[block.a + offset].key, block.b + offset) for offset in range(block.size)
         )
         first, second = block.a + block.size, block.b + block.size
     return mapping
 
 
 def _map_bookmarks(
-    source: SourceDocument,
+    source: DocumentNavigation,
     rendered: list[Heading],
     section_targets: dict[int, SectionTarget],
     anchors: dict[str, SectionTarget],
@@ -428,7 +436,7 @@ def _map_bookmarks(
 ) -> None:
     body = [heading for heading in source.headings if not heading.in_table]
     mapping = _heading_mapping(body, rendered)
-    order = {heading.token: index for index, heading in enumerate(body)}
+    order = {heading.key: index for index, heading in enumerate(body)}
     used_bookmarks: set[str] = set()
     for link in source.link_targets:
         try:
@@ -455,16 +463,16 @@ def _map_bookmarks(
             section = BookmarkSection(
                 next(
                     (
-                        body[index].token
+                        body[index].key
                         for index in range(position - 1, -1, -1)
-                        if body[index].token in mapping
+                        if body[index].key in mapping
                     ),
                     None,
                 ),
                 False,
             )
             source.bookmark_sections[name] = section
-        else:
+        elif name in source.bookmarks:
             mapped += 1
         target = top if section.heading is None else section_targets[mapping[section.heading]]
         source.bookmark_targets[name] = target
@@ -481,7 +489,6 @@ def _map_bookmarks(
                 "the Word heading of a linked bookmark was not converted; "
                 "links go to the nearest earlier section",
                 message,
-                shape={"name": _explain.name_class(name)},
             )
         elif report is not None:
             report.warn(message)
@@ -591,8 +598,9 @@ def split_markdown_pages(
     title: str | None,
     pandoc: str,
     *,
-    source: SourceDocument | None = None,
+    source: DocumentNavigation | None = None,
     report: TransformReport | None = None,
+    math: MathSyntax = "github",
 ) -> dict[Path, str]:
     """Split at *split_depth*; without a report every problem is an error."""
     if not 0 <= split_depth <= 6:
@@ -676,6 +684,7 @@ def split_markdown_pages(
             parsed=parse_page(content),
             unresolved=problems,
             linked=linked,
+            math=math,
         )
         for path, content in raw.items()
     }

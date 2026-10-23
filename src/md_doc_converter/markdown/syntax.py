@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+import string
+import unicodedata
 from collections.abc import Callable
 
 VOID_TAGS = frozenset(
@@ -213,3 +215,55 @@ def markdown_prose_lines(markdown: str) -> set[int]:
             continue
         continue
     return eligible
+
+
+def _whitespace(character: str | None) -> bool:
+    """Whether CommonMark reads *character* as whitespace; None is a line's start or end."""
+    return character is None or character in "\t\n\f\r" or unicodedata.category(character) == "Zs"
+
+
+def _punctuation(character: str | None, *, symbols: bool) -> bool:
+    """Whether CommonMark reads *character* as punctuation: ASCII punctuation, Unicode
+    punctuation and, since CommonMark 0.31, which GitHub does not yet follow, symbols."""
+    if character is None:
+        return False
+    category = unicodedata.category(character)
+    return (
+        character in string.punctuation
+        or category.startswith("P")
+        or (symbols and category.startswith("S"))
+    )
+
+
+def _flanking(before: str | None, after: str | None, *, symbols: bool) -> tuple[bool, bool]:
+    """Whether a delimiter run between *before* and *after* can open, and can close, emphasis."""
+    left = not _whitespace(after) and (
+        not _punctuation(after, symbols=symbols)
+        or _whitespace(before)
+        or _punctuation(before, symbols=symbols)
+    )
+    right = not _whitespace(before) and (
+        not _punctuation(before, symbols=symbols)
+        or _whitespace(after)
+        or _punctuation(after, symbols=symbols)
+    )
+    return left, right
+
+
+def emphasis_delimits(
+    before: str | None, first: str, last: str, after: str | None, *, nested: bool = False
+) -> bool:
+    """Whether emphasis delimiters such as ** around text from *first* to *last*, between the
+    characters *before* and *after* (None at a line's start or end), open and close it, by the
+    CommonMark rules both before and since 0.31.
+
+    "**Note:**next" does not: a closing delimiter after punctuation must be followed by a space
+    or more punctuation. Inside emphasis with the same delimiter, *nested*, an opening
+    delimiter that could also close would close that emphasis instead.
+    """
+    for symbols in (False, True):
+        opens, could_close = _flanking(before, first, symbols=symbols)
+        _could_open, closes = _flanking(last, after, symbols=symbols)
+        if not (opens and closes) or (nested and could_close):
+            return False
+    return True

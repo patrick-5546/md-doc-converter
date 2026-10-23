@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import base64
-import binascii
 import hashlib
 import html
 import re
@@ -25,11 +23,6 @@ from md_doc_converter.converters.docx.models import (
     WordPackage,
 )
 from md_doc_converter.converters.docx.ooxml import DRAWING_WORD, OFFICE, VML, WORD
-
-DATA_URI_RE = re.compile(
-    r"(?:(?<=\]\()|(?<=src=\"))data:([^;,()\s\"]*);base64,([A-Za-z0-9+/=]*)(?=[)\s\"])"
-)
-
 
 WEB_IMAGE_SUFFIXES = frozenset({".png", ".svg", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"})
 
@@ -53,23 +46,6 @@ MIME_SUFFIXES = {
     "image/x-wmf": ".wmf",
     "image/wmf": ".wmf",
 }
-
-
-def tokenize_data_images(markdown: str, prefix: str, store: dict[str, tuple[str, bytes]]) -> str:
-    """Replace MarkItDown data URIs with short markers so later passes stay fast and exact."""
-
-    def replace(match: re.Match[str]) -> str:
-        try:
-            data = base64.b64decode(match.group(2), validate=True)
-        except (binascii.Error, ValueError):
-            return match.group(0)
-        if not data:
-            return match.group(0)
-        token = f"{prefix}D{len(store)}DATA"
-        store[token] = (match.group(1), data)
-        return token
-
-    return DATA_URI_RE.sub(replace, markdown)
 
 
 _CAPTION_SEPARATORS = ":.-\u2011\u2013\u2014 "
@@ -658,14 +634,6 @@ class ImageStager:
     @property
     def count(self) -> int:
         return len(self._published)
-
-    def reset(self) -> None:
-        """Forget published images; converted vectors stay cached for the next attempt."""
-        shutil.rmtree(self.root)
-        self.root.mkdir()
-        self._published.clear()
-        self._names.clear()
-        self._data = 0
 
     def publish(
         self, key: str, data: bytes, preferred: PurePosixPath, report: TransformReport

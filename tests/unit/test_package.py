@@ -104,7 +104,7 @@ def test_cli_help_is_available_without_site_packages_or_external_tools(
         f"try:\n    status = main({arguments!r})\n"
         "except SystemExit as error:\n    status = error.code\n"
         "assert status in (None, 0), status\n"
-        "assert not {'markitdown', 'openpyxl'} & set(sys.modules)\n"
+        "assert 'openpyxl' not in sys.modules\n"
     )
     result = subprocess.run(
         [sys.executable, "-B", "-S", "-c", script],

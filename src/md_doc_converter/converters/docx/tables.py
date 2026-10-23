@@ -5,18 +5,21 @@ from __future__ import annotations
 import copy
 import html
 import re
+import uuid
+from dataclasses import dataclass, field
 from xml.etree import ElementTree as ET
 
 from md_doc_converter.converters.docx import media as _media
 from md_doc_converter.converters.docx import ooxml as _ooxml
 from md_doc_converter.converters.docx import reference as _reference
+from md_doc_converter.converters.docx import tree as _tree
+from md_doc_converter.converters.docx.diagnostics import TransformReport
 from md_doc_converter.converters.docx.models import (
     ConversionError,
     TableRendering,
-    WordCell,
-    WordRow,
 )
 from md_doc_converter.converters.docx.ooxml import WORD
+from md_doc_converter.converters.docx.tree import JSONValue, MathSyntax
 from md_doc_converter.markdown import syntax as _syntax
 
 
@@ -41,27 +44,35 @@ def canonicalize_horizontal_merges(root: ET.Element, *, strict: bool = True) -> 
 
 
 def complete_table_grids(root: ET.Element) -> int:
-    """Widen each table grid to its widest row; return how many grids were widened.
+    """Give each table a grid that Pandoc reads whole; return how many grids changed.
 
-    Pandoc drops the cells of a row beyond the table's w:tblGrid, which Word tolerates.
+    Pandoc leaves out a grid column without a width in whole twips, and drops the cells of a
+    row beyond the table's grid; Word tolerates both. Widths only size the columns, which the
+    Markdown does not keep.
     """
-    widened = 0
+    changed = 0
     for table in root.iter(WORD + "tbl"):
         grid = table.find(WORD + "tblGrid")
         columns: list[ET.Element] = [] if grid is None else grid.findall(WORD + "gridCol")
         rows = table.findall(WORD + "tr")
         width = max((_row_columns(row, after=True) for row in rows), default=0)
-        if width <= len(columns):
+        widths = [
+            int(value) for column in columns if (value := column.get(WORD + "w", "")).isdigit()
+        ]
+        unsized = [column for column in columns if not column.get(WORD + "w", "").isdigit()]
+        if width <= len(columns) and not unsized:
             continue
+        default = str(sum(widths) // len(widths) if widths else 1440)
+        for column in unsized:
+            column.set(WORD + "w", default)
         if grid is None:
             grid = ET.Element(WORD + "tblGrid")
             properties = table.find(WORD + "tblPr")
             table.insert(0 if properties is None else list(table).index(properties) + 1, grid)
-        column = columns[-1].get(WORD + "w") if columns else None
         for _extra in range(width - len(columns)):
-            ET.SubElement(grid, WORD + "gridCol", {} if column is None else {WORD + "w": column})
-        widened += 1
-    return widened
+            ET.SubElement(grid, WORD + "gridCol", {WORD + "w": default})
+        changed += 1
+    return changed
 
 
 def _vertically_merged(row: ET.Element) -> bool:
@@ -249,58 +260,6 @@ def _positive_word_int(
     return int(value)
 
 
-def word_table_rows(table: ET.Element) -> list[WordRow]:
-    result: list[WordRow] = []
-    active: dict[tuple[int, int], WordCell] = {}
-    for row in table.findall(WORD + "tr"):
-        if row.find(f"./{WORD}trPr/{WORD}cellDel") is not None:
-            raise ConversionError("Cannot reconcile tracked cell deletion in a Word table")
-        cells: list[WordCell] = []
-        before_node = row.find(f"./{WORD}trPr/{WORD}gridBefore")
-        before = _positive_word_int(before_node, 0, "gridBefore", minimum=0)
-        column = before
-        if before:
-            cells.append(WordCell(None, before))
-        continued: dict[tuple[int, int], WordCell] = {}
-        for cell in row.findall(WORD + "tc"):
-            if cell.find(f"./{WORD}tcPr/{WORD}hMerge") is not None:
-                raise ConversionError("Legacy hMerge table cells cannot be aligned unambiguously")
-            width = _positive_word_int(cell.find(f"./{WORD}tcPr/{WORD}gridSpan"), 1, "gridSpan")
-            merge = cell.find(f"./{WORD}tcPr/{WORD}vMerge")
-            key = (column, width)
-            if merge is not None and merge.get(WORD + "val", "continue") == "continue":
-                if key not in active:
-                    raise ConversionError("Word vertical merge continuation has no matching start")
-                if (
-                    _reference.plain_text(_ooxml.word_text(cell))
-                    or cell.find(f".//{WORD}drawing") is not None
-                    or cell.find(f".//{WORD}pict") is not None
-                    or cell.find(f".//{WORD}bookmarkStart") is not None
-                    or cell.find(f".//{WORD}tbl") is not None
-                ):
-                    raise ConversionError(
-                        "Word vertical merge continuation contains retained content"
-                    )
-                active[key].rowspan += 1
-                continued[key] = active[key]
-            else:
-                parsed = WordCell(cell, width)
-                cells.append(parsed)
-                if merge is not None:
-                    if merge.get(WORD + "val") != "restart":
-                        raise ConversionError("Invalid Word vertical merge value")
-                    continued[key] = parsed
-            column += width
-        after_node = row.find(f"./{WORD}trPr/{WORD}gridAfter")
-        if after_node is not None:
-            after = _positive_word_int(after_node, 0, "gridAfter", minimum=0)
-            if after:
-                cells.append(WordCell(None, after))
-        active = continued
-        result.append(WordRow(_ooxml.word_flag(row.find(f"./{WORD}trPr/{WORD}tblHeader")), cells))
-    return result
-
-
 def html_rows(table: ET.Element) -> list[ET.Element]:
     rows: list[ET.Element] = []
     for child in table:
@@ -309,118 +268,6 @@ def html_rows(table: ET.Element) -> list[ET.Element]:
         elif child.tag in {"thead", "tbody", "tfoot"}:
             rows.extend(child.findall("tr"))
     return rows
-
-
-def _grid_cells(
-    row: ET.Element, cells: list[ET.Element], expected: list[WordCell]
-) -> list[ET.Element]:
-    """Fold Pandoc's grid padding into the Word row's cells, if that is what it is.
-
-    For gridBefore and gridAfter Pandoc writes one empty cell per grid column, where the
-    Word row has one placeholder cell, and it pads a short row with empty cells.
-    """
-    if len(cells) == len(expected):
-        return cells
-
-    def blank(node: ET.Element) -> bool:
-        spans = node.get("colspan", "1"), node.get("rowspan", "1")
-        return len(node) == 0 and not (node.text or "").strip() and spans == ("1", "1")
-
-    width = sum(1 if cell.source is not None else cell.colspan for cell in expected)
-    runs: list[list[ET.Element]] = []
-    index = 0
-    for cell in expected:
-        size = 1 if cell.source is not None else cell.colspan
-        runs.append(cells[index : index + size])
-        index += size
-    placeholders = [run for run, cell in zip(runs, expected, strict=True) if cell.source is None]
-    if len(cells) < width or not all(blank(node) for run in placeholders for node in run):
-        return cells
-    if not all(blank(node) for node in cells[width:]):
-        return cells
-    for run, cell in zip(runs, expected, strict=True):
-        if cell.source is None and cell.colspan > 1:
-            run[0].set("colspan", str(cell.colspan))
-            for node in run[1:]:
-                row.remove(node)
-    for node in cells[width:]:
-        row.remove(node)
-    return [run[0] for run in runs]
-
-
-def repair_source_table(source: ET.Element, reference: ET.Element | None) -> ET.Element:
-    """Preserve source rows/headers; repair only differences proved by Word XML."""
-    expected = word_table_rows(source)
-    if reference is None:
-        if any(row.cells for row in expected):
-            raise ConversionError("Pandoc omitted a Word table with cells")
-        reference = ET.Element("table")
-    actual = html_rows(reference)
-    matched: list[ET.Element] = []
-    position = 0
-    for ordinal, row in enumerate(expected, 1):
-        if not row.cells:
-            if position < len(actual) and len(actual[position]) == 0:
-                selected = actual[position]
-                position += 1
-            else:
-                selected = ET.Element("tr")
-            matched.append(selected)
-            continue
-        if position >= len(actual):
-            raise ConversionError(f"Table row {ordinal}: Pandoc omitted a Word row")
-        selected = actual[position]
-        position += 1
-        cells = _grid_cells(
-            selected, [node for node in selected if node.tag in {"td", "th"}], row.cells
-        )
-        if len(cells) != len(row.cells):
-            raise ConversionError(
-                f"Table row {ordinal}: Word has {len(row.cells)} cells, "
-                f"Pandoc has {len(cells)}; refusing ambiguous alignment"
-            )
-        for column, (cell, expected_cell) in enumerate(zip(cells, row.cells, strict=True), 1):
-            try:
-                spans = (int(cell.get("colspan", "1")), int(cell.get("rowspan", "1")))
-            except ValueError as error:
-                raise ConversionError("Invalid Pandoc table span") from error
-            if spans != (expected_cell.colspan, expected_cell.rowspan):
-                raise ConversionError(
-                    f"Table row {ordinal}, cell {column}: Word/Pandoc merge mismatch"
-                )
-            source_text = (
-                _ooxml.word_text(expected_cell.source) if expected_cell.source is not None else ""
-            )
-            if _reference.plain_text(source_text) != _reference.plain_text(
-                _reference.visible_reference_text(cell)
-            ):
-                raise ConversionError(
-                    f"Table row {ordinal}, cell {column}: Word/Pandoc content does not align"
-                )
-            cell.tag = "th" if row.header else "td"
-        matched.append(selected)
-    if position != len(actual):
-        raise ConversionError("Pandoc introduced table rows not unambiguously aligned with Word")
-    for child in list(reference):
-        if child.tag in {"tr", "thead", "tbody", "tfoot"}:
-            reference.remove(child)
-    group: ET.Element | None = None
-    in_header = True
-    for row, rendered in zip(expected, matched, strict=True):
-        tag = "thead" if in_header and row.header else "tbody"
-        if tag == "tbody":
-            in_header = False
-        if group is None or group.tag != tag:
-            group = ET.SubElement(reference, tag)
-        group.append(rendered)
-    caption = source.find(f"./{WORD}tblPr/{WORD}tblCaption")
-    if caption is not None and reference.find("caption") is None:
-        value = caption.get(WORD + "val", "")
-        if value:
-            element = ET.Element("caption")
-            element.text = value
-            reference.insert(0, element)
-    return reference
 
 
 def split_table_row(line: str) -> list[str] | None:
@@ -453,9 +300,32 @@ def _table_text(value: str | None) -> str:
     return re.sub(r"([\\`*_\[\]|])", r"\\\1", html.escape(text, quote=False))
 
 
-def table_inline(node: ET.Element, *, table_cell: bool = True, header: bool = False) -> str | None:
+# Emphasis tags, and the Markdown delimiters and HTML tag that write them.
+_EMPHASIS = {
+    "strong": ("**", "strong"),
+    "b": ("**", "strong"),
+    "em": ("*", "em"),
+    "i": ("*", "em"),
+    "del": ("~~", "del"),
+}
+_HTML_ONLY = frozenset({"sub", "sup", "mark", "u"})
+
+
+def table_inline(
+    node: ET.Element,
+    *,
+    table_cell: bool = True,
+    header: bool = False,
+    edges: tuple[str | None, str | None] = (None, None),
+    open_delimiters: frozenset[str] = frozenset(),
+) -> str | None:
     """Markdown for *node*, or None when it needs HTML; in a *header* cell, a line break,
-    which Word authors use to narrow a column, is a space, so that the renderer wraps it."""
+    which Word authors use to narrow a column, is a space, so that the renderer wraps it.
+
+    *edges* are the characters written around the node's content, None at a line's start or
+    end, and *open_delimiters* the emphasis delimiters open around it: emphasis that Markdown
+    would not read as such there is written in HTML, as in prose (see transforms).
+    """
     if node.tag == "br":
         if header:
             return " "
@@ -475,27 +345,59 @@ def table_inline(node: ET.Element, *, table_cell: bool = True, header: bool = Fa
         if "\n" in text or "\r" in text:
             return None
         return _reference.code_span(text, table_cell=table_cell) if text else ""
+    if node.tag in _EMPHASIS and node.attrib:
+        return None
     parts = [_table_text(node.text)]
+    emphasis: list[int] = []
     for child in node:
-        rendered = table_inline(child, table_cell=table_cell, header=header)
+        delimiter = _EMPHASIS[child.tag][0][0] if child.tag in _EMPHASIS else None
+        if delimiter is not None:
+            emphasis.append(len(parts))
+            context, around = (delimiter, delimiter), open_delimiters | {delimiter}
+        elif child.tag == "a":
+            # Markdown reads the emphasis in link text on its own.
+            context, around = ("[", "]"), frozenset[str]()
+        elif child.tag in _HTML_ONLY:
+            context, around = (">", "<"), open_delimiters
+        else:
+            context, around = (None, None), open_delimiters
+        rendered = table_inline(
+            child, table_cell=table_cell, header=header, edges=context, open_delimiters=around
+        )
         if rendered is None:
             return None
         tail = _table_text(child.tail)
         # Pandoc writes a new line after a line break, which is not a space in Word.
         parts.extend((rendered, tail.lstrip(" ") if child.tag == "br" else tail))
+    for index in emphasis:
+        child = node[(index - 1) // 2]
+        marker, tag = _EMPHASIS[child.tag]
+        inner = parts[index][len(marker) : -len(marker)]
+        if not inner:
+            continue
+        previous = "".join(parts[:index])[-1:] or None
+        following = "".join(parts[index + 1 :])[:1] or None
+        left = edges[0] if previous is None else previous
+        right = edges[1] if following is None else following
+        delimiter = marker[0]
+        tilde, nested = delimiter == "~", delimiter in open_delimiters
+        beside = {previous, following} | ({left, right} if tilde else set())
+        if (
+            delimiter in beside
+            or (tilde and nested)
+            or not _syntax.emphasis_delimits(left, inner[0], inner[-1], right, nested=nested)
+        ):
+            parts[index] = f"<{tag}>{inner}</{tag}>"
     content = "".join(parts)
-    wrappers = {"strong": "**", "b": "**", "em": "*", "i": "*", "del": "~~"}
-    if node.tag in wrappers:
-        if node.attrib:
-            return None
-        marker = wrappers[node.tag]
+    if node.tag in _EMPHASIS:
+        marker = _EMPHASIS[node.tag][0]
         return f"{marker}{content}{marker}"
     if node.tag == "a":
         target = html.escape(_reference.encoded_uri(node.get("href", "")), quote=False)
         title = node.get("title")
         suffix = f' "{html.escape(title, quote=True)}"' if title else ""
         return f"[{content}]({target}{suffix})"
-    if node.tag in {"sub", "sup", "mark", "u"}:
+    if node.tag in _HTML_ONLY:
         # Markdown has no syntax for these, so they stay HTML tags around Markdown text, as
         # Pandoc writes them in prose; every Markdown renderer reads them in a table cell.
         return None if node.attrib else f"<{node.tag}>{content}</{node.tag}>"
@@ -718,3 +620,100 @@ def render_source_table(table: ET.Element) -> TableRendering:
     if markdown is not None:
         return TableRendering(markdown, True, omitted=omitted)
     return TableRendering(_reference.html_element(cleaned) + "\n", False, reason, omitted)
+
+
+_TABLE_ID = "docx-to-md-table-"
+# Content of table cells that Pandoc's HTML cannot carry into a pipe table, held as a
+# placeholder until the Markdown is written.
+_PLACEHOLDER = "DOCXTOMDCELL"
+
+
+@dataclass
+class TableCounts:
+    tables: int = 0
+    html_tables: int = 0
+    multiline_tables: int = 0
+    # The text of each placeholder in the Markdown, such as a cell's math.
+    placeholders: dict[str, str] = field(default_factory=dict[str, str])
+
+    def restore(self, markdown: str) -> str:
+        for placeholder, value in self.placeholders.items():
+            markdown = markdown.replace(placeholder, value)
+        return markdown
+
+
+def _math(tex: str, display: bool, math: MathSyntax) -> str:
+    if math == "github":
+        return f"$`{tex}`$"
+    return f"$${tex}$$" if display else f"${tex}$"
+
+
+def render_tables(
+    blocks: list[JSONValue],
+    pandoc: str,
+    api: JSONValue,
+    math: MathSyntax,
+    report: TransformReport,
+) -> TableCounts:
+    """Write each table that is not in another table as a pipe table or minimal HTML.
+
+    Pandoc writes the tables as HTML in one run, and render_source_table makes each one
+    Markdown when Markdown can hold it. A table it cannot render is left to Pandoc's GFM
+    writer, without Word's column widths.
+    """
+    counts = TableCounts()
+    found = [
+        element
+        for element in _tree.walk(blocks, skip=frozenset({"Table"}))
+        if element["t"] == "Table"
+    ]
+    if not found:
+        return counts
+    token = _PLACEHOLDER + uuid.uuid4().hex.upper()
+
+    def inline(element: _tree.Element) -> list[_tree.Element]:
+        if element["t"] != "Math":
+            return [element]
+        kind, tex = _tree.items(element["c"])
+        placeholder = f"{token}M{len(counts.placeholders)}X"
+        display = _tree.tag(kind) == "DisplayMath"
+        counts.placeholders[placeholder] = _math(_tree.text(tex), display, math)
+        return [_tree.string(placeholder)]
+
+    for table in found:
+        _tree.rewrite(table, inline=inline)
+    wrapped: list[JSONValue] = [
+        _tree.element("Div", [_tree.attributes(f"{_TABLE_ID}{index}"), [table]])
+        for index, table in enumerate(found)
+    ]
+    written = _tree.write(
+        _tree.document(wrapped, api), pandoc, "html5+empty_paragraphs", "Rendering Word tables"
+    )
+    holders = {node.get("id", ""): node for node in _reference.parse_html(written).iter("div")}
+    for number, table in enumerate(found, 1):
+        counts.tables += 1
+        holder = holders.get(f"{_TABLE_ID}{number - 1}")
+        source = None if holder is None else holder.find("table")
+        try:
+            if source is None:
+                raise ConversionError("Pandoc wrote no HTML for the table")
+            rendered = render_source_table(source)
+        except (ConversionError, ValueError, RecursionError) as error:
+            report.skipped_error(
+                "tables", error, f"table {number}", "; written as Pandoc writes it"
+            )
+            for spec in _tree.items(_tree.items(table["c"])[2]):
+                _tree.items(spec)[1] = _tree.element("ColWidthDefault")
+            continue
+        value = rendered.text.rstrip("\n")
+        table.clear()
+        table.update(_tree.raw_block("gfm" if rendered.markdown else "html", value))
+        report.applied("lists", "empty Word list item(s) omitted", rendered.omitted)
+        if rendered.markdown:
+            counts.multiline_tables += "<br>" in value
+            report.applied("tables", "Markdown")
+        else:
+            counts.html_tables += 1
+            report.warn(f"Table {number} remains HTML: {rendered.reason}")
+            report.applied("tables", "HTML")
+    return counts

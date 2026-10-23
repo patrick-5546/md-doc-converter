@@ -33,6 +33,8 @@ def test_options_default_to_one_unqualified_page_beside_the_input() -> None:
     assert args.output is None
     assert args.split_depth == 0
     assert not args.qualify_duplicate_headings
+    assert args.math == "github"
+    assert _cli.parse_args(["input.docx", "--math", "dollars"]).math == "dollars"
 
 
 def test_unknown_options_are_refused(capsys: pytest.CaptureFixture[str]) -> None:
@@ -98,27 +100,7 @@ def test_cli_converts_and_summarizes_what_was_not_applied(tmp_path: Path) -> Non
         "docx-to-md: warning: links: link to missing Word bookmark '_Missing'; "
         "kept as plain text" in result.stderr
     )
-    assert "docx-to-md: transforms (baseline: MarkItDown)" in result.stderr
+    assert "docx-to-md: transforms\n" in result.stderr
     assert "  links: not applied (1)" in result.stderr
     assert "  checks: passed" in result.stderr
     assert result.stdout.startswith("converted in.docx -> in.md: 1 page(s)")
-    assert "docx-to-md: explain" not in result.stderr
-
-
-def test_cli_explains_what_was_not_applied_without_document_text(tmp_path: Path) -> None:
-    assert not _cli.parse_args(["input.docx"]).explain
-    write_docx(tmp_path / "in.docx", [hyperlink("Zephyr", anchor="_Zanzibar")])
-    result = docx_to_md("in.docx", "--dry-run", "--explain", cwd=tmp_path)
-    assert result.returncode == 0, result.stderr
-    assert not (tmp_path / "in.md").exists()
-    summary, explanation = result.stderr.split(
-        "docx-to-md: explain (fixed labels and counts only; no document text)\n"
-    )
-    assert "  checks: passed\n" in summary
-    assert (
-        explanation == "  document: paragraphs 1; text boxes 0\n"
-        "  links: link to a missing Word bookmark; kept as plain text (1)\n"
-        "    from: link 1\n"
-        "    name: other hidden 1\n"
-        "    bookmark: nowhere 1\n"
-    )

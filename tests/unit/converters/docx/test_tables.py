@@ -1,7 +1,9 @@
-"""Word tables: repair against the reference HTML, pipe tables or HTML, and empty rows and items."""
+"""Word tables: pipe tables or HTML, and empty rows and list items."""
 
 from __future__ import annotations
 
+import random
+import re
 from xml.etree import ElementTree as ET
 
 import pytest
@@ -9,16 +11,23 @@ import pytest
 from md_doc_converter.converters.docx import models as _models
 from md_doc_converter.converters.docx import reference as _reference
 from md_doc_converter.converters.docx import tables as _tables
-from md_doc_converter.converters.docx import validation as _validation
+from md_doc_converter.converters.docx import transforms as _transforms
+from md_doc_converter.converters.docx import tree as _tree
+from md_doc_converter.converters.docx.diagnostics import TransformReport
+from md_doc_converter.pandoc import decode_document
 from tests.support.docx import (
     W,
     bookmark,
     cell,
-    numbered,
-    paragraph,
     row,
     table,
 )
+
+
+def html_table(markup: str) -> ET.Element:
+    root = _reference.parse_html(markup).find("table")
+    assert root is not None
+    return root
 
 
 def pipe_table(table: ET.Element | str) -> str | None:
@@ -33,69 +42,25 @@ def test_compact_spacing_preserves_escaped_pipes_and_empty_cells() -> None:
     assert _tables.compact_table_row(r"|  A \| B  |    |") == r"| A \| B | |"
 
 
-def test_blank_header_and_all_blank_rows_survive() -> None:
-    source = table(
-        row(cell(""), cell(""), header=True),
-        row(cell("data"), cell("")),
-        row(cell(""), cell("")),
+def test_a_blank_header_row_keeps_the_table_html() -> None:
+    rendered = _tables.render_source_table(
+        html_table(
+            "<table><thead><tr><th></th><th></th></tr></thead>"
+            "<tbody><tr><td>data</td><td></td></tr><tr><td></td><td></td></tr></tbody></table>"
+        )
     )
-    reference = _reference.parse_html(
-        "<table><thead><tr><th></th><th></th></tr></thead>"
-        "<tbody><tr><td>data</td><td></td></tr><tr><td></td><td></td></tr></tbody></table>"
-    ).find("table")
-    result = _tables.repair_source_table(source, reference)
-    assert pipe_table(result) is None
-    assert len(_tables.html_rows(result)) == 3
+    assert rendered.reason == "blank first row cannot be retained as a GFM header"
+    assert len(_tables.html_rows(html_table(rendered.text))) == 3
 
 
-def test_first_row_is_a_markdown_header_without_repeat_header_metadata() -> None:
-    source = table(row(cell("data"), cell("value")), row(cell(""), cell("")))
-    reference = _reference.parse_html(
-        "<table><thead><tr><th>data</th><th>value</th></tr></thead>"
-        "<tbody><tr><td></td><td></td></tr></tbody></table>"
-    ).find("table")
-    result = _tables.repair_source_table(source, reference)
-    assert result.find("thead") is None
-    assert pipe_table(result) == "| data | value |\n| --- | --- |\n| | |\n"
-    assert len(result.findall("./tbody/tr")) == 2
-
-
-def test_zero_row_table_is_recovered() -> None:
-    result = _tables.repair_source_table(table(), None)
-    assert _reference.html_element(result) == "<table></table>"
-    assert pipe_table(result) is None
-
-
-def test_zero_cell_word_rows_are_restored_without_guessing() -> None:
-    source = table(row(), row(cell("A"), cell("B")), row())
-    reference = _reference.parse_html(
-        "<table><tbody><tr><td>A</td><td>B</td></tr></tbody></table>"
-    ).find("table")
-    result = _tables.repair_source_table(source, reference)
-    assert [len(item) for item in result.findall("./tbody/tr")] == [0, 2, 0]
-
-
-def test_missing_cell_table_fails_closed() -> None:
-    with pytest.raises(_models.ConversionError, match=r"omitted"):
-        _tables.repair_source_table(table(row(cell(""))), None)
-
-
-def test_nonmatching_table_text_fails_even_with_shared_words() -> None:
-    source = table(row(cell("same first"), cell("required content")))
-    reference = _reference.parse_html(
-        "<table><tbody><tr><td>same first</td><td>different content</td></tr></tbody></table>"
-    ).find("table")
-    with pytest.raises(_models.ConversionError, match=r"content does not align"):
-        _tables.repair_source_table(source, reference)
-
-
-def test_invented_reference_rows_fail_instead_of_being_deleted() -> None:
-    source = table(row(cell("data")))
-    reference = _reference.parse_html(
-        "<table><tbody><tr><td>data</td></tr><tr><td></td></tr></tbody></table>"
-    ).find("table")
-    with pytest.raises(_models.ConversionError, match=r"introduced table rows"):
-        _tables.repair_source_table(source, reference)
+def test_the_first_row_is_the_header_of_a_markdown_table() -> None:
+    assert (
+        pipe_table(
+            "<table><tbody><tr><td>data</td><td>value</td></tr>"
+            "<tr><td></td><td></td></tr></tbody></table>"
+        )
+        == "| data | value |\n| --- | --- |\n| | |\n"
+    )
 
 
 def test_multiline_html_to_pipe_and_escaping() -> None:
@@ -111,27 +76,13 @@ def test_multiline_html_to_pipe_and_escaping() -> None:
 
 
 def test_merged_html_stays_html() -> None:
-    source = table(row(cell("A", colspan=2), header=True), row(cell("x"), cell("y")))
-    reference = _reference.parse_html(
-        '<table><thead><tr><th colspan="2">A</th></tr></thead>'
-        "<tbody><tr><td>x</td><td>y</td></tr></tbody></table>"
-    ).find("table")
-    assert pipe_table(_tables.repair_source_table(source, reference)) is None
-
-
-def test_vertical_merge_keeps_fully_covered_blank_row() -> None:
-    source = table(row(cell("A", merge="restart")), row(cell("", merge="continue")), columns=1)
-    reference = _reference.parse_html(
-        '<table><tbody><tr><td rowspan="2">A</td></tr></tbody></table>'
-    ).find("table")
-    result = _tables.repair_source_table(source, reference)
-    assert [len(item) for item in result.findall("./tbody/tr")] == [1, 0]
-
-
-def test_nonempty_vertical_continuation_is_not_lost() -> None:
-    source = table(row(cell("A", merge="restart")), row(cell("keep", merge="continue")))
-    with pytest.raises(_models.ConversionError, match=r"continuation contains retained content"):
-        _tables.word_table_rows(source)
+    assert (
+        pipe_table(
+            '<table><thead><tr><th colspan="2">A</th></tr></thead>'
+            "<tbody><tr><td>x</td><td>y</td></tr></tbody></table>"
+        )
+        is None
+    )
 
 
 def test_nested_tables_and_caption_are_not_flattened() -> None:
@@ -261,7 +212,7 @@ def _omit(markup: str) -> tuple[str, int]:
     root = _reference.parse_html(f"<div>{markup}</div>").find("div")
     assert root is not None
     count = _reference.omit_empty_list_items(root)
-    return _reference.inner_html(root), count
+    return (root.text or "") + "".join(_reference.html_element(child) for child in root), count
 
 
 def test_empty_bullets_go_wherever_they_are() -> None:
@@ -362,57 +313,74 @@ def test_sub_sup_mark_and_u_stay_tags_in_a_markdown_table(pandoc: str) -> None:
     assert "".join(next(tree.iter("u")).itertext()) == "a|b *c*"
 
 
+@pytest.mark.parametrize(
+    ("markup", "cell"),
+    [
+        pytest.param("<strong>Note:</strong>next", "<strong>Note:</strong>next", id="unclosable"),
+        pytest.param("a <strong>b</strong> c", "a **b** c", id="closable"),
+        pytest.param("x<em>a</em><em>b</em>", "x<em>a</em>*b*", id="adjacent"),
+        pytest.param(
+            '<a href="#x"><strong>(1)</strong>2</a>', "[<strong>(1)</strong>2](#x)", id="link"
+        ),
+    ],
+)
+def test_emphasis_markdown_cannot_close_is_html_in_a_cell(markup: str, cell: str) -> None:
+    assert f"| A | {cell} |" in _render_cell(markup).text
+
+
+def test_emphasis_in_cells_reads_back_as_written(pandoc: str) -> None:
+    pieces = ["a", "Z9", ":", "(", ")", ".", "-", "'", "€", "+", " ", "_", "*", "|"]
+    tags = ["strong", "em", "del"]
+    generator = random.Random(20261026)
+
+    def inline(depth: int) -> str:
+        parts = []
+        for _index in range(generator.randint(1, 4)):
+            if depth < 2 and generator.random() < 0.4:
+                tag = generator.choice(tags)
+                parts.append(f"<{tag}>{inline(depth + 1).strip() or 'a'}</{tag}>")
+            else:
+                parts.append("".join(generator.choices(pieces, k=generator.randint(1, 3))))
+        return "".join(parts)
+
+    rows = "".join(f"<tr><td>{inline(0)}</td><td>x</td></tr>" for _row in range(300))
+    document = decode_document(
+        _reference.run_command(
+            [pandoc, "--from=html", "--to=json"],
+            "Reading test HTML",
+            input_text=f"<table><tr><th>A</th><th>B</th></tr>{rows}</table>",
+        ),
+        pandoc=pandoc,
+    )
+    blocks, api = _tree.items(document["blocks"]), document["pandoc-api-version"]
+    _transforms.unnest_emphasis(blocks)
+
+    def cells(html: str) -> list[str]:
+        found = re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", html, re.DOTALL)
+        # ***x*** reads as bold italic in either order.
+        return [
+            re.sub(r"<em><strong>(.*?)</strong></em>", r"<strong><em>\\1</em></strong>", cell)
+            for cell in found
+        ]
+
+    expected = cells(_tree.write(_tree.document(blocks, api), pandoc, "html5", "Expected"))
+    counts = _tables.render_tables(blocks, pandoc, api, "github", TransformReport())
+    assert counts.tables == 1
+    markdown = _tree.write(_tree.document(blocks, api), pandoc, "gfm", "Writing")
+    assert markdown.startswith("| A | B |")
+    actual = cells(
+        _reference.run_command(
+            [pandoc, "--from=gfm-emoji", "--to=html5", "--wrap=none"],
+            "Reading back",
+            input_text=markdown,
+        )
+    )
+    for want, got in zip(expected, actual, strict=True):
+        assert got == want
+
+
 def test_tags_with_attributes_keep_the_table_html() -> None:
     assert not _render_cell('x<sup title="note">1</sup>').markdown
-
-
-def _problem(cell_markup: str) -> str | None:
-    """What the final-table check finds in a Markdown table cell of *cell_markup* that renders
-    a Word cell of a list item, "first", and the paragraphs "1. typed" and "plain".
-
-    The check allows a list marker only before a Word list item.
-    """
-    word = table(
-        row(cell("Steps"), header=True),
-        row(cell(numbered("first"), paragraph("1. typed"), paragraph("plain"))),
-        columns=1,
-    )
-    items = frozenset(
-        node for node in word.iter(W + "p") if node.find(f"./{W}pPr/{W}numPr") is not None
-    )
-    source = _models.SourceDocument(word, "TEST")
-    source.markdown_tables.add("T0")
-    rendered = _reference.parse_html(
-        "<table><thead><tr><th>Steps</th></tr></thead>"
-        f"<tbody><tr><td>{cell_markup}</td></tr></tbody></table>"
-    ).find("table")
-    assert rendered is not None
-    descriptor = _models.SourceTable("T0", word, nested=False, listed=items)
-    return _validation._table_problem(descriptor, rendered, source)
-
-
-@pytest.mark.parametrize(
-    "markup",
-    [
-        pytest.param("1. first<br>1. typed<br>plain", id="number"),
-        pytest.param("\u2022 first<br>1. typed<br>plain", id="bullet"),
-        pytest.param("first<br>1. typed<br>plain", id="no-marker"),
-    ],
-)
-def test_a_bullet_or_number_may_start_a_list_item(markup: str) -> None:
-    assert _problem(markup) is None
-
-
-@pytest.mark.parametrize(
-    "markup",
-    [
-        pytest.param("1. first<br>typed<br>plain", id="typed-number-lost"),
-        pytest.param("1. first<br>1. typed<br>2. plain", id="number-added-to-a-paragraph"),
-        pytest.param("1. 1. first<br>1. typed<br>plain", id="list-item-numbered-twice"),
-    ],
-)
-def test_other_changes_to_numbers_are_still_found(markup: str) -> None:
-    assert _problem(markup) == "changed Word cell content"
 
 
 def _texts(table_node: ET.Element) -> list[list[str]]:

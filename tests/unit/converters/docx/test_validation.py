@@ -4,21 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from xml.etree import ElementTree as ET
 
 import pytest
 
 from md_doc_converter.converters.docx import publication as _publication
 from md_doc_converter.converters.docx import validation as _validation
-from md_doc_converter.converters.docx.models import (
-    ImageDescription,
-    SectionTarget,
-    SourceDocument,
-    SourceImage,
-    SourceTable,
-)
-from tests.support.docx import W, cell, row, table
+from md_doc_converter.converters.docx.models import DocumentNavigation, SectionTarget
 
 SVG = '<svg xmlns="http://www.w3.org/2000/svg"><g id="layer"/></svg>'
 
@@ -34,11 +27,9 @@ class Validator:
     def __call__(
         self,
         pages: Mapping[str, str],
-        source: SourceDocument | None = None,
+        source: DocumentNavigation | None = None,
         *,
         split_depth: int = 0,
-        compare: frozenset[str] = _validation.SOURCE_CHECKS,
-        shapes: list[dict[str, str]] | None = None,
     ) -> list[str]:
         paths = _publication.validate_paths(
             self.root / "input.docx", self.root / "guide.md", split_depth=split_depth
@@ -49,8 +40,6 @@ class Validator:
             self.staged,
             self.pandoc,
             source,
-            compare=compare,
-            shapes=shapes,
         )
         return [reason for reason, _detail in issues]
 
@@ -65,27 +54,6 @@ def validate(tmp_path: Path, pandoc: str) -> Validator:
     staged = tmp_path / "staged-images"
     staged.mkdir()
     return Validator(tmp_path, staged, pandoc)
-
-
-def word_document(
-    *,
-    anchors: dict[str, str] | None = None,
-    bookmark_targets: dict[str, SectionTarget] | None = None,
-    tables: list[SourceTable] | None = None,
-    markdown_tables: set[str] | None = None,
-    images: list[SourceImage] | None = None,
-    link_targets: list[str] | None = None,
-) -> SourceDocument:
-    return SourceDocument(
-        ET.Element(W + "document"),
-        "test",
-        anchors=anchors or {},
-        bookmark_targets=bookmark_targets or {},
-        tables=tables or [],
-        markdown_tables=markdown_tables or set(),
-        images=images or [],
-        link_targets=link_targets or [],
-    )
 
 
 # A page with each problem that a page check looks for, and the reason it reports.
@@ -235,25 +203,9 @@ def test_split_pages_need_one_title_and_links_need_their_page(validate: Validato
     ]
 
 
-def test_explanations_describe_broken_local_links_and_fragments(validate: Validator) -> None:
-    shapes: list[dict[str, str]] = []
-    reasons = validate({"guide.md": "[x](../Missing.PDF) [y](#_Ref123)\n"}, shapes=shapes)
-    assert reasons == ["a local link target does not exist", "a link fragment does not resolve"]
-    assert shapes == [
-        {
-            "matches a Word hyperlink": "no",
-            "file type": "pdf",
-            "form": "parent folder",
-            "fragment": "no",
-            "on disk": "no",
-        },
-        {"fragment": "_Ref", "points to": "this page"},
-    ]
-
-
 def test_word_bookmarks_must_become_sections(validate: Validator) -> None:
-    source = word_document(
-        anchors={"Intro": "_Ref1"},
+    source = DocumentNavigation(
+        bookmarks={"_Ref1", "_Ref2", "_Ref3", "_Ref4"},
         bookmark_targets={
             "_Ref2": SectionTarget(Path("guide.md"), "missing"),
             "_Ref3": SectionTarget(Path("gone.md")),
@@ -266,50 +218,6 @@ def test_word_bookmarks_must_become_sections(validate: Validator) -> None:
         "a Word bookmark has no valid section destination",
         "a Word bookmark has no valid section destination",
     ]
-    assert validate({"guide.md": markdown}, source, compare=frozenset()) == []
-
-
-def test_images_must_match_the_word_document(validate: Validator) -> None:
-    validate.stage("pic.png", "png")
-    pages = {"guide.md": "![x](.images/guide/pic.png)\n"}
-    assert validate(pages, word_document()) == ["image occurrences differ from the Word document"]
-    assert validate(pages, word_document(), compare=frozenset({"tables", "links"})) == []
-
-
-# One picture of the Word document.
-PICTURE = SourceImage(
-    "I0", "word/media/pic.png", PurePosixPath("pic.png"), ImageDescription("Picture", 0)
-)
-
-
-@pytest.mark.parametrize(
-    ("shown", "reasons"),
-    [
-        pytest.param(2, [], id="each-use"),
-        pytest.param(1, ["image occurrences differ from the Word document"], id="one-use-lost"),
-    ],
-)
-def test_each_use_of_an_image_counts(validate: Validator, shown: int, reasons: list[str]) -> None:
-    validate.stage("pic.png", "png")
-    pages = {"guide.md": "![x](.images/guide/pic.png)\n\n" * shown}
-    assert validate(pages, word_document(images=[PICTURE, PICTURE])) == reasons
-
-
-@pytest.mark.parametrize("target", ["https://example.test/", "#overview"], ids=["web", "section"])
-@pytest.mark.parametrize(
-    ("shown", "reasons"),
-    [
-        pytest.param(2, [], id="each-use"),
-        pytest.param(
-            1, ["a recovered Word hyperlink is missing from the output"], id="one-use-lost"
-        ),
-    ],
-)
-def test_each_use_of_a_word_hyperlink_counts(
-    validate: Validator, target: str, shown: int, reasons: list[str]
-) -> None:
-    page = "# Overview\n\n" + f"[Link]({target})\n\n" * shown
-    assert validate({"guide.md": page}, word_document(link_targets=[target, target])) == reasons
 
 
 def test_references_include_named_anchors_and_every_media_source() -> None:
@@ -322,64 +230,3 @@ def test_references_include_named_anchors_and_every_media_source() -> None:
     assert references.anchors == ["legacy"]
     assert references.links == []
     assert references.images == ["diagram.svg", "clip.mp4", "poster.png"]
-
-
-WORD_TABLE = table(row(cell("a"), cell("b")), row(cell("1"), cell("2")))
-PIPE_TABLE = "| a | b |\n| --- | --- |\n| 1 | 2 |\n"
-
-
-@pytest.mark.parametrize(
-    ("markdown", "reasons"),
-    [
-        pytest.param(PIPE_TABLE, [], id="same"),
-        pytest.param("Text\n", ["the table count differs from the Word document"], id="missing"),
-        pytest.param(
-            PIPE_TABLE + "| 3 | 4 |\n", ["a final table lost or invented a Word row"], id="row"
-        ),
-        pytest.param(
-            "| a | b | c |\n| --- | --- | --- |\n| 1 | 2 | 3 |\n",
-            ["a final table lost or invented a Word cell"],
-            id="cell",
-        ),
-        pytest.param(
-            PIPE_TABLE.replace("2", "3"), ["a final table changed Word cell content"], id="content"
-        ),
-    ],
-)
-def test_pipe_tables_must_keep_the_word_table(
-    validate: Validator, markdown: str, reasons: list[str]
-) -> None:
-    source = word_document(
-        tables=[SourceTable("T1", WORD_TABLE, nested=False)], markdown_tables={"T1"}
-    )
-    assert validate({"guide.md": markdown}, source) == reasons
-
-
-@pytest.mark.parametrize(
-    ("word", "html", "reason"),
-    [
-        pytest.param(
-            WORD_TABLE,
-            "<table><tr><td>a</td><td>b</td></tr><tr><td>1</td><td>2</td></tr></table>",
-            "a final table uses HTML without a structural limitation",
-            id="needless-html",
-        ),
-        pytest.param(
-            table(row(cell("a", colspan=2)), row(cell("1"), cell("2"))),
-            "<table><tr><td>a</td></tr><tr><td>1</td><td>2</td></tr></table>",
-            "a final table changed Word header/merge structure",
-            id="lost-merge",
-        ),
-        pytest.param(
-            table(row(cell("a", colspan=2), header=True), row(cell("1"), cell("2"))),
-            '<table><tr><td colspan="2">a</td></tr><tr><td>1</td><td>2</td></tr></table>',
-            "a final table changed Word header/merge structure",
-            id="header-cell-as-data",
-        ),
-    ],
-)
-def test_html_tables_must_need_html_and_keep_merges(
-    validate: Validator, word: ET.Element, html: str, reason: str
-) -> None:
-    source = word_document(tables=[SourceTable("T1", word, nested=False)])
-    assert validate({"guide.md": html + "\n"}, source) == [reason]

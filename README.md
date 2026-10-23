@@ -3,9 +3,9 @@
 Convert Word, Excel and CSV documents to Markdown, and render Markdown to HTML
 and PDF.
 
-- **Word to Markdown:** starts from a [MarkItDown](https://github.com/microsoft/markitdown)
-  conversion and restores what it loses from the Word source, such as images
-  with their captions, tables, lists, links, bookmarks and heading levels.
+- **Word to Markdown:** converts with [Pandoc](https://pandoc.org/), keeping
+  images with their captions as alt text, tables, lists, links, bookmarks,
+  footnotes, equations and heading levels as Markdown can show them.
   Optionally splits the document into pages.
 - **Excel and CSV to Markdown:** a table page per worksheet or CSV file, with
   cell contents kept literal.
@@ -125,7 +125,7 @@ Markdown, not the workbook.
 ```sh
 md-doc-converter docx-to-md docs/spec.docx
 md-doc-converter docx-to-md docs/spec.docx --split-depth 1   # one page per section
-md-doc-converter docx-to-md docs/spec.docx --dry-run --explain
+md-doc-converter docx-to-md docs/spec.docx --dry-run    # check without writing
 ```
 
 Conversion reports each transform it applied and each item it could not carry

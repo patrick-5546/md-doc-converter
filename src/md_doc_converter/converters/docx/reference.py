@@ -88,12 +88,6 @@ def html_element(node: ET.Element) -> str:
     return result
 
 
-def inner_html(node: ET.Element) -> str:
-    return html.escape(node.text or "", quote=False) + "".join(
-        html_element(child) + html.escape(child.tail or "", quote=False) for child in node
-    )
-
-
 def _shows_nothing(item: ET.Element) -> bool:
     """A list item with no text and nothing but empty paragraphs or line breaks."""
     return (
@@ -198,16 +192,6 @@ def plain_text(value: str) -> str:
     return re.sub(r"\s+", "", unicodedata.normalize("NFC", value))
 
 
-def visible_reference_text(node: ET.Element) -> str:
-    if node.tag in {"img", "math", "caption"} or "math" in node.get("class", "").split():
-        return ""
-    if node.get("role") == "doc-noteref":
-        return ""
-    return (node.text or "") + "".join(
-        visible_reference_text(child) + (child.tail or "") for child in node
-    )
-
-
 def json_list(value: JSONValue) -> list[JSONValue]:
     if not isinstance(value, list):
         raise ConversionError("Unexpected Pandoc JSON array structure")
@@ -299,12 +283,6 @@ def _fence_block(block: JSONValue) -> JSONValue:
     if kind == "Div" and len(content) == 2:
         return {**block, "c": [content[0], _fence_blocks(json_list(content[1]))]}
     return block
-
-
-def _has_line_break(value: JSONValue) -> bool:
-    if isinstance(value, dict):
-        return value.get("t") == "LineBreak" or any(map(_has_line_break, value.values()))
-    return isinstance(value, list) and any(map(_has_line_break, value))
 
 
 def _pipe_table(content: list[JSONValue]) -> bool:
@@ -409,189 +387,6 @@ def protect_backslashes(value: JSONValue, *, table_cell: bool = False) -> JSONVa
         if start < len(text):
             result.append({"t": "Str", "c": text[start:]})
     return result
-
-
-_BLOCKS = frozenset(
-    {
-        "Plain",
-        "Para",
-        "LineBlock",
-        "CodeBlock",
-        "RawBlock",
-        "BlockQuote",
-        "OrderedList",
-        "BulletList",
-        "DefinitionList",
-        "Header",
-        "HorizontalRule",
-        "Table",
-        "Figure",
-        "Div",
-    }
-)
-# Inline elements whose content is a list of inlines, as "c", or at "c"[1].
-_WRAPPERS = frozenset(
-    {"Emph", "Underline", "Strong", "Strikeout", "Superscript", "Subscript", "SmallCaps"}
-)
-_WRAPPERS_WITH_ATTRIBUTES = frozenset({"Quoted", "Cite", "Link", "Span"})
-
-
-def _blank(item: JSONValue) -> bool:
-    return isinstance(item, dict) and item.get("t") in ("Space", "SoftBreak")
-
-
-def _content(item: JSONValue) -> list[JSONValue] | None:
-    """The inlines inside a formatting, link, quote, or span element; None otherwise."""
-    if not isinstance(item, dict):
-        return None
-    kind, content = item.get("t"), item.get("c")
-    if kind in _WRAPPERS and isinstance(content, list):
-        return content
-    if (
-        kind in _WRAPPERS_WITH_ATTRIBUTES
-        and isinstance(content, list)
-        and len(content) > 1
-        and isinstance(content[1], list)
-    ):
-        return content[1]
-    return None
-
-
-def _split_inline(item: JSONValue) -> list[JSONValue]:
-    """An inline element split at the line breaks it holds, one copy per piece."""
-    inner = _content(item)
-    if inner is None or not isinstance(item, dict):
-        return [item]
-    kind, content = item["t"], item["c"]
-    if kind in _WRAPPERS:
-        return [{"t": kind, "c": part} for part in _split_inlines(inner)]
-    assert isinstance(content, list)
-    return [{"t": kind, "c": [content[0], part, *content[2:]]} for part in _split_inlines(inner)]
-
-
-def _split_inlines(inlines: list[JSONValue]) -> list[list[JSONValue]]:
-    pieces: list[list[JSONValue]] = [[]]
-    for item in inlines:
-        if isinstance(item, dict) and item.get("t") == "LineBreak":
-            pieces.append([])
-            continue
-        first, *rest = _split_inline(item)
-        pieces[-1].append(first)
-        pieces.extend([part] for part in rest)
-    return pieces
-
-
-def _visible(inlines: list[JSONValue], filler: Callable[[JSONValue], bool]) -> bool:
-    """Whether inlines show anything once spaces, empty wrappers, and filler are gone."""
-    for item in inlines:
-        if _blank(item) or filler(item):
-            continue
-        inner = _content(item)
-        if inner is None or _visible(inner, filler):
-            return True
-    return False
-
-
-def _flatten(inlines: list[JSONValue]) -> list[JSONValue]:
-    """Inlines without their formatting, link, quote, and span wrappers."""
-    result: list[JSONValue] = []
-    for item in inlines:
-        inner = _content(item)
-        result.extend(_flatten(inner) if inner is not None else [item])
-    return result
-
-
-def _hoist(inlines: list[JSONValue], filler: Callable[[JSONValue], bool], *, end: bool) -> None:
-    """Move spaces and filler at one edge out of the wrappers there."""
-    while inlines:
-        index = len(inlines) - 1 if end else 0
-        inner = _content(inlines[index])
-        if inner is None:
-            return
-        if not _visible(inner, filler):
-            inlines[index : index + 1] = _flatten(inner)
-            continue
-        _hoist(inner, filler, end=end)
-        moved: list[JSONValue] = []
-        while inner and (_blank(inner[-1 if end else 0]) or filler(inner[-1 if end else 0])):
-            moved.append(inner.pop(-1 if end else 0))
-        if end:
-            inlines.extend(reversed(moved))
-        else:
-            inlines[0:0] = moved
-        return
-
-
-def _trim(inlines: list[JSONValue], filler: Callable[[JSONValue], bool]) -> None:
-    """Remove the spaces at both edges of a paragraph; wrappers there keep only content."""
-    _hoist(inlines, filler, end=False)
-    _hoist(inlines, filler, end=True)
-    while inlines and _blank(inlines[0]):
-        inlines.pop(0)
-    while inlines and _blank(inlines[-1]):
-        inlines.pop()
-
-
-def _paragraphs(
-    inlines: list[JSONValue], filler: Callable[[JSONValue], bool]
-) -> list[list[JSONValue]]:
-    """Split inlines at line breaks; a piece with nothing visible joins its neighbour."""
-    paragraphs: list[list[JSONValue]] = []
-    pending: list[JSONValue] = []
-    for piece in _split_inlines(inlines):
-        if not _visible(piece, filler):
-            pending.extend(_flatten(piece))
-            continue
-        if paragraphs:
-            paragraphs[-1].extend(pending)
-        else:
-            piece = pending + piece
-        pending = []
-        paragraphs.append(piece)
-    if paragraphs:
-        paragraphs[-1].extend(pending)
-    elif pending:
-        paragraphs.append(pending)
-    for paragraph in paragraphs:
-        _trim(paragraph, filler)
-    return paragraphs
-
-
-def split_paragraphs_at_line_breaks(
-    value: JSONValue, filler: Callable[[JSONValue], bool] = lambda _item: False
-) -> JSONValue:
-    """Turn each hard line break into a paragraph break.
-
-    Formatting and links around a break are repeated on both sides of it. Headings and
-    tables keep their breaks, and a piece that holds only *filler*, such as alignment
-    markers, stays with a neighbouring paragraph rather than becoming an empty one.
-    """
-    if isinstance(value, dict):
-        if value.get("t") in ("Header", "Table"):
-            return value
-        return {key: split_paragraphs_at_line_breaks(item, filler) for key, item in value.items()}
-    if not isinstance(value, list):
-        return value
-    if not value or not all(isinstance(item, dict) and item.get("t") in _BLOCKS for item in value):
-        return [split_paragraphs_at_line_breaks(item, filler) for item in value]
-    blocks: list[JSONValue] = []
-    for block in value:
-        content = block.get("c") if isinstance(block, dict) else None
-        if (
-            isinstance(block, dict)
-            and block.get("t") in ("Para", "Plain")
-            and isinstance(content, list)
-            and _has_line_break(content)
-        ):
-            paragraphs = _paragraphs(content, filler)
-            kind = block["t"] if len(paragraphs) == 1 else "Para"
-            blocks.extend(
-                {"t": kind, "c": split_paragraphs_at_line_breaks(paragraph, filler)}
-                for paragraph in paragraphs
-            )
-            continue
-        blocks.append(split_paragraphs_at_line_breaks(block, filler))
-    return blocks
 
 
 def _has_line_break(value: JSONValue) -> bool:

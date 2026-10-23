@@ -142,36 +142,47 @@ def word_run(text: str) -> ET.Element:
     return run
 
 
+# The prefixes that Pandoc's DOCX reader expects for Word's namespaces.
+_CONVENTIONAL_PREFIXES = {
+    "w": WORD_NS,
+    "r": REL[1:-1],
+    "a": DRAWING[1:-1],
+    "wp": DRAWING_WORD[1:-1],
+    "v": VML[1:-1],
+    "o": OFFICE[1:-1],
+    "asvg": SVG_DRAWING[1:-1],
+    "mc": MC[1:-1],
+    "pic": "http://schemas.openxmlformats.org/drawingml/2006/picture",
+    "m": "http://schemas.openxmlformats.org/officeDocument/2006/math",
+}
+
+
 def word_xml_bytes(root: ET.Element, original: bytes | None = None) -> bytes:
-    """Pandoc's DOCX reader requires conventional Word namespace prefixes."""
-    namespaces: dict[str, str] = {}
+    """*root* as XML, declaring Word's conventional prefixes and those of *original*.
+
+    Pandoc's DOCX reader requires conventional prefixes, and reads the notes, such as a
+    hyperlink's r:id in a footnote, with the prefixes that the document part declares,
+    whether the part uses them or not.
+    """
+    # Registering a prefix replaces any namespace that had it, so the document's own come last.
+    namespaces = dict(_CONVENTIONAL_PREFIXES)
+    for prefix, namespace in namespaces.items():
+        ET.register_namespace(prefix, namespace)
     if original is not None:
         for _event, declaration in ET.iterparse(io.BytesIO(original), events=("start-ns",)):
             prefix, namespace = declaration
             if prefix and not re.fullmatch(r"ns\d+", prefix):
                 namespaces[prefix] = namespace
                 ET.register_namespace(prefix, namespace)
-    for prefix, namespace in (
-        ("w", WORD_NS),
-        ("r", REL[1:-1]),
-        ("a", DRAWING[1:-1]),
-        ("wp", DRAWING_WORD[1:-1]),
-        ("v", VML[1:-1]),
-        ("o", OFFICE[1:-1]),
-        ("asvg", SVG_DRAWING[1:-1]),
-        ("mc", MC[1:-1]),
-        ("pic", "http://schemas.openxmlformats.org/drawingml/2006/picture"),
-    ):
-        ET.register_namespace(prefix, namespace)
     used = {
         name[1:].split("}", 1)[0]
         for node in root.iter()
         for name in (node.tag, *node.attrib)
         if isinstance(name, str) and name.startswith("{")
     }
-    for prefix in root.get(MC + "Ignorable", "").split():
-        namespace = namespaces.get(prefix)
-        if namespace is not None and namespace not in used:
+    root = copy.copy(root)
+    for prefix, namespace in namespaces.items():
+        if namespace not in used:
             root.set("xmlns:" + prefix, namespace)
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
@@ -216,12 +227,6 @@ def related_parts(relationships: ET.Element, source: str, kind: str) -> list[str
         except ConversionError:
             continue
     return names
-
-
-def word_paragraph(text: str) -> ET.Element:
-    paragraph = ET.Element(WORD + "p")
-    paragraph.append(word_run(text))
-    return paragraph
 
 
 def accept_view(parent: ET.Element) -> None:
@@ -345,6 +350,22 @@ class RunProperties:
             if underline is not None:
                 return underline.get(WORD + "val", "none") not in {"none", "false", "0"}
         return False
+
+
+def single_underlines(*roots: ET.Element) -> int:
+    """Write every underline as a single underline; return how many were another kind.
+
+    Pandoc (3.12.1) reads only a single underline as underline; a double, thick, dotted or
+    wavy one shows the same in Markdown, which has one kind.
+    """
+    changed = 0
+    for root in roots:
+        for underline in root.iter(WORD + "u"):
+            value = underline.get(WORD + "val")
+            if value is not None and value.casefold() not in {"none", "single", "0", "false"}:
+                underline.set(WORD + "val", "single")
+                changed += 1
+    return changed
 
 
 def drop_redundant_underline(root: ET.Element, styles: ET.Element) -> int:
@@ -932,6 +953,77 @@ def unlink_missing_references(root: ET.Element, bookmarks: Collection[str]) -> l
     return missing
 
 
+# What Word shows for an unchecked and a checked check box form field.
+CHECK_BOXES = ("\u2610", "\u2612")
+
+
+def _checked(box: ET.Element) -> bool:
+    """Whether the w:checkBox of a check box form field is checked, else its default."""
+    for name in ("checked", "default"):
+        setting = box.find(WORD + name)
+        if setting is not None:
+            return setting.get(WORD + "val", "1").casefold() not in {"0", "false", "off"}
+    return False
+
+
+def form_check_boxes(root: ET.Element) -> int:
+    """Write each check box form field as the box that Word shows, checked or not.
+
+    Such a field, FORMCHECKBOX, has no result for Pandoc to keep: Word draws the box. Return
+    how many there were.
+    """
+    count = 0
+    for parent in list(root.iter()):
+        if parent.find(f"./{WORD}r/{WORD}fldChar") is None:
+            continue
+        _split_run_children(parent, frozenset({WORD + "fldChar"}), group_content=True)
+        children = list(parent)
+        boxes: list[tuple[int, int, bool, ET.Element]] = []
+        depth = 0
+        start: tuple[int, ET.Element] | None = None
+        for index, child in enumerate(children):
+            if child.tag != WORD + "r":
+                continue
+            for marker in child.findall(WORD + "fldChar"):
+                kind = marker.get(WORD + "fldCharType")
+                if kind == "begin":
+                    box = marker.find(f"./{WORD}ffData/{WORD}checkBox")
+                    if depth == 0 and box is not None:
+                        start = (index, box)
+                    depth += 1
+                elif kind == "end" and depth:
+                    depth -= 1
+                    if depth == 0 and start is not None:
+                        boxes.append((start[0], index + 1, _checked(start[1]), children[start[0]]))
+                        start = None
+        for first, end, checked, begin in reversed(boxes):
+            shown = ET.Element(WORD + "r")
+            properties = begin.find(WORD + "rPr")
+            if properties is not None:
+                shown.append(copy.deepcopy(properties))
+            ET.SubElement(shown, WORD + "t").text = CHECK_BOXES[checked]
+            parent[first:end] = [shown]
+            count += 1
+    return count
+
+
+def unlink_page_references(root: ET.Element) -> int:
+    r"""Keep the page number that each PAGEREF field shows as text; return how many.
+
+    A page number means nothing in Markdown, so it does not become a link, as Pandoc would
+    make one with the \h switch. The table of contents loses its page numbers before this.
+    """
+    count = 0
+    for parent in list(root.iter()):
+        if parent.tag not in {WORD + "p", WORD + "hyperlink"}:
+            continue
+        for start, end, instruction, cached in reversed(_complex_fields(parent)):
+            if re.match(r"\s*PAGEREF\b", instruction, re.IGNORECASE):
+                parent[start:end] = cached
+                count += 1
+    return count
+
+
 def _field_character(kind: str) -> ET.Element:
     run = ET.Element(WORD + "r")
     ET.SubElement(run, WORD + "fldChar", {WORD + "fldCharType": kind})
@@ -1079,71 +1171,6 @@ def repair_fields(root: ET.Element) -> Counter[str]:
     for mark in marks:
         _remove_field_mark(mark, parents)
     return counts
-
-
-SYMBOL_FONTS = frozenset({"Symbol", "Wingdings", "Wingdings 2", "Wingdings 3", "Webdings"})
-
-
-def _symbol_table() -> dict[tuple[str, int], int]:
-    try:
-        from mammoth.docx.dingbats import dingbats
-    except ImportError:
-        return {}
-    return dict(dingbats)
-
-
-def map_symbol_fonts(root: ET.Element) -> tuple[int, int]:
-    """Write characters in symbol fonts as the Unicode symbols they show; return the counts.
-
-    Pandoc maps the text of runs in symbol fonts, such as a Wingdings "ü" shown as a check
-    mark, and w:sym characters with its own table; Mammoth maps only w:sym, with another, so
-    the two converters disagree (https://github.com/mwilliamson/python-mammoth/issues/176).
-    Both now read the symbols, mapped with Mammoth's table.
-    Returns how many characters were mapped and how many have no known symbol.
-    """
-    table = _symbol_table()
-    mapped = unknown = 0
-
-    def symbol(font: str, code: int) -> str | None:
-        found = table.get((font, code))
-        if found is None and code >= 0xF000:
-            found = table.get((font, code - 0xF000))
-        return None if found is None else chr(found)
-
-    for run in root.iter(WORD + "r"):
-        fonts = run.find(f"./{WORD}rPr/{WORD}rFonts")
-        named = None if fonts is None else fonts.get(WORD + "ascii") or fonts.get(WORD + "hAnsi")
-        font = named if named in SYMBOL_FONTS else None
-        for position, child in enumerate(list(run)):
-            if child.tag == WORD + "sym":
-                face, code = child.get(WORD + "font", ""), child.get(WORD + "char", "")
-                if face not in SYMBOL_FONTS or not re.fullmatch(r"[0-9A-Fa-f]{1,6}", code):
-                    continue
-                text = symbol(face, int(code, 16))
-                if text is None:
-                    unknown += 1
-                    text = chr(int(code, 16))
-                else:
-                    mapped += 1
-                replacement = ET.Element(WORD + "t", {XML_SPACE: "preserve"})
-                replacement.text = text
-                run[position] = replacement
-            elif child.tag == WORD + "t" and font is not None and child.text:
-                characters: list[str] = []
-                for character in child.text:
-                    text = symbol(font, ord(character))
-                    if text is None:
-                        unknown += 1 if character.strip() else 0
-                        characters.append(character)
-                    else:
-                        mapped += 1
-                        characters.append(text)
-                child.text = "".join(characters)
-        if font is not None and fonts is not None:
-            for name in ("ascii", "hAnsi"):
-                if fonts.get(WORD + name) in SYMBOL_FONTS:
-                    del fonts.attrib[WORD + name]
-    return mapped, unknown
 
 
 def split_drawing_runs(root: ET.Element) -> None:

@@ -24,12 +24,18 @@ tests/
   rendering/                # real browser-backed HTML/PDF and LibreOffice workflows
 ```
 
-The DOCX package separates typed models, OOXML/source preparation, reference
-HTML, tables, recovery, normalization, media, navigation, validation,
-publication, and diagnostics. `pipeline.py` coordinates those stages and
-`cli.py` handles arguments. The converter writes code fences itself, because
-Pandoc's GFM writer drops labels, such as `text`, that are not among its
-highlighting languages (since Pandoc 3.10.1).
+Word conversion runs in stages, which `docx/pipeline.py` coordinates and
+`cli.py` starts. `package.py` reads the Word package safely, and `prepare.py`
+writes a private copy that Pandoc reads as docx-to-md converts it: headings,
+code, fields, images and bookmarks in terms that Pandoc's DOCX reader
+understands. `tree.py` reads the copy into Pandoc's JSON document tree and
+writes GFM; `transforms.py`, `bookmarks.py` and `tables.py` rewrite the tree in
+between; `navigation.py` settles heading IDs, links and pages; `validation.py`
+checks the result; and `publication.py` and `diagnostics.py` write the outputs
+and the report. Where Pandoc's GFM writer would write something that reads back
+differently, a transform writes it instead: code fences, whose `text` label the
+writer drops (since Pandoc 3.10.1), emphasis that Markdown cannot close, and
+lines of `-` or `=`, which the writer leaves unescaped.
 
 Rendering prepares the Markdown in `markdown/preprocess.py`: it collects a
 folder, adjusts what Pandoc's Markdown reader would read differently from
@@ -152,9 +158,7 @@ packages, the bundled npm manifests and the workflow's actions, once a release
 is a week old, in one pull request per ecosystem; major Python and npm updates
 come separately. To update by hand:
 
-- **Python:** edit `pyproject.toml`, then run `uv lock`. MarkItDown stays pinned
-  to one version, and mammoth, its Word reader, to one release series, because
-  Word alignment depends on their exact output.
+- **Python:** edit `pyproject.toml`, then run `uv lock`.
 - **npm packages:** edit `src/md_doc_converter/toolchain/package.json`, then run
   `make lock-npm`. The next `setup` reinstalls the packages because the
   manifests' digest changes. A test checks that every locked package resolves

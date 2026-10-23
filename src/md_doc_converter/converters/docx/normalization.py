@@ -17,36 +17,6 @@ from md_doc_converter.markdown.document import READER as _RENDER_READER
 from md_doc_converter.markdown.document import strip_column_widths as _strip_column_widths
 from md_doc_converter.pandoc import JSONValue
 
-# mammoth keeps a HYPERLINK field's \o tooltip switch in the link target:
-# https://github.com/mwilliamson/python-mammoth/issues/174
-WORD_TOOLTIP_LINK_RE = re.compile(
-    r'\]\((https?://[^)\s"]+)"\s+\\o\s+"[^"\r\n)]*"?\)', re.IGNORECASE
-)
-
-
-def normalize_unordered_lists(markdown: str) -> tuple[str, int]:
-    lines = markdown.splitlines(keepends=True)
-    eligible = _syntax.markdown_prose_lines(markdown)
-    fixes = 0
-    for index in eligible:
-        quote, line = _syntax.container_line(lines[index])
-        if re.fullmatch(r"[ \t]*(?:\*[ \t]*){3,}(?:\n)?", line):
-            continue
-        match = re.match(r"^([ \t]*)((?:[*+-](?:[ \t]+|(?=\n?$)))+)(.*?)(\n?)$", line)
-        if match is None:
-            continue
-        markers = re.sub(r"[*+]", "-", match.group(2))
-        if markers != match.group(2):
-            if not match.group(3).strip() and len(re.findall(r"[-+*]", markers)) >= 3:
-                tokens = list(re.finditer(r"[-+*]", match.group(2)))
-                lines[index] = "\n".join(
-                    quote + match.group(1) + " " * token.start() + "-" for token in tokens
-                ) + match.group(4)
-            else:
-                lines[index] = quote + match.group(1) + markers + match.group(3) + match.group(4)
-            fixes += 1
-    return "".join(lines), fixes
-
 
 def normalize_ordered_list_spacing(markdown: str) -> tuple[str, int]:
     """Write one space after each ordered list marker, as Markdown linters expect.
@@ -256,6 +226,10 @@ def _table_rows(lines: list[str], span: tuple[int, int]) -> dict[int, tuple[int,
     return rows
 
 
+# A line that defines a link reference or a footnote, such as "[x]: https://example.com".
+_DEFINITION = re.compile(r" {0,3}\[[^\]\n]+\]:")
+
+
 def drop_unneeded_escapes(markdown: str, pandoc: str) -> tuple[str, int]:
     """Remove escapes that Pandoc's writer adds where nothing could be read differently.
 
@@ -292,8 +266,14 @@ def drop_unneeded_escapes(markdown: str, pandoc: str) -> tuple[str, int]:
     def text(indices: Iterable[int], chosen: Mapping[int, Iterable[EscapeGroup]]) -> str:
         return "\n".join(_without(lines[index], chosen.get(index, ())) for index in indices)
 
-    # md-to-html's reader links "[Heading text]" to a heading anywhere on the page.
+    # md-to-html's reader links "[Heading text]" to a heading anywhere on the page, and both
+    # readers read "[x]" or "[^x]" by a definition anywhere on it.
     context = [(lines[index], lines[index]) for index in markdown_heading_lines(markdown)]
+    context += [
+        (lines[index], lines[index])
+        for index in sorted(_syntax.markdown_prose_lines(markdown))
+        if _DEFINITION.match(lines[index])
+    ]
 
     def same(pairs: list[tuple[str, str]]) -> list[bool]:
         """For each (escaped, unescaped) text, whether both readers parse the two the same."""
@@ -349,24 +329,14 @@ def drop_unneeded_escapes(markdown: str, pandoc: str) -> tuple[str, int]:
             if ok:
                 accepted.update((index, passed[index]) for index in range(*span) if index in passed)
         result = text(range(len(lines)), accepted)
-        if any(parse(result, reader) != parse(markdown, reader) for reader in readers):
+        # Each block was checked by both readers with the page's headings and definitions;
+        # the page as a whole is checked again by docx-to-md's reader, which, unlike
+        # md-to-html's, reads a page of large HTML tables quickly.
+        if parse(result, _reference.DOCX_READER) != parse(markdown, _reference.DOCX_READER):
             return markdown, 0
     except (_pandoc.PandocError, _Unaligned):
         return markdown, 0
     return result, sum(len(group) for found in accepted.values() for group in found)
-
-
-def repair_word_tooltip_links(markdown: str) -> tuple[str, int]:
-    lines = markdown.splitlines(keepends=True)
-    count = 0
-
-    def replacement(match: re.Match[str]) -> str:
-        return f"]({match.group(1)})"
-
-    for index in _syntax.markdown_prose_lines(markdown):
-        lines[index], fixes = WORD_TOOLTIP_LINK_RE.subn(replacement, lines[index])
-        count += fixes
-    return "".join(lines), count
 
 
 def normalize_final_newline(markdown: str) -> str:

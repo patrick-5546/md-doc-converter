@@ -1,4 +1,4 @@
-"""docx-to-md end to end: synthetic Word documents, converted with MarkItDown and Pandoc."""
+"""docx-to-md end to end: synthetic Word documents, converted with Pandoc."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import NoReturn, ParamSpec
+from typing import Literal, ParamSpec
 from unittest import mock
 from xml.etree import ElementTree as ET
 
@@ -29,10 +29,9 @@ from md_doc_converter.converters.docx import models as _models
 from md_doc_converter.converters.docx import normalization as _normalization
 from md_doc_converter.converters.docx import ooxml as _ooxml
 from md_doc_converter.converters.docx import pipeline as _pipeline
+from md_doc_converter.converters.docx import prepare as _prepare
 from md_doc_converter.converters.docx import publication as _publication
-from md_doc_converter.converters.docx import recovery as _recovery
 from md_doc_converter.converters.docx import reference as _reference
-from md_doc_converter.converters.docx import source as _source
 from md_doc_converter.converters.docx import tables as _tables
 from md_doc_converter.converters.docx import validation as _validation
 from tests.support.docx import (
@@ -66,6 +65,7 @@ from tests.support.docx import (
 COMMAND = [sys.executable, "-m", "md_doc_converter", "docx-to-md"]
 # Word document relationships: (identifier, type, target, target mode).
 Relations = tuple[tuple[str, str, str, str], ...]
+M = "{http://schemas.openxmlformats.org/officeDocument/2006/math}"
 
 
 # The markdownlint rules, as rumdl checks them, that converted Markdown must follow.
@@ -164,10 +164,9 @@ class Converter:
         media: dict[str, bytes] | None = None,
         extras: dict[str, bytes] | None = None,
         styles: tuple[ET.Element, ...] = (),
-        explain: bool = False,
     ) -> tuple[str, _diagnostics.TransformReport, str]:
         """Convert with a transform report; return the output, the report, and its warnings."""
-        report = _diagnostics.TransformReport(explaining=explain)
+        report = _diagnostics.TransformReport()
         self.capsys.readouterr()  # Earlier output is not this conversion's warnings.
         result, _stats = self(
             body,
@@ -193,6 +192,15 @@ def convert(source: Path, capsys: pytest.CaptureFixture[str]) -> Converter:
     return Converter(source, capsys)
 
 
+def list_shape(root: ET.Element) -> list[tuple[str, str, int, int]]:
+    """Each list in *root*: its tag, numbering type, start number, and number of items."""
+    return [
+        (str(node.tag), node.get("type", "1"), int(node.get("start", "1")), len(node.findall("li")))
+        for node in root.iter()
+        if node.tag in {"ol", "ul"}
+    ]
+
+
 def hide_pandoc(monkeypatch: pytest.MonkeyPatch) -> None:
     """Let `shutil.which` find every tool but Pandoc, as where Pandoc is not installed."""
     original = shutil.which
@@ -201,15 +209,6 @@ def hide_pandoc(monkeypatch: pytest.MonkeyPatch) -> None:
         return None if command == "pandoc" else original(command, mode, path)
 
     monkeypatch.setattr(shutil, "which", which)
-
-
-def fail_alignment(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Make aligning the Pandoc and MarkItDown conversions fail."""
-
-    def fail(*_arguments: object) -> NoReturn:
-        raise _models.ConversionError("synthetic alignment failure")
-
-    monkeypatch.setattr(_pipeline, "_aligned_markdown", fail)
 
 
 def test_default_keeps_step_and_status_labels_and_index_content(convert: Converter) -> None:
@@ -255,7 +254,7 @@ def test_ordered_list_start_and_nesting_survive_conversion_and_splitting(
     )
     _pipeline.convert_docx(source, split_depth=1)
     content = (tmp_path / "Synthetic Guide" / "01-numbers.md").read_text(encoding="utf-8")
-    shape = _recovery._list_shape(_reference.pandoc_html(content, pandoc))
+    shape = list_shape(_reference.pandoc_html(content, pandoc))
     assert shape == [("ol", "1", 7, 2), ("ol", "1", 7, 2)]
 
 
@@ -270,7 +269,7 @@ def test_unordered_word_lists_are_dash_markdown(source: Path, pandoc: str) -> No
     assert "- " in content
     assert "* " not in content
     assert "+ " not in content
-    assert _recovery._list_shape(_reference.pandoc_html(content, pandoc)) == [
+    assert list_shape(_reference.pandoc_html(content, pandoc)) == [
         ("ul", "1", 1, 2),
         ("ul", "1", 1, 1),
     ]
@@ -289,7 +288,7 @@ def test_nondecimal_ordered_list_becomes_a_numbered_markdown_list(
     content = source.with_suffix(".md").read_text(encoding="utf-8")
     assert "<" not in content
     assert re.search(r"^3\.\s+First\n+4\.\s+Second\n", content)
-    assert _recovery._list_shape(_reference.pandoc_html(content, pandoc)) == [("ol", "1", 3, 2)]
+    assert list_shape(_reference.pandoc_html(content, pandoc)) == [("ol", "1", 3, 2)]
 
 
 def test_list_defined_by_a_word_list_style_is_a_list(convert: Converter, pandoc: str) -> None:
@@ -306,14 +305,14 @@ def test_list_defined_by_a_word_list_style_is_a_list(convert: Converter, pandoc:
     )
     assert report.status("lists") == "applied"
     assert re.search(r"Intro\n\n- Alpha\n+- Beta\n\nOutro", result)
-    assert _recovery._list_shape(_reference.pandoc_html(result, pandoc)) == [("ul", "1", 1, 2)]
+    assert list_shape(_reference.pandoc_html(result, pandoc)) == [("ul", "1", 1, 2)]
     assert "lists:" not in warnings
 
 
-def test_inherited_style_numbering_replaces_plain_markitdown_paragraphs(
+def test_paragraphs_numbered_through_their_style_are_list_items(
     convert: Converter, pandoc: str
 ) -> None:
-    # Mammoth gives paragraphs numbered through a basedOn style as plain paragraphs.
+    # The numbering comes from the style that the paragraphs' style is based on.
     result, report, warnings = convert.reported(
         [
             paragraph("Intro"),
@@ -329,7 +328,7 @@ def test_inherited_style_numbering_replaces_plain_markitdown_paragraphs(
     )
     assert report.status("lists") == "applied"
     assert re.search(r"Intro\n\n- Alpha\n+- Beta\n\nOutro", result)
-    assert _recovery._list_shape(_reference.pandoc_html(result, pandoc)) == [("ul", "1", 1, 2)]
+    assert list_shape(_reference.pandoc_html(result, pandoc)) == [("ul", "1", 1, 2)]
     assert "lists:" not in warnings
 
 
@@ -402,7 +401,7 @@ def test_lists_after_fields_pandoc_cannot_close_keep_word_numbering(convert: Con
 
 
 def test_lists_that_start_at_a_nested_level_keep_word_numbering(convert: Converter) -> None:
-    # MarkItDown writes one marker per level for such a list, such as "* 1. Alpha".
+    # A list that starts at a nested level is a list of its own, as Word numbers it.
     result, report, warnings = convert.reported(
         [paragraph("Intro"), numbered("Alpha", 1), numbered("Beta", 1), paragraph("Outro")],
         extras={"word/numbering.xml": numbering_xml()},
@@ -415,7 +414,7 @@ def test_lists_that_start_at_a_nested_level_keep_word_numbering(convert: Convert
 def test_consecutive_lists_at_a_nested_level_stay_separate_lists(
     convert: Converter, pandoc: str
 ) -> None:
-    # MarkItDown nests the second list in the first, four spaces in: "    1. B one".
+    # Lists at a nested level, one after another, stay separate lists.
     result, report, warnings = convert.reported(
         [
             paragraph("Intro"),
@@ -435,7 +434,7 @@ def test_consecutive_lists_at_a_nested_level_stay_separate_lists(
 
 
 def test_numbered_outline_level_heading_stays_a_list_item(convert: Converter) -> None:
-    # Pandoc and MarkItDown read it as a list item; only a "heading N" style is a heading.
+    # Pandoc reads it as a list item; only a "heading N" style is a heading.
     outlined = numbered("Gamma")
     properties = outlined.find(W + "pPr")
     assert properties is not None
@@ -450,7 +449,6 @@ def test_numbered_outline_level_heading_stays_a_list_item(convert: Converter) ->
         "    not applied (1): Word numbers this outline-level heading as a list item; "
         "kept as a list item" in report.summary()
     )
-    assert report.status("cleanup") == "not needed"
     assert "lists:" not in warnings
 
 
@@ -533,156 +531,6 @@ def test_bare_web_and_e_mail_addresses_become_autolinks(convert: Converter) -> N
     assert report.status("checks") == "applied"
 
 
-def explained(
-    convert: Converter, words: str, output: Path, *, explain: bool = True
-) -> tuple[str, _diagnostics.TransformReport]:
-    """Convert a document with one item each transform skips; *words* is all of its text."""
-    outlined = numbered(f"{words} outlined")
-    properties = outlined.find(W + "pPr")
-    assert properties is not None
-    ET.SubElement(properties, W + "outlineLvl", {W + "val": "1"})
-    # A footnote in a list item is a known gap: that list stays as MarkItDown converted it.
-    noted = numbered(f"{words} noted")
-    ET.SubElement(ET.SubElement(noted, W + "r"), W + "footnoteReference", {W + "id": "1"})
-    notes = ET.Element(W + "footnotes")
-    ET.SubElement(notes, W + "footnote", {W + "id": "1"}).append(paragraph(f"{words} note"))
-    result, report, _warnings = convert.reported(
-        [
-            bookmark("_Toc1", f"{words} heading", "Heading1"),
-            paragraph(f"{words} intro"),
-            numbered(f"{words} one"),
-            numbered(f"{words} two"),
-            outlined,
-            paragraph(f"{words} middle"),
-            noted,
-            numbered(f"{words} after"),
-            hyperlink(f"{words} link", anchor="Zanzibar_spot"),
-            hyperlink(f"{words} file", relation="guide"),
-            text_box(f"{words} box"),
-        ],
-        output=output,
-        relations=(
-            ("notes", "footnotes", "footnotes.xml", "Internal"),
-            ("guide", "hyperlink", "Xylophone%20Guide.docx", "External"),
-        ),
-        extras={
-            "word/numbering.xml": numbering_xml(),
-            "word/footnotes.xml": _ooxml.word_xml_bytes(notes),
-        },
-        explain=explain,
-    )
-    return result, report
-
-
-def test_explain_describes_what_was_not_applied_without_document_text(
-    convert: Converter, tmp_path: Path
-) -> None:
-    converted, report = explained(convert, "zephyr quill", tmp_path / "first.md")
-    _other, other = explained(convert, "quokka marble", tmp_path / "second.md")
-    lines = report.explanation()
-    assert lines == other.explanation()
-    for expected in (
-        "docx-to-md: explain (fixed labels and counts only; no document text)",
-        "  document: paragraphs 11; text boxes 1; headings 2; list items 5; links 1; bookmarks 1",
-        "  images: DrawingML text box: no embedded image; its text is omitted (1)",
-        "    placement: floating 1",
-        "  links: link to a missing Word bookmark; kept as plain text (1)",
-        "    bookmark: nowhere 1",
-        (
-            "  headings: Word numbers this outline-level heading as a list item; "
-            "kept as a list item (1)"
-        ),
-        "    headings: 1 of 2",
-        "      heading by: outline level 1/1; heading style 0/1",
-        (
-            "  lists: Word/Pandoc/MarkItDown list content cannot be aligned; "
-            "kept as MarkItDown converted it (1)"
-        ),
-        "    difference: differ at the middle: Pandoc letter / MarkItDown bracket 1",
-        "    list items: 2 of 5",
-        "      contains: text 1/4; text+note reference 1/1",
-        "  checks: a local link target does not exist (1)",
-        "    file type: docx 1",
-        "    on disk: no 1",
-    ):
-        assert expected in lines
-    shared = "\n".join(lines).casefold()
-    for word in ("zephyr", "quill", "quokka", "marble", "zanzibar", "xylophone", "guide"):
-        assert word not in shared
-    quiet, plain = explained(convert, "zephyr quill", tmp_path / "third.md", explain=False)
-    assert quiet == converted
-    assert plain.summary() == report.summary()
-    assert (plain.explanation(), plain.items, plain.events) == ([], {}, [])
-
-
-def test_explain_describes_images_tables_links_and_fields_without_document_text(
-    convert: Converter,
-) -> None:
-    words = "zephyr quill"
-    fields = paragraph(f"{words} fields")
-    fields.append(ET.Element(W + "fldSimple", {W + "instr": " AUTHOR "}))
-    fields.extend(page_reference("_Ref1"))
-    # A field that the document never closes.
-    ET.SubElement(ET.SubElement(fields, W + "r"), W + "fldChar", {W + "fldCharType": "begin"})
-    ET.SubElement(ET.SubElement(fields, W + "r"), W + "instrText").text = " DATE "
-    _result, report, _warnings = convert.reported(
-        [
-            bookmark("_Ref1", f"{words} heading", "Heading1"),
-            image(alt=f"{words} chart"),
-            legacy_image("pict"),
-            legacy_image("object"),
-            grouped_image(),
-            table(row(cell(f"{words} a", colspan=2)), row(cell(f"{words} b"), cell(f"{words} c"))),
-            hyperlink(f"{words} web", relation="web"),
-            hyperlink(f"{words} mail", relation="mail"),
-            fields,
-        ],
-        relations=(
-            ("image", "image", "media/image.png", "Internal"),
-            ("web", "hyperlink", "https://example.test/zephyr#quill", "External"),
-            ("mail", "hyperlink", "mailto:zephyr@example.test", "External"),
-        ),
-        media={"image.png": PNG},
-        explain=True,
-    )
-    lines = report.explanation()
-    assert "  fields: AUTHOR (simple) 1; PAGEREF 1; DATE (not closed) 1" in lines
-    features = list(report.items.values())
-    images = [shape for kind, shape in features if kind == "image"]
-    assert [(shape["kind"], shape["placement"]) for shape in images] == [
-        ("picture", "inline"),
-        ("VML picture", "VML"),
-        ("embedded object preview", "VML"),
-        ("group of shapes", "floating"),
-    ]
-    assert {shape["format"] for shape in images} == {"png"}
-    [merged] = [shape for kind, shape in features if kind == "table"]
-    assert merged["merged cells"] == "yes"
-    links = [shape["target"] for kind, shape in features if kind == "link"]
-    assert links == ["web page and bookmark", "email"]
-    shared = "\n".join([*lines, json.dumps(features)]).casefold()
-    for word in ("zephyr", "quill", "example", "chart"):
-        assert word not in shared
-
-
-@pytest.mark.parametrize(
-    "explain", [pytest.param(True, id="explain"), pytest.param(False, id="no-explain")]
-)
-def test_explain_is_kept_in_the_diagnostic_report(
-    explain: bool, source: Path, tmp_path: Path
-) -> None:
-    write_docx(source, [hyperlink("Zephyr", anchor="Zanzibar_spot")])
-    report = _diagnostics.TransformReport(explaining=explain)
-    diagnostics = tmp_path / "diagnostics"
-    _pipeline.convert_docx(source, keep_intermediates=diagnostics, report=report)
-    data = json.loads((diagnostics / "diagnostics.json").read_text(encoding="utf-8"))
-    if explain:
-        assert data["explain"] == report.explanation()
-        assert "    bookmark: nowhere 1" in data["explain"]
-    else:
-        assert "explain" not in data
-
-
 def test_numbering_off_paragraphs_stay_with_the_list_item_before_them(convert: Converter) -> None:
     result, report, warnings = convert.reported(
         [
@@ -744,7 +592,7 @@ def test_backticks_backslashes_and_hashes_keep_their_text(convert: Converter, pa
     assert not list(parsed.iter("code"))
     assert not list(parsed.iter("h1"))
     assert report.status("lists") == "applied"
-    assert "  literal-text: applied (10)" in report.summary()
+    assert report.status("checks") == "applied"
 
 
 def test_brackets_stay_text_rather_than_links(convert: Converter, pandoc: str) -> None:
@@ -793,18 +641,19 @@ def test_symbol_fonts_and_unclosable_emphasis_keep_lists(convert: Converter) -> 
         ],
         extras={"word/numbering.xml": numbering_xml()},
     )
-    assert "Passed ✓\n" in result
-    assert "Reviewed ✓" in result
+    # Pandoc maps symbol fonts to Unicode; Markdown cannot close bold that ends in punctuation
+    # right before a letter, so that bold is HTML.
+    assert "Passed ✔\n" in result
+    assert "Reviewed ✔" in result
     assert "A → B" in result
     assert "ü" not in result
     assert "<strong>Note:</strong>next" in result
     assert report.status("lists") == "applied"
-    assert "  symbols: applied (3)" in report.summary()
     assert "lists:" not in warnings
 
 
 def test_vml_text_boxes_in_list_items_keep_the_list(convert: Converter) -> None:
-    # Pandoc splits a paragraph around a VML text box; MarkItDown puts its text after.
+    # A text box's text follows its paragraph, here a list item, which stays in its list.
     item = numbered("Lead ")
     item.extend(list(text_box("Box label", legacy=True)))
     item.append(_ooxml.word_run(" tail"))
@@ -847,18 +696,19 @@ def test_multiple_empty_headerless_and_nested_tables(convert: Converter, pandoc:
     )
     parsed = _reference.pandoc_html(result, pandoc)
     tables = list(parsed.iter("table"))
-    assert len(tables) == 5
-    # The first table's empty rows go, so its data row leads a Markdown table.
-    assert [len(_tables.html_rows(item)) for item in tables] == [1, 0, 1, 1, 1]
-    assert stats["tables"] == 5
+    # The first table's empty rows go, so its data row leads a Markdown table. A table without
+    # rows shows nothing and goes; the nested table is part of its outer table's HTML.
+    assert [len(_tables.html_rows(item)) for item in tables] == [1, 1, 1, 1]
+    assert stats["tables"] == 3
     assert len(list(parsed.iter("thead"))) == 1
     assert "nested" in result
     assert "Before" in result
     assert "After" in result
 
 
-def test_rows_with_grid_gaps_keep_their_word_cells(convert: Converter, pandoc: str) -> None:
-    # Pandoc writes an empty cell per grid column for gridBefore and pads short rows.
+def test_rows_with_grid_gaps_keep_their_word_cells(convert: Converter) -> None:
+    # Pandoc fills a row's grid gaps, and a short row, with an empty cell per grid column, so
+    # each cell keeps its column and the table can be a pipe table.
     def gapped(before: int, after: int, *texts: str) -> ET.Element:
         result = row(*(cell(text) for text in texts))
         properties = ET.Element(W + "trPr")
@@ -881,16 +731,17 @@ def test_rows_with_grid_gaps_keep_their_word_cells(convert: Converter, pandoc: s
     )
     assert report.status("tables") == "applied"
     assert "tables:" not in warnings
-    shape = [
-        [(node.get("colspan", "1"), "".join(node.itertext())) for node in tr]
-        for tr in _tables.html_rows(next(_reference.pandoc_html(result, pandoc).iter("table")))
-    ]
-    assert shape == [
-        [("1", "a"), ("1", "b"), ("1", "c")],
-        [("2", ""), ("1", "z")],
-        [("1", "x"), ("2", "")],
-        [("1", "p"), ("1", "q")],
-    ]
+    assert result == "| a | b | c |\n| --- | --- | --- |\n| | | z |\n| x | | |\n| p | q | |\n"
+
+
+def test_grid_columns_without_a_width_keep_their_cells(convert: Converter) -> None:
+    # Pandoc leaves out such a column, and with it the cells of each row beyond the rest.
+    word = table(row(cell("a"), cell("b")), row(cell("1"), cell("2")))
+    grid = word.find(W + "tblGrid")
+    assert grid is not None
+    grid[0].attrib.clear()
+    result, _stats = convert([word])
+    assert result == "| a | b |\n| --- | --- |\n| 1 | 2 |\n"
 
 
 def test_rows_wider_than_the_table_grid_keep_every_cell(convert: Converter, pandoc: str) -> None:
@@ -914,7 +765,8 @@ def test_rows_wider_than_the_table_grid_keep_every_cell(convert: Converter, pand
 
 
 def test_a_narrow_first_body_row_keeps_every_table_cell(convert: Converter, pandoc: str) -> None:
-    # Pandoc takes a table's columns from its first body row and drops the rest.
+    # Pandoc takes a table's columns from its first body row and drops the rest, and pads
+    # short rows.
     title = row(cell("Title", colspan=2))
     result, report, warnings = convert.reported(
         [
@@ -939,10 +791,10 @@ def test_a_narrow_first_body_row_keeps_every_table_cell(convert: Converter, pand
     assert shapes == [
         [
             [("1", "h1"), ("1", "h2"), ("1", "h3")],
-            [("1", "a"), ("1", "b")],
+            [("1", "a"), ("1", "b"), ("1", "")],
             [("1", "x"), ("1", "y"), ("1", "z")],
         ],
-        [[("2", "Title")], [("1", "p"), ("1", "q"), ("1", "r")]],
+        [[("2", "Title"), ("1", "")], [("1", "p"), ("1", "q"), ("1", "r")]],
     ]
 
 
@@ -1034,7 +886,7 @@ def test_an_all_empty_table_keeps_its_first_row_after_splitting(
     assert len(list(_reference.pandoc_html(content, pandoc).iter("tr"))) == 1
 
 
-def test_zero_cell_rows_survive_actual_converter_streams(convert: Converter, pandoc: str) -> None:
+def test_rows_and_tables_without_cells_are_omitted(convert: Converter) -> None:
     result, _stats = convert(
         [
             table(row(), row(cell("A"), cell("B")), row()),
@@ -1042,12 +894,8 @@ def test_zero_cell_rows_survive_actual_converter_streams(convert: Converter, pan
             table(row(), row()),
         ]
     )
-    tables = _reference.pandoc_html(result, pandoc).iter("table")
-    # Rows without cells show nothing, so they go unless no other row would be left.
-    assert [[len(item) for item in _tables.html_rows(actual)] for actual in tables] == [
-        [2],
-        [0],
-    ]
+    # Rows without cells show nothing, so they go, and so does a table left without rows.
+    assert result == "| A | B |\n| --- | --- |\n\nBetween\n"
 
 
 def test_empty_rows_are_omitted_and_reported(convert: Converter) -> None:
@@ -1367,8 +1215,7 @@ def test_link_to_missing_bookmark_is_kept_as_text_and_summarized(
     )
     assert result == "Missing\n"
     summary = report.summary()
-    assert summary[0] == "docx-to-md: transforms (baseline: MarkItDown)"
-    assert "  alignment: applied" in summary
+    assert summary[0] == "docx-to-md: transforms"
     assert "  links: not applied (1)" in summary
     assert "    not applied (1): link to a missing Word bookmark; kept as plain text" in summary
     assert "  checks: passed" in summary
@@ -1391,7 +1238,8 @@ def test_cross_references_to_missing_bookmarks_are_kept_as_text(convert: Convert
             reference("_Missing", "6"),
         ]
     )
-    assert "| See 3 | See [4](#target) |" in result
+    # A page number stays text, whether its bookmark exists or not.
+    assert "| See 3 | See 4 |" in result
     assert "| See 5 | Plain |" in result
     assert "See 6" in result
     assert dict(report.records["links"].skipped) == {
@@ -1402,12 +1250,7 @@ def test_cross_references_to_missing_bookmarks_are_kept_as_text(convert: Convert
     assert report.status("checks") == "applied"
 
 
-@pytest.mark.parametrize(
-    "aligned", [pytest.param(True, id="aligned"), pytest.param(False, id="alignment-failed")]
-)
-def test_simple_fields_keep_their_cached_results(
-    aligned: bool, convert: Converter, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_simple_fields_keep_their_cached_results(convert: Converter) -> None:
     def field(instruction: str, *children: ET.Element) -> ET.Element:
         result = ET.Element(W + "fldSimple", {W + "instr": instruction})
         result.extend(children)
@@ -1437,18 +1280,16 @@ def test_simple_fields_keep_their_cached_results(
         line("See ", field(" REF _RefFigure \\h ", _ooxml.word_run("Figure 3")), "."),
         hyperlink("Back to the figure", anchor="_RefFigure"),
     ]
-    if not aligned:
-        fail_alignment(monkeypatch)
     result, report, _warnings = convert.reported(body)
-    for text in ("Table 2\u20111: Registers", "Figure 3: Pipeline", "See Figure 3."):
+    # A cross-reference with \h is a hyperlink in Word, to the section that holds its bookmark.
+    for text in ("Table 2\u20111: Registers", "Figure 3: Pipeline", "See [Figure 3](#results)."):
         assert f"\n{text}\n" in result
     assert report.status("fields") == "applied"
     assert "  fields: applied (4 simple field(s) kept)" in report.summary()
-    if aligned:
-        assert "[Back to the figure](#results)" in result
-        assert not report.records["bookmarks"].skipped
-        assert report.status("checks") == "applied"
-        assert not report.records["checks"].skipped
+    assert "[Back to the figure](#results)" in result
+    assert not report.records["bookmarks"].skipped
+    assert report.status("checks") == "applied"
+    assert not report.records["checks"].skipped
 
 
 def test_bookmarks_in_leading_title_paragraphs_keep_their_position(convert: Converter) -> None:
@@ -1472,9 +1313,8 @@ def test_bookmarks_in_leading_title_paragraphs_keep_their_position(convert: Conv
     assert "checks:" not in warnings
 
 
-def test_word_line_breaks_start_new_paragraphs(convert: Converter) -> None:
-    # MarkItDown strips the trailing spaces of its hard breaks, so Word's line breaks
-    # are restored, as paragraph breaks; one in a heading stays a space.
+def test_word_line_breaks_are_hard_line_breaks(convert: Converter) -> None:
+    # A Markdown heading is one line, so a line break in one is a space.
     def broken(*parts: ET.Element | str, style: str | None = None) -> ET.Element:
         result = paragraph("", style)
         for run in result.findall(W + "r"):
@@ -1500,16 +1340,55 @@ def test_word_line_breaks_start_new_paragraphs(convert: Converter) -> None:
         ),
         media={"art.png": PNG},
     )
-    assert "first line\n\nsecond line\n" in result
+    assert "first line\\\nsecond line\n" in result
     assert "# Heading top Heading bottom\n" in result
     assert re.search(
-        r"!\[Diagram\]\(\.images/[^)\n]+\)\n\n\[Source\]\(https://example\.test/a\?b=1&amp;c=2\)",
+        r"!\[Diagram\]\(\.images/[^)\n]+\)\\\n\[Source\]\(https://example\.test/a\?b=1&amp;c=2\)",
         result,
     )
-    assert "\\\n" not in result
-    assert "  line-breaks: partial (2 applied, 1 not applied)" in report.summary()
+    assert (
+        "    not applied (1): Word line break in a heading; a Markdown heading is one line"
+        in report.summary()
+    )
     assert report.status("checks") == "applied"
     assert not report.records["checks"].skipped
+
+
+@pytest.mark.parametrize("split", [pytest.param(0, id="one-page"), pytest.param(1, id="pages")])
+def test_lines_of_dashes_or_equals_signs_stay_text(
+    split: int, convert: Converter, tmp_path: Path
+) -> None:
+    # Pandoc writes them as they are, which Markdown reads as a rule or a heading underline.
+    def broken(*texts: str) -> ET.Element:
+        result = ET.Element(W + "p")
+        for index, text in enumerate(texts):
+            if index:
+                ET.SubElement(ET.SubElement(result, W + "r"), W + "br")
+            result.append(_ooxml.word_run(text))
+        return result
+
+    # An empty paragraph with a bottom border, as Word draws a line typed as ---.
+    rule = ET.Element(W + "p")
+    borders = ET.SubElement(ET.SubElement(rule, W + "pPr"), W + "pBdr")
+    ET.SubElement(borders, W + "bottom", {W + "val": "single"})
+    result, _stats = convert(
+        [
+            paragraph("Cache", "Title"),
+            paragraph("Section", "Heading1"),
+            paragraph("---"),
+            broken("Lead", "==="),
+            broken("Lead", "---"),
+            rule,
+            paragraph("End"),
+        ],
+        split_depth=split,
+    )
+    page = (
+        (tmp_path / "Synthetic Guide" / "01-section.md").read_text(encoding="utf-8")
+        if split
+        else result
+    )
+    assert page.endswith("\\---\n\nLead\\\n\\===\n\nLead\\\n\\---\n\n---\n\nEnd\n")
 
 
 def test_line_breaks_at_block_ends_leave_no_backslash(convert: Converter) -> None:
@@ -1535,16 +1414,227 @@ def test_line_breaks_at_block_ends_leave_no_backslash(convert: Converter) -> Non
     assert "lists:" not in warnings
 
 
-@pytest.mark.parametrize(
-    "aligned", [pytest.param(True, id="aligned"), pytest.param(False, id="alignment-failed")]
-)
-def test_stray_field_marks_do_not_stop_markitdown(
-    aligned: bool, convert: Converter, monkeypatch: pytest.MonkeyPatch
+def test_breaks_at_paragraph_edges_go_and_a_blank_line_starts_a_paragraph(
+    convert: Converter,
 ) -> None:
+    def line(*parts: str | None, bold: bool = False) -> ET.Element:
+        """A paragraph of *parts*, None being a line break."""
+        result = ET.Element(W + "p")
+        for part in parts:
+            run = ET.SubElement(result, W + "r")
+            if bold:
+                ET.SubElement(ET.SubElement(run, W + "rPr"), W + "b")
+            if part is None:
+                ET.SubElement(run, W + "br")
+            else:
+                ET.SubElement(run, W + "t", {_ooxml.XML_SPACE: "preserve"}).text = part
+        return result
+
+    result, _stats = convert(
+        [
+            line("Two after", None, None),
+            line(None, "One before"),
+            line("Bold", None, bold=True),
+            line("Above", None, None, "below", None, "next"),
+            table(
+                row(cell("h1"), cell("h2")), row(cell(line("in", None, None, "cell")), cell("x"))
+            ),
+        ]
+    )
+    # A break at a paragraph's end would show as a backslash.
+    assert result == (
+        "Two after\n\nOne before\n\n**Bold**\n\nAbove\n\nbelow\\\nnext\n\n"
+        "| h1 | h2 |\n| --- | --- |\n| in<br><br>cell | x |\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "simple", [pytest.param(False, id="complex"), pytest.param(True, id="simple")]
+)
+def test_page_references_keep_their_number_as_text(simple: bool, convert: Converter) -> None:
+    # A page number means nothing in Markdown; Pandoc would make it a link.
+    line = paragraph("See page ")
+    line.extend(page_reference("_Ref1", "5", simple=simple))
+    line.append(_ooxml.word_run("."))
+    result, report, _warnings = convert.reported([bookmark("_Ref1", "Target", "Heading1"), line])
+    assert result == "# Target\n\nSee page 5.\n"
+    assert "  fields: applied (1 page number(s) kept as text" in "\n".join(report.summary())
+
+
+def test_horizontal_lines_are_rules(convert: Converter) -> None:
+    def line(*text: str) -> ET.Element:
+        result = paragraph(*text)
+        properties = ET.SubElement(result, W + "pPr")
+        ET.SubElement(properties, W + "jc", {W + "val": "center"})
+        result.remove(properties)
+        result.insert(0, properties)
+        run = ET.SubElement(result, W + "r")
+        ET.SubElement(run, W + "rPr")
+        shape = ET.SubElement(ET.SubElement(run, W + "pict"), _ooxml.VML + "rect")
+        shape.set(_ooxml.OFFICE + "hr", "t")
+        return result
+
+    result, report, warnings = convert.reported(
+        [paragraph("Above"), line(), paragraph("Between"), line("Beside"), paragraph("Below")]
+    )
+    assert result == "Above\n\n---\n\nBetween\n\nBeside\n\nBelow\n"
+    assert "1 horizontal line(s) kept" in "\n".join(report.summary())
+    assert "horizontal line at paragraph 4: no embedded image; omitted" in warnings
+
+
+def test_a_footnote_keeps_its_link(convert: Converter) -> None:
+    # Pandoc reads a note's r:id with the prefixes that the document part declares.
+    noted = paragraph("Text")
+    ET.SubElement(ET.SubElement(noted, W + "r"), W + "footnoteReference", {W + "id": "1"})
+    notes = ET.Element(W + "footnotes")
+    note = ET.SubElement(notes, W + "footnote", {W + "id": "1"})
+    note.append(hyperlink("Spec", relation="spec"))
+    note_relations = (
+        f'<Relationships xmlns="{_ooxml.PACKAGE_REL[1:-1]}"><Relationship Id="spec" '
+        f'Type="{R[1:-1]}/hyperlink" Target="https://example.test/spec" '
+        'TargetMode="External"/></Relationships>'
+    )
+    result, _stats = convert(
+        [noted],
+        relations=(("notes", "footnotes", "footnotes.xml", "Internal"),),
+        extras={
+            "word/footnotes.xml": _ooxml.word_xml_bytes(notes),
+            "word/_rels/footnotes.xml.rels": note_relations.encode(),
+        },
+    )
+    assert result == "Text[^1]\n\n[^1]: [Spec](https://example.test/spec)\n"
+
+
+@pytest.mark.parametrize(
+    ("math", "inline", "display"),
+    [
+        pytest.param("github", "$`x + 1`$", "``` math\nx + 1\n```", id="github"),
+        pytest.param("dollars", "$x + 1$", "$$x + 1$$", id="dollars"),
+    ],
+)
+@pytest.mark.parametrize("split", [pytest.param(0, id="one-page"), pytest.param(1, id="pages")])
+def test_equations_are_written_in_the_chosen_syntax(
+    math: Literal["github", "dollars"],
+    inline: str,
+    display: str,
+    split: int,
+    source: Path,
+    tmp_path: Path,
+) -> None:
+    def equation(*, alone: bool = False) -> ET.Element:
+        formula = ET.Element(M + "oMath")
+        ET.SubElement(ET.SubElement(formula, M + "r"), M + "t").text = "x+1"
+        if not alone:
+            return formula
+        block = ET.Element(M + "oMathPara")
+        block.append(formula)
+        return block
+
+    def line(*parts: str | ET.Element) -> ET.Element:
+        result = ET.Element(W + "p")
+        result.extend(_ooxml.word_run(part) if isinstance(part, str) else part for part in parts)
+        return result
+
+    noted = line("Noted")
+    ET.SubElement(ET.SubElement(noted, W + "r"), W + "footnoteReference", {W + "id": "1"})
+    notes = ET.Element(W + "footnotes")
+    ET.SubElement(notes, W + "footnote", {W + "id": "1"}).append(line("See ", equation()))
+    write_docx(
+        source,
+        [
+            paragraph("Section", "Heading1"),
+            line("Inline ", equation(), "."),
+            line(equation(alone=True)),
+            table(row(cell("Name"), cell("Value")), row(cell("a"), cell(line(equation())))),
+            noted,
+        ],
+        relations=(("notes", "footnotes", "footnotes.xml", "Internal"),),
+        extras={"word/footnotes.xml": _ooxml.word_xml_bytes(notes)},
+    )
+    _pipeline.convert_docx(source, split_depth=split, math=math)
+    page = (
+        (tmp_path / "Synthetic Guide" / "01-section.md") if split else source.with_suffix(".md")
+    ).read_text(encoding="utf-8")
+    assert f"Inline {inline}.\n\n{display}\n" in page
+    assert f"| a | {inline} |" in page
+    assert f"[^1]: See {inline}\n" in page
+
+
+def test_an_image_in_a_footnote_is_published(convert: Converter, tmp_path: Path) -> None:
+    noted = paragraph("Text")
+    ET.SubElement(ET.SubElement(noted, W + "r"), W + "footnoteReference", {W + "id": "1"})
+    notes = ET.Element(W + "footnotes")
+    ET.SubElement(notes, W + "footnote", {W + "id": "1"}).append(image("art", alt="Logo"))
+    note_relations = (
+        f'<Relationships xmlns="{_ooxml.PACKAGE_REL[1:-1]}"><Relationship Id="art" '
+        f'Type="{R[1:-1]}/image" Target="media/art.png"/></Relationships>'
+    )
+    result, stats = convert(
+        [noted],
+        relations=(("notes", "footnotes", "footnotes.xml", "Internal"),),
+        media={"art.png": PNG},
+        extras={
+            "word/footnotes.xml": _ooxml.word_xml_bytes(notes),
+            "word/_rels/footnotes.xml.rels": note_relations.encode(),
+        },
+    )
+    assert re.fullmatch(
+        r"Text\[\^1\]\n\n\[\^1\]: !\[Logo\]\(\.images/Synthetic%20Guide/[^)]+\.png\)\n", result
+    )
+    assert stats["image_occurrences"] == 1
+    assert [path.read_bytes() for path in (tmp_path / ".images" / "Synthetic Guide").iterdir()] == [
+        PNG
+    ]
+
+
+def test_check_box_form_fields_show_their_state(convert: Converter) -> None:
+    def check_box(*settings: tuple[str, str | None]) -> list[ET.Element]:
+        begin = ET.Element(W + "r")
+        mark = ET.SubElement(begin, W + "fldChar", {W + "fldCharType": "begin"})
+        box = ET.SubElement(ET.SubElement(mark, W + "ffData"), W + "checkBox")
+        for name, value in settings:
+            ET.SubElement(box, W + name, {} if value is None else {W + "val": value})
+        instruction = ET.Element(W + "r")
+        ET.SubElement(instruction, W + "instrText").text = " FORMCHECKBOX "
+        end = ET.Element(W + "r")
+        ET.SubElement(end, W + "fldChar", {W + "fldCharType": "end"})
+        return [begin, instruction, end]
+
+    line = paragraph("Done ")
+    line.extend(check_box(("default", "0"), ("checked", None)))
+    line.append(_ooxml.word_run(" Open "))
+    line.extend(check_box(("default", "1"), ("checked", "0")))
+    line.append(_ooxml.word_run(" Default "))
+    line.extend(check_box(("default", "1")))
+    result, report, _warnings = convert.reported([line])
+    # Word draws a form field's box; it has no text for Pandoc to keep.
+    assert result == "Done \u2612 Open \u2610 Default \u2612\n"
+    assert "  fields: applied (3 check box(es) shown)" in report.summary()
+
+
+def test_every_kind_of_underline_is_underline(convert: Converter) -> None:
+    def underlined(text: str, kind: str) -> ET.Element:
+        return formatted(_ooxml.word_run(text), "u", kind)
+
+    result, _stats = convert(
+        [
+            paragraph_of(
+                underlined("single", "single"),
+                _ooxml.word_run(" "),
+                underlined("double", "double"),
+                _ooxml.word_run(" "),
+                underlined("wavy", "wave"),
+                _ooxml.word_run(" "),
+                underlined("none", "none"),
+            )
+        ]
+    )
+    assert result == "<u>single</u> <u>double</u> <u>wavy</u> none\n"
+
+
+def test_stray_field_marks_are_removed(convert: Converter) -> None:
     stray = paragraph("Before")
     ET.SubElement(ET.SubElement(stray, W + "r"), W + "fldChar", {W + "fldCharType": "end"})
-    if not aligned:
-        fail_alignment(monkeypatch)
     result, report, _warnings = convert.reported([stray, paragraph("After")])
     assert "Before\n\nAfter" in result
     assert "  fields: applied (1 stray field mark(s) removed)" in report.summary()
@@ -1634,26 +1724,18 @@ def test_screen_tips_become_link_titles_and_double_strikethrough_is_struck(
     )
 
 
-@pytest.mark.parametrize(
-    "aligned", [pytest.param(True, id="aligned"), pytest.param(False, id="alignment-failed")]
-)
-def test_hyperlink_with_a_missing_relationship_still_converts(
-    aligned: bool, convert: Converter, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    if not aligned:
-        fail_alignment(monkeypatch)
+def test_hyperlink_with_a_missing_relationship_still_converts(convert: Converter) -> None:
     result, report, warnings = convert.reported(
         [paragraph("Before"), hyperlink("Dangling", relation="gone")]
     )
     assert result == "Before\n\nDangling\n"
-    assert (report.records["alignment"].failure is None) == aligned
     assert dict(report.records["links"].skipped) == {
         "Word hyperlink relationship is missing; its target is dropped": 1
     }
     assert "links: Word hyperlink relationship 'gone' is missing; its target is dropped" in warnings
 
 
-def test_hyperlink_that_pandoc_splits_keeps_the_markitdown_link(convert: Converter) -> None:
+def test_a_note_reference_in_a_hyperlink_follows_the_link(convert: Converter) -> None:
     content = hyperlink("Label", relation="site")
     link = content.find(W + "hyperlink")
     assert link is not None
@@ -1670,10 +1752,10 @@ def test_hyperlink_that_pandoc_splits_keeps_the_markitdown_link(convert: Convert
         ),
         extras={"word/footnotes.xml": notes.encode()},
     )
-    assert "https://example.test/a" in result
-    assert dict(report.records["links"].skipped) == {
-        "Pandoc rendered N links for one Word hyperlink; kept as MarkItDown converted it": 1
-    }
+    # Markdown cannot hold a footnote reference in link text.
+    assert result == "[Label](https://example.test/a)[^1]\n\n[^1]: Note\n"
+    assert report.status("links") == "applied"
+    assert report.status("checks") == "applied"
 
 
 def test_png_and_svg_do_not_require_office_or_poppler(
@@ -1720,8 +1802,9 @@ def test_line_breaks_in_list_items_formatting_and_links(convert: Converter) -> N
         relations=(("site", "hyperlink", "https://example.test/", "External"),),
         extras={"word/numbering.xml": numbering_xml()},
     )
+    # Link text is one line; the list stays tight.
     assert (
-        result == "7. Alpha\n\n    continued\n\n8. Beta\n\n**Bold**\n\n**text**\n\n"
+        result == "7. Alpha\\\n    continued\n8. Beta\n\n**Bold\\\ntext**\n\n"
         "[Line one Line two](https://example.test/)\n"
     )
     assert report.status("lists") == "applied"
@@ -1805,6 +1888,43 @@ def test_empty_headings_are_omitted_and_do_not_prevent_splitting(
     pages = tmp_path / "Synthetic Guide"
     assert (pages / "01-one.md").read_text(encoding="utf-8") == "# One\n\nText\n"
     assert (pages / "02-two.md").read_text(encoding="utf-8") == "# Two\n\nEnd\n"
+
+
+def test_each_footnote_is_defined_on_the_page_that_refers_to_it(
+    convert: Converter, tmp_path: Path
+) -> None:
+    def noted(text: str, number: int) -> ET.Element:
+        result = paragraph(text)
+        ET.SubElement(
+            ET.SubElement(result, W + "r"), W + "footnoteReference", {W + "id": str(number)}
+        )
+        return result
+
+    notes = ET.Element(W + "footnotes")
+    for number, text in ((1, "First note"), (2, "Cell note"), (3, "Second note")):
+        note = ET.SubElement(notes, W + "footnote", {W + "id": str(number)})
+        note.append(paragraph(text))
+    convert(
+        [
+            paragraph("One", "Heading1"),
+            noted("Text", 1),
+            table(row(cell(noted("Cell", 2)), cell("x")), row(cell("a"), cell("b"))),
+            paragraph("Two", "Heading1"),
+            noted("More", 3),
+        ],
+        split_depth=1,
+        relations=(("notes", "footnotes", "footnotes.xml", "Internal"),),
+        extras={"word/footnotes.xml": _ooxml.word_xml_bytes(notes)},
+    )
+    # Each page numbers its notes from 1 and defines them at its end.
+    pages = tmp_path / "Synthetic Guide"
+    assert (pages / "01-one.md").read_text(encoding="utf-8") == (
+        "# One\n\nText[^1]\n\n| Cell[^2] | x |\n| --- | --- |\n| a | b |\n\n"
+        "[^1]: First note\n\n[^2]: Cell note\n"
+    )
+    assert (pages / "02-two.md").read_text(encoding="utf-8") == (
+        "# Two\n\nMore[^1]\n\n[^1]: Second note\n"
+    )
 
 
 def test_bookmark_on_an_empty_heading_goes_to_the_heading_after_it(convert: Converter) -> None:
@@ -2142,11 +2262,8 @@ def test_legacy_picture_and_object_previews_keep_metadata(
     assert next(parsed.iter("img")).get("alt") == "Legacy preview"
 
 
-def test_images_pandoc_cannot_place_stay_where_markitdown_put_them_with_word_alt_text(
-    convert: Converter,
-) -> None:
-    # Pandoc shows one image for a VML picture of two shapes. MarkItDown writes both, without
-    # their alt text, which comes from Word instead.
+def test_each_image_of_a_vml_picture_is_shown(convert: Converter) -> None:
+    # Pandoc reads only the first image of a VML picture, here one of two shapes.
     content = legacy_image()
     picture = content.find(f"./{W}r/{W}pict")
     assert picture is not None
@@ -2158,8 +2275,8 @@ def test_images_pandoc_cannot_place_stay_where_markitdown_put_them_with_word_alt
     )
     url = ".images/Synthetic%20Guide/image.png"
     assert result == f"![Legacy preview]({url})![Legacy preview]({url})\n"
-    assert report.status("images") == "not applied"
-    assert "Pandoc shows 1 image(s) where Word has 2; left where MarkItDown put it" in warnings
+    assert report.status("images") == "applied"
+    assert "images:" not in warnings
 
 
 def test_packaged_picture_fallback_is_used_for_unsupported_native_drawing(
@@ -2273,7 +2390,6 @@ def test_missing_media_is_dropped_and_reported_in_diagnostics(
     assert "Missing Word media part 'word/media/missing.png'; image dropped" in warnings
     saved = json.loads((diagnostics / "diagnostics.json").read_text(encoding="utf-8"))
     assert saved["status"] == "published"
-    assert saved["baseline"] == "MarkItDown"
     assert saved["transforms"]["images"]["status"] == "not applied"
     assert saved["transforms"]["images"]["not_applied"] == {
         "Missing Word media part '...'; image dropped": 1
@@ -2319,11 +2435,9 @@ def test_text_boxes_are_reported_without_stopping_conversion(convert: Converter)
             paragraph("After"),
         ]
     )
-    assert "Before" in result
-    assert "After" in result
-    assert "Boxed legacy text" in result
+    assert result == "Before\n\nBoxed drawing text\n\nBoxed legacy text\n\nAfter\n"
     assert dict(report.records["images"].skipped) == {
-        "DrawingML text box: no embedded image; its text is omitted": 1,
+        "DrawingML text box: no embedded image; its text is kept after its paragraph": 1,
         "VML text box: no embedded image; its text is kept after its paragraph": 1,
     }
     assert "DrawingML text box at paragraph 2: no embedded image" in warnings
@@ -2439,9 +2553,8 @@ def test_dry_run_has_no_final_writes_and_retains_only_requested_bundle(
         json.loads((diagnostics / "diagnostics.json").read_text(encoding="utf-8"))["status"]
         == "dry-run"
     )
-    assert (diagnostics / "markitdown.md").is_file()
-    assert (diagnostics / "pandoc.html").is_file()
-    assert (diagnostics / "reference.docx").is_file()
+    assert (diagnostics / "prepared.docx").is_file()
+    assert (diagnostics / "final.md").is_file()
 
 
 def test_dry_run_without_diagnostics_leaves_directory_listing_unchanged(
@@ -2467,11 +2580,17 @@ def test_tmpdir_inside_images_is_not_used_as_scratch(
         *,
         qualify_duplicates: bool,
         dry_run: bool,
-        report: _diagnostics.TransformReport | None = None,
+        report: _diagnostics.TransformReport,
+        math: Literal["github", "dollars"],
     ) -> dict[str, int]:
         assert not work.is_relative_to(images)
         return original(
-            paths, work, qualify_duplicates=qualify_duplicates, dry_run=dry_run, report=report
+            paths,
+            work,
+            qualify_duplicates=qualify_duplicates,
+            dry_run=dry_run,
+            report=report,
+            math=math,
         )
 
     monkeypatch.setattr(tempfile, "tempdir", str(images))
@@ -2497,7 +2616,7 @@ def test_postpublication_diagnostic_failure_reports_outputs_are_published(
         status: str,
         error: str | None = None,
         *,
-        source: _models.SourceDocument | None = None,
+        source: _models.DocumentNavigation | None = None,
         report: _diagnostics.TransformReport | None = None,
     ) -> None:
         if status == "published":
@@ -2547,76 +2666,22 @@ def test_unsafe_destination_is_rejected_before_conversion_or_diagnostics_creatio
     os.link(source, output)
     diagnostics = tmp_path / "diagnostics"
     prepare = mock.Mock()
-    monkeypatch.setattr(_source, "prepare_source", prepare)
+    monkeypatch.setattr(_prepare, "prepare_document", prepare)
     with pytest.raises(_models.ConversionError, match=r"aliases the source DOCX"):
         _pipeline.convert_docx(source, output, keep_intermediates=diagnostics)
     prepare.assert_not_called()
     assert not diagnostics.exists()
 
 
-def test_hyperlink_field_tooltips_stay_out_of_links_without_pandoc(
-    source: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # mammoth keeps the \o switch in the link target; the fields become links first.
-    simple = ET.Element(W + "p")
-    field = ET.SubElement(
-        simple,
-        W + "fldSimple",
-        {W + "instr": ' HYPERLINK "https://example.test/item" \\o "Tip" '},
-    )
-    field.append(_ooxml.word_run("Simple label"))
-    complex_field = ET.Element(W + "p")
-    for kind in ("begin", "instruction", "separate", "text", "end"):
-        run = ET.SubElement(complex_field, W + "r")
-        if kind == "instruction":
-            instruction = ET.SubElement(run, W + "instrText")
-            instruction.text = ' HYPERLINK "https://example.test/a" \\o "Tip" '
-        elif kind == "text":
-            ET.SubElement(run, W + "t").text = "Complex label"
-        else:
-            ET.SubElement(run, W + "fldChar", {W + "fldCharType": kind})
-    write_docx(source, [simple, complex_field])
+def test_word_conversion_needs_pandoc(source: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    write_docx(source, [paragraph("Title", "Heading1"), paragraph("Text")])
     hide_pandoc(monkeypatch)
-    report = _diagnostics.TransformReport()
-    _pipeline.convert_docx(source, report=report)
-    assert (
-        source.with_suffix(".md").read_text(encoding="utf-8")
-        == "[Simple label](https://example.test/item)\n\n"
-        "[Complex label](https://example.test/a)\n"
-    )
-    assert report.status("cleanup") == "not needed"
+    with pytest.raises(_models.ConversionError, match=r"needs Pandoc, which is not installed"):
+        _pipeline.convert_docx(source)
+    assert not source.with_suffix(".md").exists()
 
 
-def test_missing_pandoc_publishes_the_markitdown_baseline(
-    source: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    write_docx(
-        source,
-        [paragraph("Title", "Heading1"), paragraph("Text"), image()],
-        relations=(("image", "image", "media/image.png", "Internal"),),
-        media={"image.png": PNG},
-    )
-    hide_pandoc(monkeypatch)
-    report = _diagnostics.TransformReport()
-    stats = _pipeline.convert_docx(source, report=report)
-    result = source.with_suffix(".md").read_text(encoding="utf-8")
-    assert "# Title" in result
-    assert "Text" in result
-    assert "](.images/Synthetic%20Guide/image.png)" in result
-    assert stats["image_occurrences"] == 1
-    assert report.baseline_images == 1
-    unavailable = "Pandoc is not installed; see md-doc-converter doctor"
-    for name in ("alignment", "images", "tables", "pages", "checks"):
-        assert report.records[name].unavailable == unavailable, name
-    assert report.summary()[:2] == [
-        "docx-to-md: transforms (baseline: MarkItDown; 1 image(s) at MarkItDown positions)",
-        f"  alignment: not applied: {unavailable}",
-    ]
-
-
-def test_hidden_text_is_dropped_with_and_without_alignment(
-    convert: Converter, source: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_hidden_text_is_dropped(convert: Converter) -> None:
     def hidden(text: str) -> ET.Element:
         run = _ooxml.word_run(text)
         properties = ET.Element(W + "rPr")
@@ -2635,20 +2700,9 @@ def test_hidden_text_is_dropped_with_and_without_alignment(
     assert "HIDDEN" not in result
     assert "  hidden-text: applied (2)" in report.summary()
     assert report.status("checks") == "applied"
-    write_docx(source, body)
-    hide_pandoc(monkeypatch)
-    report = _diagnostics.TransformReport()
-    _pipeline.convert_docx(source, replace_generated=True, report=report)
-    result = source.with_suffix(".md").read_text(encoding="utf-8")
-    assert "After" in result
-    assert "SECRET" not in result
-    assert "HIDDEN" not in result
-    assert "  hidden-text: applied (2)" in report.summary()
 
 
-def test_unicode_spaces_become_spaces_except_an_indent(
-    convert: Converter, source: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_unicode_spaces_become_spaces_except_an_indent(convert: Converter) -> None:
     body = [
         paragraph("Title", "Heading1"),
         paragraph("Clock 100\u00a0MHz and\u2002bit-bash\u200b."),
@@ -2670,15 +2724,6 @@ def test_unicode_spaces_become_spaces_except_an_indent(
     assert result.count("\xa0") == 6
     assert "  spaces: applied (11)" in report.summary()
     assert report.status("checks") == "applied", warnings
-    write_docx(source, body, relations=relations, media=media)
-    hide_pandoc(monkeypatch)
-    report = _diagnostics.TransformReport()
-    _pipeline.convert_docx(source, replace_generated=True, report=report)
-    result = source.with_suffix(".md").read_text(encoding="utf-8")
-    assert "Clock 100 MHz and bit-bash." in result
-    assert "![Diagram one](" in result
-    assert result.count("\xa0") == 6
-    assert "  spaces: applied (11)" in report.summary()
 
 
 def test_header_breaks_become_spaces_and_cells_lose_empty_edge_lines(convert: Converter) -> None:
@@ -2811,7 +2856,7 @@ def test_monospace_text_becomes_inline_code_outside_headings_links_and_fields(
     )
     assert "Set `ctrl_reg[3:0]` to “idle”." in result
     assert "Run `` `cmd` `` now." in result
-    assert "Broken `one`\n\n`two` end." in result
+    assert "Broken `one`\\\n`two` end." in result
     assert "[linked label](https://example.test/doc)" in result
     assert "By Field Author" in result
     assert "## Monospace heading" in result
@@ -2820,31 +2865,13 @@ def test_monospace_text_becomes_inline_code_outside_headings_links_and_fields(
     assert report.status("checks") == "applied", warnings
 
 
-def test_failed_alignment_falls_back_to_the_markitdown_baseline(
-    convert: Converter, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    fail_alignment(monkeypatch)
-    result, report, warnings = convert.reported(
-        [paragraph("Title", "Heading1"), image(), paragraph("Text")],
-        relations=(("image", "image", "media/image.png", "Internal"),),
-        media={"image.png": PNG},
-    )
-    assert "Text" in result
-    assert "](.images/Synthetic%20Guide/image.png)" in result
-    assert report.records["alignment"].failure == "synthetic alignment failure"
-    assert report.records["tables"].unavailable == "alignment failed; see alignment"
-    assert report.baseline_images == 1
-    assert report.status("checks") == "applied"
-    assert "alignment: failed and was not applied: synthetic alignment failure" in warnings
-
-
 def test_a_failing_layer_is_reported_and_the_rest_is_published(
     convert: Converter, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def fail(_markdown: str) -> tuple[str, int]:
         raise RuntimeError("synthetic layer failure")
 
-    monkeypatch.setattr(_normalization, "normalize_unordered_lists", fail)
+    monkeypatch.setattr(_normalization, "trim_trailing_whitespace", fail)
     result, report, _warnings = convert.reported([paragraph("Text")])
     assert result == "Text\n"
     assert report.status("cleanup") == "not applied"
@@ -3318,7 +3345,7 @@ def test_word_editing_protection_and_classification_metadata_remain_in_bundle(
     write_docx(source, [paragraph("Protected source")], extras={"word/settings.xml": protection})
     diagnostics = tmp_path / "diagnostics"
     _pipeline.convert_docx(source, keep_intermediates=diagnostics)
-    with zipfile.ZipFile(diagnostics / "reference.docx") as archive:
+    with zipfile.ZipFile(diagnostics / "prepared.docx") as archive:
         assert archive.read("word/settings.xml") == protection
 
 
@@ -3501,6 +3528,46 @@ def test_deleted_list_items_and_tables_are_not_written(convert: Converter) -> No
     assert "1. one\n2. two" in result
 
 
+def test_strict_open_xml_converts_as_the_transitional_form_does(
+    convert: Converter, source: Path
+) -> None:
+    # Word can save in Strict Office Open XML, which names the same parts in other namespaces.
+    body = [
+        paragraph("Title", "Heading1"),
+        numbered("Step"),
+        hyperlink("Site", relation="site"),
+        image(),
+        table(row(cell("a"), cell("b")), row(cell("1"), cell("2"))),
+    ]
+    relations: Relations = (
+        ("site", "hyperlink", "https://example.test/", "External"),
+        ("image", "image", "media/image.png", "Internal"),
+    )
+    media = {"image.png": PNG}
+    extras = {"word/numbering.xml": numbering_xml()}
+    transitional, _stats = convert(body, relations=relations, media=media, extras=extras)
+    write_docx(source, body, relations=relations, media=media, extras=extras)
+    with zipfile.ZipFile(source) as archive:
+        parts = {entry.filename: archive.read(entry) for entry in archive.infolist()}
+    with zipfile.ZipFile(source, "w") as archive:
+        for name, data in parts.items():
+            archive.writestr(
+                name,
+                re.sub(
+                    rb"http://schemas\.openxmlformats\.org/"
+                    rb"(wordprocessingml|drawingml|officeDocument)/2006/",
+                    rb"http://purl.oclc.org/ooxml/\1/",
+                    data,
+                ),
+            )
+    with zipfile.ZipFile(source) as archive:
+        assert b"http://purl.oclc.org/ooxml/wordprocessingml/main" in archive.read(
+            "word/document.xml"
+        )
+    _pipeline.convert_docx(source, replace_generated=True)
+    assert source.with_suffix(".md").read_text(encoding="utf-8") == transitional
+
+
 def test_accepted_view_and_package_metadata_are_consistent(source: Path, tmp_path: Path) -> None:
     content = ET.Element(W + "p")
     insertion = ET.SubElement(content, W + "ins")
@@ -3516,7 +3583,7 @@ def test_accepted_view_and_package_metadata_are_consistent(source: Path, tmp_pat
     assert "Accepted text" in result
     assert "Deleted text" not in result
     assert source.read_bytes() == original
-    with zipfile.ZipFile(diagnostics / "reference.docx") as archive:
+    with zipfile.ZipFile(diagnostics / "prepared.docx") as archive:
         assert archive.read("docProps/custom.xml") == custom
 
 
@@ -3693,8 +3760,8 @@ def test_external_url_escaping_survives_real_conversion_and_tables(
         relations=(("url", "hyperlink", target, "External"),),
     )
     rendered = _validation.collect_references(_reference.pandoc_html(result, pandoc)).links
-    assert rendered[:2] == [expected, expected]
-    assert rendered[2] == target
+    # The same in a paragraph, a pipe table, and an HTML table.
+    assert rendered == [expected] * 3
 
 
 def test_pandoc_generated_docx_preserves_unicode_parenthesized_external_url(

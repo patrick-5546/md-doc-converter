@@ -55,20 +55,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--math",
+        choices=("github", "dollars"),
+        default="github",
+        help=(
+            "How to write equations: github, as $`x`$ and ```math blocks, which GitHub, GitLab "
+            "and VS Code show; or dollars, as $x$ and $$x$$, for renderers that read only "
+            "those (default: github)"
+        ),
+    )
+    parser.add_argument(
         "--keep-intermediates",
         type=Path,
         metavar="DIR",
         help=(
             "Keep the intermediate files and a diagnostic report in a new or empty directory "
             "apart from the input and outputs, also with --dry-run"
-        ),
-    )
-    parser.add_argument(
-        "--explain",
-        action="store_true",
-        help=(
-            "After the report, describe what the items that each transform did not apply "
-            "have in common, in labels and counts, never document text"
         ),
     )
     return parser.parse_args(argv)
@@ -79,7 +81,7 @@ def main(argv: list[str] | None = None) -> int:
     from md_doc_converter.converters.docx import pipeline as _pipeline
     from md_doc_converter.converters.docx.diagnostics import TransformReport
 
-    report = TransformReport(explaining=args.explain)
+    report = TransformReport()
     try:
         stats = _pipeline.convert_docx(
             args.input,
@@ -90,13 +92,12 @@ def main(argv: list[str] | None = None) -> int:
             replace_generated=args.replace_generated,
             keep_intermediates=args.keep_intermediates,
             report=report,
+            math=args.math,
         )
     except (ConversionError, OSError) as error:
         print(f"docx-to-md: error: {error}", file=sys.stderr)
         return 1
     for line in report.summary():
-        print(line, file=sys.stderr)
-    for line in report.explanation():
         print(line, file=sys.stderr)
     print(
         f"{'validated' if args.dry_run else 'converted'} {args.input} -> "

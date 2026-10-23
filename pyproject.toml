@@ -12,10 +12,6 @@ classifiers = [
     "Topic :: Text Processing :: Markup :: Markdown",
 ]
 dependencies = [
-    # DOCX alignment depends on this exact MarkItDown output, and so on mammoth, its Word
-    # reader, which MarkItDown no longer limits to one release series.
-    "markitdown[docx]==0.1.9",
-    "mammoth~=1.13.0",
     "openpyxl>=3.1.5",
     "typing-extensions>=4.4",
 ]

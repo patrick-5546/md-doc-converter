@@ -1,129 +1,91 @@
-"""Convert with MarkItDown, then layer each recoverable Word structure on top of it."""
+"""Convert a Word document: Pandoc reads a prepared copy, and the transforms rewrite its tree."""
 
 from __future__ import annotations
 
 import os
 import shutil
 import tempfile
-import uuid
 from pathlib import Path
 
-from markitdown import MarkItDown, MarkItDownException
-
+from md_doc_converter.converters.docx import bookmarks as _bookmarks
 from md_doc_converter.converters.docx import diagnostics as _diagnostics
 from md_doc_converter.converters.docx import media as _media
 from md_doc_converter.converters.docx import navigation as _navigation
 from md_doc_converter.converters.docx import normalization as _normalization
-from md_doc_converter.converters.docx import ooxml as _ooxml
+from md_doc_converter.converters.docx import package as _package
+from md_doc_converter.converters.docx import prepare as _prepare
 from md_doc_converter.converters.docx import publication as _publication
-from md_doc_converter.converters.docx import recovery as _recovery
-from md_doc_converter.converters.docx import reference as _reference
-from md_doc_converter.converters.docx import source as _source
+from md_doc_converter.converters.docx import tables as _tables
+from md_doc_converter.converters.docx import transforms as _transforms
+from md_doc_converter.converters.docx import tree as _tree
 from md_doc_converter.converters.docx import validation as _validation
-from md_doc_converter.converters.docx.diagnostics import (
-    ALIGNED_TRANSFORMS,
-    FATAL_ERRORS,
-    TransformReport,
-)
+from md_doc_converter.converters.docx.diagnostics import TransformReport
 from md_doc_converter.converters.docx.models import (
     ConversionError,
     ConversionPaths,
+    DocumentNavigation,
     HeadingChange,
-    SourceDocument,
-    SourceImage,
     WordPackage,
 )
 
-_NO_PANDOC = "Pandoc is not installed; see md-doc-converter doctor"
+_NEEDS_PANDOC = "Word conversion needs Pandoc, which is not installed; run md-doc-converter setup"
 
 
-def _markitdown(path: Path, style_map: str | None = None) -> str:
-    try:
-        converter = MarkItDown(enable_plugins=False)
-        return converter.convert_local(path, keep_data_uris=True, style_map=style_map).markdown
-    except MarkItDownException as error:
-        raise ConversionError(f"MarkItDown conversion failed: {error}") from error
-
-
-def _aligned_markdown(
+def _tree_markdown(
     paths: ConversionPaths,
     work: Path,
     package: WordPackage,
     pandoc: str,
     stager: _media.ImageStager,
     report: TransformReport,
-) -> tuple[str, SourceDocument, dict[str, int]]:
-    """Align MarkItDown and Pandoc through markers in private copies of the document."""
-    source, primary = _source.prepare_source(package, paths, work, report)
-    converted = _markitdown(primary, _source.CODE_STYLE_MAP)
-    markdown = _media.tokenize_data_images(converted, source.prefix, source.data_images)
-    (work / "markitdown.md").write_text(markdown, encoding="utf-8")
-    with _diagnostics.transform(report, "literal-text"):
-        markdown = _recovery.restore_literal_text(markdown, source, pandoc)
-        report.applied("literal-text", count=source.literal_count)
-    if report.records["literal-text"].failure is not None:
-        report.unavailable(("line-breaks",), "literal-text failed; see literal-text")
-    else:
-        report.applied("line-breaks", count=source.restored_breaks)
-        for _break in range(source.heading_breaks):
-            report.skipped(
-                "line-breaks", "Word line break in a heading; a Markdown heading is one line"
-            )
-    reference = _reference.run_command(
-        [
-            pandoc,
-            str(work / "reference.docx"),
-            "--from=docx",
-            "--to=html5",
-            "--wrap=none",
-            "--track-changes=accept",
-            "--strip-comments",
-            f"--extract-media={work / 'pandoc-media'}",
-        ],
-        "Pandoc DOCX structural reference",
-    )
-    (work / "pandoc.html").write_text(reference, encoding="utf-8")
-    markdown, stats = _recovery.recover_source_structure(
-        markdown, reference, source, paths, work, report, pandoc, stager
-    )
-    return markdown, source, stats
-
-
-def _basic_markdown(
-    paths: ConversionPaths,
-    work: Path,
-    package: WordPackage,
-    stager: _media.ImageStager,
-    report: TransformReport,
-) -> str:
-    """MarkItDown alone; its images are published where it put them."""
-    source = SourceDocument(package.root, "MDCONVDOCX" + uuid.uuid4().hex.upper())
-    report.prefix = source.prefix
-    converted = _markitdown(_source.baseline_input(package, paths, work, report))
-    markdown = _media.tokenize_data_images(converted, source.prefix, source.data_images)
-    (work / "baseline.md").write_text(markdown, encoding="utf-8")
+    math: _tree.MathSyntax,
+) -> tuple[str, DocumentNavigation, str | None, dict[str, int]]:
+    """The Markdown of the prepared document as Pandoc reads it, with each transform applied."""
+    prepared = _prepare.prepare_document(package, paths, work, report)
+    tree = _tree.read_docx(prepared.path, work / "pandoc-media", pandoc)
+    blocks, api = _tree.items(tree["blocks"]), tree["pandoc-api-version"]
+    resolved: dict[str, str] = {}
+    with _diagnostics.transform(report, "bookmarks"):
+        resolved = _bookmarks.read_probe(blocks, prepared.probe, prepared.bookmarks)
+    _transforms.unwrap_containers(blocks)
+    _transforms.single_lines(blocks, report)
+    _transforms.tidy_line_breaks(blocks)
+    _transforms.short_rules(blocks)
+    _transforms.merge_code(blocks)
+    images = _transforms.ImageCounts()
     with _diagnostics.transform(report, "images"):
-        return _recovery.resolve_data_images(markdown, source, paths, report, stager)
-    return _recovery.strip_markers(markdown, source, report)
-
-
-def _source_checks(report: TransformReport) -> frozenset[str]:
-    """The source comparisons that still hold after the layers that were applied."""
-    records = report.records
-
-    def clean(*names: str) -> bool:
-        return all(records[name].failure is None for name in names)
-
-    checks: set[str] = set()
-    if clean("bookmarks", "pages"):
-        checks.add("bookmarks")
-    if clean("tables", "lists", "headings") and not records["tables"].skipped:
-        checks.add("tables")
-    if clean("images") and not report.baseline_images:
-        checks.add("images")
-    if clean("links", "bookmarks", "pages") and not records["pages"].skipped:
-        checks.add("links")
-    return frozenset(checks)
+        images = _transforms.publish_images(
+            blocks, prepared, stager, paths, package.media_folder, report
+        )
+    _transforms.tidy_links(blocks)
+    navigation = DocumentNavigation()
+    with _diagnostics.transform(report, "bookmarks"):
+        navigation = _bookmarks.collect_navigation(blocks, resolved, report)
+    report.applied("links", count=sum(found["t"] == "Link" for found in _tree.walk(blocks)))
+    _transforms.drop_empty_paragraphs(blocks)
+    with _diagnostics.transform(report, "lists"):
+        _transforms.tidy_lists(blocks, report)
+    with _diagnostics.transform(report, "code"):
+        _transforms.fence_code_blocks(blocks, report)
+    _transforms.unnest_emphasis(blocks)
+    _transforms.html_emphasis(blocks)
+    _transforms.escape_rules_and_underlines(blocks)
+    _transforms.verify_emphasis(blocks, pandoc, api)
+    notes = _transforms.extract_notes(blocks, report)
+    tables = _tables.TableCounts()
+    with _diagnostics.transform(report, "tables"):
+        tables = _tables.render_tables([blocks, *notes.contents], pandoc, api, math, report)
+    _transforms.define_notes(blocks, notes, pandoc, api, math)
+    markdown = _tree.write(tree, pandoc, _tree.gfm_writer(math), "Writing Markdown")
+    markdown = tables.restore(notes.references(markdown))
+    stats = {
+        "tables": tables.tables,
+        "html_tables": tables.html_tables,
+        "multiline_tables": tables.multiline_tables,
+        "image_occurrences": images.occurrences,
+        "unresolved_alt_text": images.unresolved_alt_text,
+    }
+    return markdown, navigation, prepared.title, stats
 
 
 def _convert_in_work(
@@ -132,49 +94,26 @@ def _convert_in_work(
     *,
     qualify_duplicates: bool,
     dry_run: bool,
-    report: TransformReport | None = None,
+    report: TransformReport,
+    math: _tree.MathSyntax = "github",
 ) -> dict[str, int]:
-    report = TransformReport() if report is None else report
     findings = report.findings
     stats: dict[str, int] = {}
     changes: list[HeadingChange] = []
     published = False
-    source: SourceDocument | None = None
+    navigation: DocumentNavigation | None = None
     try:
-        package = _source.read_package(paths)
-        stager = _media.ImageStager(work, package)
+        package = _package.read_package(paths)
         pandoc = shutil.which("pandoc")
-        markdown: str | None = None
         if pandoc is None:
-            report.unavailable(
-                ("alignment", *ALIGNED_TRANSFORMS, "pages", "title", "checks"), _NO_PANDOC
-            )
-        else:
-            attempt = report.child()
-            try:
-                markdown, source, stats = _aligned_markdown(
-                    paths, work, package, pandoc, stager, attempt
-                )
-            except FATAL_ERRORS:
-                raise
-            except Exception as error:  # noqa: BLE001 - the MarkItDown baseline remains
-                source = None
-                report.failed("alignment", error)
-                report.unavailable(ALIGNED_TRANSFORMS, "alignment failed; see alignment")
-                stager.reset()
-            else:
-                report.merge(attempt)
-                report.prefix = attempt.prefix
-                report.complete("alignment")
-        if markdown is None:
-            markdown = _basic_markdown(paths, work, package, stager, report)
-            tables = sum(1 for _table in _ooxml.scoped_iter(package.root, _ooxml.WORD + "tbl"))
-            stats = {"tables": tables, "html_tables": 0, "multiline_tables": 0}
+            raise ConversionError(_NEEDS_PANDOC)
+        stager = _media.ImageStager(work, package)
+        markdown, navigation, title, stats = _tree_markdown(
+            paths, work, package, pandoc, stager, report, math
+        )
         with _diagnostics.transform(report, "cleanup"):
-            markdown, stats["list_fixes"] = _normalization.normalize_unordered_lists(markdown)
-            report.applied("cleanup", "list marker(s) normalized", stats["list_fixes"])
-            markdown, stats["hyperlink_fixes"] = _normalization.repair_word_tooltip_links(markdown)
-            report.applied("cleanup", "tooltip link(s) repaired", stats["hyperlink_fixes"])
+            # Pandoc pads ordered list markers to four columns; Markdown linters expect one space.
+            markdown, _spacing = _normalization.normalize_ordered_list_spacing(markdown)
             markdown, stats["trimmed_lines"] = _normalization.trim_trailing_whitespace(markdown)
             report.applied(
                 "cleanup", "line(s) with trailing whitespace trimmed", stats["trimmed_lines"]
@@ -187,51 +126,37 @@ def _convert_in_work(
             report.not_requested("duplicate-headings", "--qualify-duplicate-headings")
         markdown = _normalization.normalize_final_newline(markdown)
         pages = {Path(paths.output.name): markdown}
-        if pandoc is not None:
-            title = source.title if source is not None else _source.document_title(package.root)
-            with _diagnostics.transform(report, "pages"):
-                pages = _navigation.split_markdown_pages(
-                    markdown,
-                    paths.output,
-                    paths.split_depth,
-                    title,
-                    pandoc,
-                    source=source,
-                    report=report,
-                )
-            with _diagnostics.transform(report, "cleanup"):
-                for page, content in list(pages.items()):
-                    pages[page], removed = _normalization.drop_unneeded_escapes(content, pandoc)
-                    report.applied("cleanup", "unneeded escape(s) removed", removed)
-            with _diagnostics.transform(report, "checks"):
-                shapes: list[dict[str, str]] | None = [] if report.explaining else None
-                issues = _validation.validate_outputs(
-                    pages,
-                    paths,
-                    stager.root,
-                    pandoc,
-                    source,
-                    compare=_source_checks(report),
-                    shapes=shapes,
-                )
-                for index, (reason, detail) in enumerate(issues):
-                    shape = shapes[index] if shapes is not None else None
-                    report.skipped("checks", reason, detail, shape=shape)
-                report.complete("checks")
-        recovered: list[SourceImage] = (
-            [image for image in source.images if image.token in source.recovered_images]
-            if source is not None
-            else []
-        )
+        with _diagnostics.transform(report, "pages"):
+            pages = _navigation.split_markdown_pages(
+                markdown,
+                paths.output,
+                paths.split_depth,
+                title,
+                pandoc,
+                source=navigation,
+                report=report,
+                math=math,
+            )
+        with _diagnostics.transform(report, "cleanup"):
+            for page, content in list(pages.items()):
+                pages[page], removed = _normalization.drop_unneeded_escapes(content, pandoc)
+                report.applied("cleanup", "unneeded escape(s) removed", removed)
+        with _diagnostics.transform(report, "checks"):
+            issues = _validation.validate_outputs(
+                pages,
+                paths,
+                stager.root,
+                pandoc,
+                navigation,
+            )
+            for reason, detail in issues:
+                report.skipped("checks", reason, detail)
+            report.complete("checks")
         stats.update(
             {
                 "qualified_headings": len(changes),
-                "bookmarks": len(source.anchors) if source is not None else 0,
-                "image_occurrences": len(recovered) + report.baseline_images,
+                "bookmarks": len(navigation.bookmarks),
                 "unique_images": stager.count,
-                "unresolved_alt_text": sum(
-                    image.description.alt_text is None for image in recovered
-                ),
                 "pages": len(pages),
             }
         )
@@ -248,7 +173,7 @@ def _convert_in_work(
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_text(content, encoding="utf-8")
         _diagnostics.write_diagnostics(
-            work, paths, findings, stats, changes, "validated", source=source, report=report
+            work, paths, findings, stats, changes, "validated", source=navigation, report=report
         )
         if not dry_run:
             _publication.publish_outputs(staged_markdown, stager.root, paths, staged_pages)
@@ -260,7 +185,7 @@ def _convert_in_work(
             stats,
             changes,
             "dry-run" if dry_run else "published",
-            source=source,
+            source=navigation,
             report=report,
         )
         return stats
@@ -279,7 +204,7 @@ def _convert_in_work(
                 changes,
                 "failed",
                 detail,
-                source=source,
+                source=navigation,
                 report=report,
             )
         except OSError as diagnostic_error:
@@ -316,8 +241,10 @@ def convert_docx(
     replace_generated: bool = False,
     keep_intermediates: Path | None = None,
     report: TransformReport | None = None,
+    math: _tree.MathSyntax = "github",
 ) -> dict[str, int]:
     """Convert *input_path*; *report* records which layers were applied and why others were not."""
+    report = TransformReport() if report is None else report
     paths = _publication.validate_paths(
         input_path,
         output_path,
@@ -333,6 +260,7 @@ def convert_docx(
             qualify_duplicates=qualify_duplicate_headings,
             dry_run=dry_run,
             report=report,
+            math=math,
         )
     with tempfile.TemporaryDirectory(prefix="docx-to-md-", dir=_scratch_parent(paths)) as temporary:
         work = Path(temporary)
@@ -353,4 +281,5 @@ def convert_docx(
             qualify_duplicates=qualify_duplicate_headings,
             dry_run=dry_run,
             report=report,
+            math=math,
         )

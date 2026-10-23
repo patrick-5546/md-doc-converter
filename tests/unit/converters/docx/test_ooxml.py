@@ -566,44 +566,6 @@ def test_a_style_without_a_name_is_a_heading_by_its_identity(
     assert not _ooxml.pandoc_heading(paragraph("Text"), heading_styles)
 
 
-def test_symbol_font_text_and_symbol_characters_become_unicode() -> None:
-    def run(text: str, font: str | None = None) -> ET.Element:
-        result = _ooxml.word_run(text)
-        if font is not None:
-            properties = ET.Element(W + "rPr")
-            ET.SubElement(properties, W + "rFonts", {W + "ascii": font, W + "hAnsi": font})
-            result.insert(0, properties)
-        return result
-
-    def symbol(font: str, char: str) -> ET.Element:
-        result = ET.Element(W + "r")
-        ET.SubElement(result, W + "sym", {W + "font": font, W + "char": char})
-        return result
-
-    content = ET.Element(W + "p")
-    content.extend(
-        [
-            run("ü", "Wingdings"),
-            run("\uf0fc", "Wingdings"),
-            run("a\u00ae ", "Symbol"),
-            run("plain ü", "Calibri"),
-            run("ü"),
-            symbol("Wingdings", "F0FC"),
-            symbol("Wingdings", "00FF"),
-            symbol("Marlett", "0061"),
-        ]
-    )
-
-    # Every character of a symbol-font run is a symbol, including the space.
-    assert _ooxml.map_symbol_fonts(content) == (6, 1)
-
-    assert _ooxml.word_text(content) == "✓✓\u03b1→ plain üü✓ÿ"
-    fonts = [node.attrib for node in content.iter(W + "rFonts")]
-    assert fonts[:3] == [{}, {}, {}]
-    assert fonts[3] == {W + "ascii": "Calibri", W + "hAnsi": "Calibri"}
-    assert len(list(content.iter(W + "sym"))) == 1
-
-
 def _deleted_mark(node: ET.Element) -> ET.Element:
     """Mark the paragraph mark of *node* as deleted with Track Changes."""
     properties = node.find(W + "pPr")
