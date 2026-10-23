@@ -116,8 +116,12 @@ def test_a_mount_point_is_protected_as_page_tree(
 ) -> None:
     mounted = tmp_path / "mounted"
     mounted.mkdir()
-    is_mount = Path.is_mount
-    monkeypatch.setattr(Path, "is_mount", lambda path: path == mounted or is_mount(path))
+    real_is_mount = Path.is_mount
+
+    def is_mount(path: Path) -> bool:
+        return path == mounted or real_is_mount(path)
+
+    monkeypatch.setattr(Path, "is_mount", is_mount)
     with pytest.raises(
         _models.ConversionError, match="protected filesystem, home, or repository root"
     ):
