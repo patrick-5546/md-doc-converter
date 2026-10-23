@@ -345,7 +345,7 @@ def _odg_frame(path: Path) -> Frame | None:
         with zipfile.ZipFile(path) as archive:
             content = ET.fromstring(archive.read("content.xml"))
             styles = ET.fromstring(archive.read("styles.xml"))
-    except (OSError, KeyError, zipfile.BadZipFile, ET.ParseError):
+    except OSError, KeyError, zipfile.BadZipFile, ET.ParseError:
         return None
     page = next(content.iter(_ODF_DRAW + "page"), None)
     frames: list[ET.Element] = [] if page is None else page.findall(_ODF_DRAW + "frame")

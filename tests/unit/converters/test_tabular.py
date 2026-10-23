@@ -10,6 +10,7 @@ import tempfile
 import unicodedata
 from html.parser import HTMLParser
 from pathlib import Path
+from typing import override
 from unittest import mock
 
 import openpyxl
@@ -18,7 +19,6 @@ from hypothesis import given
 from hypothesis import strategies as st
 from openpyxl.chart import BarChart, Reference
 from openpyxl.styles import Font
-from typing_extensions import override
 
 from md_doc_converter.__main__ import main
 from md_doc_converter.converters import csv as csv_to_md

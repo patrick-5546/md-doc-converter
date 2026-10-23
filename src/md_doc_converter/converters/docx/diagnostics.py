@@ -247,7 +247,7 @@ class TransformReport:
 
 
 @contextmanager
-def transform(report: TransformReport, name: str) -> Generator[None, None, None]:
+def transform(report: TransformReport, name: str) -> Generator[None]:
     """Report a failed transform; the conversion goes on without it."""
     try:
         yield

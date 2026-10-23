@@ -49,7 +49,7 @@ def _version(command: list[str]) -> tuple[int, ...] | None:
     """Return the first dotted version a command reports, padded to three parts."""
     try:
         result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=60)
-    except (OSError, subprocess.SubprocessError):
+    except OSError, subprocess.SubprocessError:
         return None
     match = re.search(r"(\d+(?:\.\d+)+)", result.stdout or result.stderr or "")
     if result.returncode or match is None:

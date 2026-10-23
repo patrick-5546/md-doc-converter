@@ -1005,7 +1005,7 @@ class ImageEmbedder:
             return self._download(target)
         try:
             path = Path(unquote(url.path)).resolve(strict=True)
-        except (OSError, RuntimeError):
+        except OSError, RuntimeError:
             return self._left(target, None)  # warn_broken_images names a missing image.
         if not path.is_relative_to(self.root):
             return self._left(target, f"it is outside {self.root}")

@@ -7,8 +7,7 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-
-from typing_extensions import override
+from typing import override
 
 
 @dataclass
@@ -25,7 +24,7 @@ class WebServer:
 
 
 @contextmanager
-def serve() -> Generator[WebServer, None, None]:
+def serve() -> Generator[WebServer]:
     """Run a WebServer on 127.0.0.1, on a free port, until the block ends."""
     site = WebServer()
 

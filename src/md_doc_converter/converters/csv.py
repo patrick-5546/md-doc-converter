@@ -74,7 +74,7 @@ def convert(
                 check=True,
             )
             csv_files = sorted(src / name for name in result.stdout.split("\0") if name)
-        except (subprocess.CalledProcessError, FileNotFoundError):
+        except subprocess.CalledProcessError, FileNotFoundError:
             # Fall back to rglob if git is unavailable
             csv_files = sorted(src.rglob("*.csv"))
     else:

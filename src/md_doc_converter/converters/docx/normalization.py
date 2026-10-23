@@ -376,7 +376,7 @@ def drop_unneeded_escapes(markdown: str, pandoc: str) -> tuple[str, int]:
         )
         if unescaped != escaped:
             return markdown, 0
-    except (_pandoc.PandocError, _Unaligned):
+    except _pandoc.PandocError, _Unaligned:
         return markdown, 0
     return result, sum(len(group) for found in accepted.values() for group in found)
 

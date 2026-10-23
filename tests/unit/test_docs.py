@@ -86,15 +86,13 @@ def test_the_nodejs_version_is_the_minimum_that_setup_checks() -> None:
             assert parts + (0,) * (len(NODE_MINIMUM) - len(parts)) == NODE_MINIMUM, name
 
 
-def test_the_python_versions_are_the_supported_ones() -> None:
+def test_the_python_version_is_the_supported_one() -> None:
     project = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     supported = re.fullmatch(r">=3\.(\d+),<3\.(\d+)", project["project"]["requires-python"])
     assert supported is not None
-    oldest, newest = f"3.{supported[1]}", f"3.{int(supported[2]) - 1}"
-    for name, ranges in mentions(r"Python (3\.\d+) to (3\.\d+)").items():
-        assert ranges == {(oldest, newest)}, name
-    for name, versions in mentions(r"UV_PYTHON=(3\.\d+)").items():
-        assert versions == {oldest}, name
+    assert int(supported[2]) == int(supported[1]) + 1, "the docs name one supported Python"
+    for name, versions in mentions(r"Python (3\.\d+)").items():
+        assert versions == {f"3.{supported[1]}"}, name
 
 
 @pytest.mark.parametrize(

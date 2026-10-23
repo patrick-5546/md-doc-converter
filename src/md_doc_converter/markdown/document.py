@@ -6,8 +6,7 @@ import html
 import re
 from collections.abc import Callable
 from html.parser import HTMLParser
-
-from typing_extensions import override
+from typing import override
 
 from md_doc_converter import pandoc as _pandoc
 from md_doc_converter.console import active, shown

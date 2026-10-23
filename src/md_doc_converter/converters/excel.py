@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from openpyxl.worksheet.worksheet import Worksheet
 
 
-def _cells(sheet: "Worksheet") -> list[list[str]]:
+def _cells(sheet: Worksheet) -> list[list[str]]:
     """The text of *sheet*'s cells, row by row, as csv.writer writes them: an empty cell is ""
     and any other value its str(). Trailing empty rows and columns are left out."""
     rows = [

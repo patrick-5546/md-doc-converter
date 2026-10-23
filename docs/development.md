@@ -141,12 +141,6 @@ LibreOffice and Poppler mocked. The render suite runs the real tools: the
 installed toolchain, Node.js, LibreOffice (`libreoffice` or `soffice`) and
 Poppler's `pdftocairo`, `pdfinfo`, `pdftotext`, `pdftohtml` and `pdffonts`.
 
-`.python-version` selects the newest supported Python; to test the oldest:
-
-```sh
-UV_PYTHON=3.11 UV_PROJECT_ENVIRONMENT=.venv-3.11 make test
-```
-
 Tests are plain pytest functions. A test asks for what it needs as fixtures:
 pytest's own, such as `tmp_path`, `monkeypatch` and `capsys`; the shared ones in
 `tests/conftest.py`, `pandoc` (the pinned Pandoc) and `fake_tools` (writes fake
@@ -217,8 +211,7 @@ newer push to a pull request cancels its run in progress. Actions are pinned by
 commit SHA, checkouts keep no credentials, and each job has a time limit. The
 jobs:
 
-- `lint-and-core`: lint, then the core suite on the oldest and newest supported
-  Python, with the pinned Pandoc cached;
+- `lint-and-core`: lint, then the core suite, with the pinned Pandoc cached;
 - `render`: installs Node.js, LibreOffice and Poppler, runs `setup` (cached)
   and the render suite;
 - `package`: builds the wheel and sdist, checks the wheel's contents, installs

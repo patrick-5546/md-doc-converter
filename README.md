@@ -16,7 +16,8 @@ and PDF.
 ## Requirements
 
 - Linux x86_64.
-- Python 3.11 to 3.15. uv installs one if needed.
+- Python 3.15. uv installs it if needed; on a host that cannot reach GitHub,
+  where uv downloads Python from, install Python 3.15 another way.
 - [Node.js](https://nodejs.org/) 22.13 or newer, with npm, for rendering.
 - Optional: LibreOffice (`libreoffice` or `soffice`) and Poppler
   (`pdftocairo`) to convert EMF and WMF drawings in Word documents to SVG, and

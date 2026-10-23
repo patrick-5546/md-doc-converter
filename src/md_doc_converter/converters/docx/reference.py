@@ -12,9 +12,8 @@ import unicodedata
 import urllib.parse
 from collections.abc import Callable
 from html.parser import HTMLParser
+from typing import override
 from xml.etree import ElementTree as ET
-
-from typing_extensions import override
 
 from md_doc_converter.converters.docx.models import ConversionError
 from md_doc_converter.markdown.syntax import VOID_TAGS
@@ -300,7 +299,7 @@ def _pipe_table(content: list[JSONValue]) -> bool:
             for row in json_list(section)
             for cell in json_list(json_list(row)[1])
         ]
-    except (ConversionError, ValueError, IndexError):
+    except ConversionError, ValueError, IndexError:
         return False
     return all(
         not blocks

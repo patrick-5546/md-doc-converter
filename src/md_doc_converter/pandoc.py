@@ -9,10 +9,8 @@ import subprocess
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import TypeAlias, TypeVar
 
-JSONValue: TypeAlias = bool | int | float | str | list["JSONValue"] | dict[str, "JSONValue"] | None
-Result = TypeVar("Result")
+type JSONValue = bool | int | float | str | list[JSONValue] | dict[str, JSONValue] | None
 
 
 class PandocError(RuntimeError):
@@ -44,7 +42,7 @@ def message_kind(message: str) -> str:
     return re.sub(r"\s+", " ", _SPECIFICS.sub("...", message)).strip()
 
 
-def run_all(calls: Sequence[Callable[[], Result]]) -> list[Result]:
+def run_all[Result](calls: Sequence[Callable[[], Result]]) -> list[Result]:
     """The results of *calls*, made at once: each runs Pandoc, in a process of its own, so the
     runs overlap. The first call's exception, in order, is raised."""
     if len(calls) < 2:

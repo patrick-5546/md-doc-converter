@@ -13,11 +13,11 @@ from collections import Counter, defaultdict
 from collections.abc import Callable
 from html.parser import HTMLParser
 from pathlib import Path
+from typing import override
 from unittest import mock
 from urllib.parse import quote, unquote, urlsplit
 
 import pytest
-from typing_extensions import override
 
 from md_doc_converter.console import Console, activated
 from md_doc_converter.markdown import preprocess

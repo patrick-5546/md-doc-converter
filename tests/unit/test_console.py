@@ -6,9 +6,9 @@ import io
 import os
 import threading
 from pathlib import Path
+from typing import override
 
 import pytest
-from typing_extensions import override
 
 from md_doc_converter import console as _console
 from md_doc_converter.console import Console, Verbosity

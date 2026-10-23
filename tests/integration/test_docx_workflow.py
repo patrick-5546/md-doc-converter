@@ -18,7 +18,7 @@ import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, ParamSpec
+from typing import Literal
 from unittest import mock
 from xml.etree import ElementTree as ET
 
@@ -76,10 +76,9 @@ M = "{http://schemas.openxmlformats.org/officeDocument/2006/math}"
 CONVERTED_MARKDOWN_RULES = Path(__file__).parents[1] / "support" / "converted.rumdl.toml"
 
 
-Options = ParamSpec("Options")
-
-
-def linted(convert: Callable[Options, dict[str, int]]) -> Callable[Options, dict[str, int]]:
+def linted[**Options](
+    convert: Callable[Options, dict[str, int]],
+) -> Callable[Options, dict[str, int]]:
     """*convert*, then a check of the pages it published against markdownlint's rules."""
     signature = inspect.signature(convert)
     rumdl = Path(sysconfig.get_path("scripts")) / "rumdl"

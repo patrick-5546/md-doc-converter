@@ -96,7 +96,7 @@ class Console:
     def terminal(self) -> bool:
         try:
             return self.stream.isatty() and os.environ.get("TERM") != "dumb"
-        except (AttributeError, ValueError):
+        except AttributeError, ValueError:
             return False
 
     def warning(self, message: str, *, kind: str = "", where: str = "") -> None:
@@ -199,7 +199,7 @@ def active() -> Console:
 
 
 @contextmanager
-def activated(console: Console) -> Generator[Console, None, None]:
+def activated(console: Console) -> Generator[Console]:
     """Make *console* the active one while the command runs."""
     token = _active.set(console)
     try:
