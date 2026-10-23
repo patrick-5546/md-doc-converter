@@ -55,10 +55,37 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install LibreOffice and Poppler
+      # The Ubuntu mirror is sometimes slow enough to exhaust the job's time limit, so the
+      # package files are cached, keyed by the exact files that apt resolves.
+      - name: List the LibreOffice and Poppler packages
+        id: packages
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends libreoffice-draw poppler-utils
+          sudo apt-get install --print-uris -qq --no-install-recommends \
+            libreoffice-draw poppler-utils | grep "^'" | cut -d ' ' -f 2 | sort > "$RUNNER_TEMP/packages.txt"
+          echo "digest=$(sha256sum < "$RUNNER_TEMP/packages.txt" | cut -c 1-16)" >> "$GITHUB_OUTPUT"
+      - name: Restore the package files
+        id: package-files
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/apt-archives
+          key: apt-${{ runner.os }}-${{ steps.packages.outputs.digest }}
+          restore-keys: apt-${{ runner.os }}-
+      - name: Install LibreOffice and Poppler
+        run: |
+          mkdir -p ~/apt-archives
+          sudo apt-get install --yes --no-install-recommends \
+            -o Dir::Cache::Archives="$HOME/apt-archives" libreoffice-draw poppler-utils
+          # Keep only current package files, readable by the cache, without apt's lock.
+          sudo apt-get autoclean -qq -o Dir::Cache::Archives="$HOME/apt-archives"
+          sudo rm -rf ~/apt-archives/lock ~/apt-archives/partial
+          sudo chown -R "$(id -u):$(id -g)" ~/apt-archives
+      - name: Save the package files
+        if: steps.package-files.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/apt-archives
+          key: ${{ steps.package-files.outputs.cache-primary-key }}
       - name: Allow the browser sandbox
         # Ubuntu 23.10 and later restrict the unprivileged user namespaces that Chrome's sandbox uses.
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
