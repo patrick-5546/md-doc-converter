@@ -5,7 +5,8 @@ Warnings and errors go to standard error as ``<command>: warning: [<where>: ]<me
 `EXAMPLES` warnings of each kind and then how many more there were; ``--verbose`` shows every
 warning and the details of each step, and ``--quiet`` only errors. On a terminal, a status line
 names the running step, and ``warning`` and ``error`` are colored, unless NO_COLOR is set or
-TERM is dumb. The result goes to standard output.
+TERM is dumb. Both are escape codes, which a Windows console is asked to act on; one that cannot,
+such as a legacy console, gets plain messages. The result goes to standard output.
 
 The command's console is active while it runs, so that shared code reports through `active`.
 """
@@ -24,6 +25,11 @@ from contextvars import ContextVar
 from pathlib import Path
 from typing import Literal, TextIO
 
+if sys.platform == "win32":
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
 Verbosity = Literal["quiet", "normal", "verbose"]
 
 # How many warnings of each kind a command shows without --verbose.
@@ -32,6 +38,8 @@ EXAMPLES = 3
 _COLORS = {"warning": "\033[1;33m", "error": "\033[1;31m"}
 _RESET = "\033[0m"
 _CLEAR_LINE = "\r\033[K"
+# ENABLE_VIRTUAL_TERMINAL_PROCESSING, the console mode in which Windows acts on escape codes.
+_WINDOWS_ESCAPE_CODES = 0x0004
 
 _active: ContextVar[Console | None] = ContextVar("console", default=None)
 
@@ -73,6 +81,28 @@ def plural(count: int, noun: str, nouns: str = "") -> str:
     return f"{count} {noun if count == 1 else nouns or noun + 's'}"
 
 
+def _acts_on_escape_codes(stream: TextIO) -> bool:
+    """Whether the terminal that *stream* writes to acts on escape codes, such as colors.
+
+    A Windows console shows them as text until it is asked to act on them, which this asks;
+    terminals elsewhere act on them.
+    """
+    if sys.platform == "win32":
+        try:
+            handle = msvcrt.get_osfhandle(stream.fileno())
+        except OSError, ValueError:
+            return False
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        mode = wintypes.DWORD()
+        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            return False
+        return bool(
+            mode.value & _WINDOWS_ESCAPE_CODES
+            or kernel32.SetConsoleMode(handle, mode.value | _WINDOWS_ESCAPE_CODES)
+        )
+    return True
+
+
 class Console:
     """The messages of one run of *command*."""
 
@@ -94,10 +124,13 @@ class Console:
 
     @property
     def terminal(self) -> bool:
+        """Whether the stream is a terminal that shows colors and the status line."""
         try:
-            return self.stream.isatty() and os.environ.get("TERM") != "dumb"
+            if not self.stream.isatty() or os.environ.get("TERM") == "dumb":
+                return False
         except AttributeError, ValueError:
             return False
+        return _acts_on_escape_codes(self.stream)
 
     def warning(self, message: str, *, kind: str = "", where: str = "") -> None:
         """Report a problem. Without --verbose, only the first few of each *kind* are shown."""

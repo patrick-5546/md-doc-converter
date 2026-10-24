@@ -98,7 +98,8 @@ They show the first three warnings of each kind and count the rest. `-v`,
 shows only errors. The result, the last line, goes to standard output and the
 rest to standard error, so `--verbose 2> conversion.log` keeps the whole report.
 On a terminal, a status line names the running step, and warnings and errors are
-colored unless `NO_COLOR` is set.
+colored unless `NO_COLOR` is set. A Windows console that cannot show them, such
+as a legacy console, gets plain messages.
 
 ## Settings
 

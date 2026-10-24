@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import io
 import os
+import sys
 import threading
+from collections.abc import Callable
 from pathlib import Path
-from typing import override
+from typing import TextIO, override
 
 import pytest
 
@@ -20,6 +22,22 @@ class Terminal(io.StringIO):
     @override
     def isatty(self) -> bool:
         return True
+
+
+def answering(answer: bool) -> Callable[[TextIO], bool]:
+    """A stand-in for whether a terminal acts on escape codes, which gives *answer*."""
+
+    def acts_on_escape_codes(_stream: TextIO) -> bool:
+        return answer
+
+    return acts_on_escape_codes
+
+
+@pytest.fixture
+def terminal(monkeypatch: pytest.MonkeyPatch) -> Terminal:
+    """A terminal that acts on escape codes, as a Windows console does once asked to."""
+    monkeypatch.setattr(_console, "_acts_on_escape_codes", answering(True))
+    return Terminal()
 
 
 def run(
@@ -104,11 +122,10 @@ def test_the_result_goes_to_standard_output(capsys: pytest.CaptureFixture[str]) 
 
 
 def test_on_a_terminal_the_status_line_gives_way_to_messages(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, terminal: Terminal
 ) -> None:
     monkeypatch.delenv("NO_COLOR", raising=False)
     monkeypatch.setenv("TERM", "xterm-256color")
-    terminal = Terminal()
     console = Console("docx-to-md", stream=terminal)
 
     console.status("converting 2 drawings")
@@ -129,12 +146,11 @@ def test_on_a_terminal_the_status_line_gives_way_to_messages(
     ids=["no-color", "dumb-terminal"],
 )
 def test_no_color_and_dumb_terminals_get_plain_messages(
-    monkeypatch: pytest.MonkeyPatch, variable: str, value: str, *, status: bool
+    monkeypatch: pytest.MonkeyPatch, terminal: Terminal, variable: str, value: str, *, status: bool
 ) -> None:
     monkeypatch.delenv("NO_COLOR", raising=False)
     monkeypatch.setenv("TERM", "xterm-256color")
     monkeypatch.setenv(variable, value)
-    terminal = Terminal()
     console = Console("md-to-pdf", stream=terminal)
 
     console.status("printing the PDF")
@@ -143,6 +159,32 @@ def test_no_color_and_dumb_terminals_get_plain_messages(
     assert "\033[1;31m" not in terminal.getvalue()
     assert "md-to-pdf: error: node failed with exit status 1\n" in terminal.getvalue()
     assert ("printing the PDF" in terminal.getvalue()) is status
+
+
+def test_a_terminal_that_cannot_act_on_escape_codes_gets_plain_messages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Such as a legacy Windows console.
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.setenv("TERM", "xterm-256color")
+    monkeypatch.setattr(_console, "_acts_on_escape_codes", answering(False))
+    terminal = Terminal()
+    console = Console("md-to-pdf", stream=terminal)
+
+    console.status("printing the PDF")
+    console.error("node failed with exit status 1")
+    console.finish()
+
+    assert terminal.getvalue() == "md-to-pdf: error: node failed with exit status 1\n"
+
+
+def test_on_windows_only_a_console_can_be_asked_to_act_on_escape_codes(tmp_path: Path) -> None:
+    # Terminals elsewhere act on them. On Windows, neither a file nor a stream without a file
+    # descriptor is a console.
+    windows = sys.platform == "win32"
+    with (tmp_path / "log.txt").open("w", encoding="utf-8") as file:
+        assert _console._acts_on_escape_codes(file) is not windows
+    assert _console._acts_on_escape_codes(io.StringIO()) is not windows
 
 
 def test_without_a_terminal_there_is_no_status_line() -> None:
@@ -155,10 +197,11 @@ def test_without_a_terminal_there_is_no_status_line() -> None:
     assert stream.getvalue() == ""
 
 
-def test_a_long_status_is_cut_to_the_terminal_width(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_long_status_is_cut_to_the_terminal_width(
+    monkeypatch: pytest.MonkeyPatch, terminal: Terminal
+) -> None:
     monkeypatch.setenv("TERM", "xterm")
     monkeypatch.setattr(_console.shutil, "get_terminal_size", lambda: os.terminal_size((20, 5)))
-    terminal = Terminal()
 
     Console("md-to-html", stream=terminal).status("preparing docs/a-very-long-name.md")
 
