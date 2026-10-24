@@ -124,7 +124,8 @@ jobs:
               md_doc_converter/__main__.py \
               md_doc_converter/assets/pandoc-defaults.yaml \
               md_doc_converter/assets/mermaid.lua \
-              md_doc_converter/assets/katex.js \
+              md_doc_converter/assets/katex.lua \
+              md_doc_converter/assets/katex-render.mjs \
               md_doc_converter/assets/style-overrides.css \
               md_doc_converter/rendering/print-pdf.mjs \
               md_doc_converter/toolchain/package.json \
