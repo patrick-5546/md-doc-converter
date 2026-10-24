@@ -57,7 +57,9 @@ def test_a_download_fails_when_no_server_listens() -> None:
     with socket.create_server(("127.0.0.1", 0)) as closed:
         port = closed.getsockname()[1]
 
-    with pytest.raises(download.DownloadError, match=r"^it could not be downloaded \(\[Errno"):
+    with pytest.raises(
+        download.DownloadError, match=r"^it could not be downloaded \(\[(?:Errno|WinError) "
+    ):
         download.download(f"http://127.0.0.1:{port}/logo.png")
 
 

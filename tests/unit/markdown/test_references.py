@@ -8,6 +8,7 @@ from __future__ import annotations
 import io
 import re
 import subprocess
+import sys
 import time
 from collections import Counter, defaultdict
 from collections.abc import Callable
@@ -140,9 +141,10 @@ def test_multiline_casefolded_definitions_titles_and_encoded_image_paths(
     root = tmp_path / "source's space \u03bc"
     images = root / ".images" / "cache.v2 \u03bc"
     images.mkdir(parents=True)
-    picture = images / "picture#1?.png"
+    # Characters that a URL path must encode; Windows allows no ? in a file name.
+    picture = images / ("picture#1%.png" if sys.platform == "win32" else "picture#1?.png")
     picture.write_bytes(b"fixture")
-    path = quote(str(picture.relative_to(root)), safe="/")
+    path = quote(picture.relative_to(root).as_posix(), safe="/")
     source = f"""# R\u00e9sum\u00e9
 [full][MULTI line]
 [multi line][]

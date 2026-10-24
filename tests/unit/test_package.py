@@ -45,6 +45,7 @@ DOCX_ORCHESTRATION = {
     "md_doc_converter.converters.docx.cli",
     "md_doc_converter.converters.docx.pipeline",
 }
+WINDOWS_VARIABLES = ("SYSTEMROOT", "USERPROFILE", "LOCALAPPDATA")
 
 
 def module_name(path: Path) -> str:
@@ -109,10 +110,12 @@ def test_cli_help_is_available_without_site_packages_or_external_tools(
         "assert status in (None, 0), status\n"
         "assert 'openpyxl' not in sys.modules\n"
     )
+    # Windows starts Python, and finds the user's folders, with these.
+    windows = {name: os.environ[name] for name in WINDOWS_VARIABLES if name in os.environ}
     result = subprocess.run(
         [sys.executable, "-B", "-S", "-c", script],
         cwd=PROJECT_ROOT,
-        env={"PATH": "", "PYTHONPATH": str(SOURCE_ROOT)},
+        env={"PATH": "", "PYTHONPATH": str(SOURCE_ROOT), **windows},
         capture_output=True,
         text=True,
         check=False,

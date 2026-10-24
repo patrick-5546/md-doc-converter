@@ -298,7 +298,7 @@ def test_versions_are_checked(fakes: FakeTools) -> None:
     assert node.status == "error"
     assert "20.11.1 is older than 22.13" in node.detail
     assert pandoc.status == "warn"
-    assert f"3.1.9 ({fakes.bin / 'pandoc'}); md-doc-converter is tested with" in pandoc.detail
+    assert f"3.1.9 ({fakes.path('pandoc')}); md-doc-converter is tested with" in pandoc.detail
     assert PANDOC_VERSION in pandoc.detail
     assert "setup --no-render" in pandoc.fix
 
@@ -357,12 +357,15 @@ def test_only_an_executable_chrome_headless_shell_counts_as_the_browser(tmp_path
     (tools.puppeteer_cache / "chrome" / "linux-131.0.6778.204").mkdir(parents=True)
     browser = tools.puppeteer_cache / BROWSER_PATH
     browser.parent.mkdir(parents=True)
-    browser.write_text("", encoding="utf-8")
-    browser.chmod(0o644)
+    # Windows runs a file by its extension, and elsewhere by its permission to run.
+    inert = browser.with_suffix("") if os.name == "nt" else browser
+    inert.write_text("", encoding="utf-8")
+    inert.chmod(0o644)
     missing = checks.check_browser(tools)
     assert missing.status == "error"
     assert missing.detail == f"no chrome-headless-shell in {tools.puppeteer_cache}"
     assert "setup --force" in missing.fix
+    browser.write_text("", encoding="utf-8")
     browser.chmod(0o755)
     assert checks.check_browser(tools).status == "ok"
 

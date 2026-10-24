@@ -130,17 +130,21 @@ with pytest-xdist; `uv run pytest -k NAME` runs matching tests on their own.
 `tests/support/suites.py`. Tests use `.toolchain/` unless `MD_DOC_CONVERTER_HOME`
 is set, with its `bin/` first on `PATH`, as the command does. A run stops before
 collecting when the selected suites miss a prerequisite, and a skipped test
-fails, so a missing tool never quietly reduces coverage. pytest runs in strict
-mode, and a warning fails the test that raises it.
+fails, so a missing tool never quietly reduces coverage. Where Linux and Windows
+differ, a test expects what each does; a test of what only one has, such as
+Linux's `/dev/shm`, is defined there alone. pytest runs in strict mode, and a
+warning fails the test that raises it.
 
 The core suite needs Git and the pinned Pandoc, which `make test` installs
-first, because some converter tests compare exact Pandoc output. It needs
-nothing else: command-line and pipeline tests use fake `pandoc`, `node` and
-`npm` executables, fake scripts for the `mmdc` and `puppeteer` commands that the
-fake `node` runs, and a fake toolchain, and EMF conversion is tested with
-LibreOffice and Poppler mocked. The render suite runs the real tools: the
-installed toolchain, Node.js, LibreOffice (`libreoffice` or `soffice`) and
-Poppler's `pdftocairo`, `pdfinfo`, `pdftotext`, `pdftohtml` and `pdffonts`.
+first, because some converter tests compare exact Pandoc output. On Windows, it
+also needs permission to create symbolic links, which administrators have, as do
+other users in Developer Mode. It needs nothing else: command-line and pipeline
+tests use fake `pandoc`, `node` and `npm` executables, fake scripts for the
+`mmdc` and `puppeteer` commands that the fake `node` runs, and a fake toolchain,
+and EMF conversion is tested with LibreOffice and Poppler mocked. The render
+suite runs the real tools: the installed toolchain, Node.js, LibreOffice
+(`libreoffice` or `soffice`) and Poppler's `pdftocairo`, `pdfinfo`,
+`pdftotext`, `pdftohtml` and `pdffonts`.
 
 Tests are plain pytest functions. A test asks for what it needs as fixtures:
 pytest's own, such as `tmp_path`, `monkeypatch` and `capsys`; the shared ones in

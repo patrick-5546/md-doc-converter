@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+import sys
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -341,23 +342,26 @@ def test_renames_are_destination_local_even_with_foreign_scratch(
     assert len(observed) == 6
 
 
-def test_real_cross_filesystem_scratch_publication(paths: _models.ConversionPaths) -> None:
-    # tmp_path cannot be on another filesystem; the scratch goes before the outputs are read.
-    with tempfile.TemporaryDirectory(prefix="docx-cross-fs-", dir="/dev/shm") as directory:
-        scratch = Path(directory)
-        assert scratch.stat().st_dev != paths.output.parent.stat().st_dev
-        markdown = scratch / "final.md"
-        images = scratch / "images"
-        pages = scratch / "pages"
-        markdown.write_text("cross filesystem", encoding="utf-8")
-        images.mkdir()
-        (images / "image.png").write_bytes(PNG)
-        pages.mkdir()
-        (pages / "01-child.md").write_text("# Child\n", encoding="utf-8")
-        _publication.publish_outputs(markdown, images, paths, pages)
-    assert paths.output.read_text(encoding="utf-8") == "cross filesystem"
-    assert (paths.images / "image.png").is_file()
-    assert_no_transfers(paths)
+if sys.platform == "linux":
+    # Linux's /dev/shm is another file system than tmp_path; Windows has no such folder.
+
+    def test_real_cross_filesystem_scratch_publication(paths: _models.ConversionPaths) -> None:
+        # tmp_path cannot be on another filesystem; the scratch goes before the outputs are read.
+        with tempfile.TemporaryDirectory(prefix="docx-cross-fs-", dir="/dev/shm") as directory:
+            scratch = Path(directory)
+            assert scratch.stat().st_dev != paths.output.parent.stat().st_dev
+            markdown = scratch / "final.md"
+            images = scratch / "images"
+            pages = scratch / "pages"
+            markdown.write_text("cross filesystem", encoding="utf-8")
+            images.mkdir()
+            (images / "image.png").write_bytes(PNG)
+            pages.mkdir()
+            (pages / "01-child.md").write_text("# Child\n", encoding="utf-8")
+            _publication.publish_outputs(markdown, images, paths, pages)
+        assert paths.output.read_text(encoding="utf-8") == "cross filesystem"
+        assert (paths.images / "image.png").is_file()
+        assert_no_transfers(paths)
 
 
 def test_arbitrary_image_destination_cannot_bypass_derivation(

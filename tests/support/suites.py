@@ -2,15 +2,17 @@
 
 - Tests use the checkout's toolchain, `.toolchain/`, unless MD_DOC_CONVERTER_HOME is set, with
   its pinned Pandoc first on PATH, as the command does.
-- A run stops before collecting when the selected suites miss a prerequisite: Git and the pinned
-  Pandoc for every suite, and Node.js, Poppler, LibreOffice and the installed toolchain for the
-  rendering suite in tests/rendering.
+- A run stops before collecting when the selected suites miss a prerequisite: Git, the pinned
+  Pandoc and permission to create symbolic links for every suite, and Node.js, Poppler,
+  LibreOffice and the installed toolchain for the rendering suite in tests/rendering.
 - A skipped test fails the run, so a missing tool cannot quietly reduce coverage.
 """
 
 from __future__ import annotations
 
 import os
+import sys
+import tempfile
 from collections.abc import MutableMapping, Sequence
 from pathlib import Path
 
@@ -24,10 +26,29 @@ from md_doc_converter.toolchain.environment import (
 from tests.support.project import PROJECT_ROOT
 
 RENDERING = PROJECT_ROOT / "tests" / "rendering"
-SETUP_PANDOC = "run `make setup-pandoc`"
+# Windows has no make; the tests use .toolchain/ unless MD_DOC_CONVERTER_HOME is set.
+SETUP_PANDOC = (
+    "run `uv run md-doc-converter setup --no-render` with MD_DOC_CONVERTER_HOME set to .toolchain"
+    if sys.platform == "win32"
+    else "run `make setup-pandoc`"
+)
+SYMBOLIC_LINKS = "symbolic links (on Windows, turn on Developer Mode to create them)"
 # The Poppler utilities that the render suite runs: pdftocairo converts EMF drawings, and
 # the others read the PDFs it prints.
 POPPLER = ("pdftocairo", "pdfinfo", "pdftotext", "pdftohtml", "pdffonts")
+
+
+def can_link() -> bool:
+    """Whether this user may create symbolic links, which tests of link handling do.
+
+    Windows lets administrators create them, and other users when Developer Mode is on.
+    """
+    with tempfile.TemporaryDirectory() as folder:
+        try:
+            (Path(folder) / "link").symlink_to(folder, target_is_directory=True)
+        except OSError:
+            return False
+    return True
 
 
 def use_project_toolchain(environment: MutableMapping[str, str] | None = None) -> None:
@@ -59,6 +80,8 @@ def missing_prerequisites(*, render: bool) -> list[str]:
     pandoc = check_pandoc()
     if pandoc.status != "ok":
         missing.append(f"pandoc {PANDOC_VERSION}: {pandoc.detail} ({SETUP_PANDOC})")
+    if not can_link():
+        missing.append(SYMBOLIC_LINKS)
     if render:
         missing.extend(tool for tool in ("node", *POPPLER) if executables.which(tool) is None)
         if executables.libreoffice() is None:

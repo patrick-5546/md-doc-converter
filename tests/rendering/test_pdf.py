@@ -189,7 +189,9 @@ def test_a_table_wider_than_the_page_shrinks_alone(pdf: Path, wide_pdf: Path) ->
     for signal in SIGNALS:
         assert 0.5 * normal < height[signal] < 0.9 * normal
     # The second, too wide even at half its size, breaks its identifiers but leaves none out.
-    printed = "".join(run("pdftotext", wide_pdf, "-").split())
+    # Its text is read in the order the browser wrote it: pdftotext's reading order can take
+    # the lines of the wrapped cells across the row instead, depending on the fonts.
+    printed = "".join(run("pdftotext", "-raw", wide_pdf, "-").split())
     for signal in LONG_SIGNALS:
         assert signal in printed
 

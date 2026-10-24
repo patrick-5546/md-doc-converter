@@ -422,7 +422,8 @@ def test_csv_to_md_reports_a_folder_without_csv_files(
 
 def test_csv_to_md_reports_a_missing_input(tmp_path: Path) -> None:
     missing = tmp_path / "missing.csv"
-    with pytest.raises(SystemExit, match=f"^csv-to-md: error: not found: {missing}$"):
+    message = f"^csv-to-md: error: not found: {re.escape(str(missing))}$"
+    with pytest.raises(SystemExit, match=message):
         main(["csv-to-md", str(missing)])
 
 

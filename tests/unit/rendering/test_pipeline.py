@@ -11,6 +11,7 @@ import os
 import re
 import stat
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from unittest import mock
@@ -508,13 +509,15 @@ def test_publication_failure_leaves_the_previous_file(
 
 
 def test_publication_keeps_the_rendered_file_mode(tmp_path: Path) -> None:
+    # Windows keeps only whether a file is read-only.
+    mode = 0o444 if sys.platform == "win32" else 0o640
     staged = tmp_path / "staged.pdf"
     staged.write_text("new", encoding="utf-8")
-    staged.chmod(0o640)
+    staged.chmod(mode)
     destination = tmp_path / "new folder" / "doc.pdf"
     render.publish(staged, destination)
     assert destination.read_text(encoding="utf-8") == "new"
-    assert stat.S_IMODE(destination.stat().st_mode) == 0o640
+    assert stat.S_IMODE(destination.stat().st_mode) == mode
 
 
 def test_intermediates_are_kept_on_request_even_when_rendering_fails(
@@ -529,7 +532,8 @@ def test_intermediates_are_kept_on_request_even_when_rendering_fails(
         source, FORMAT.PDF, options=Options(keep_intermediates=kept), tools=tools
     )
     messages = capsys.readouterr().err
-    assert sorted(str(path.relative_to(kept)) for path in kept.rglob("*") if path.is_file()) == [
+    kept_files = (path.relative_to(kept) for path in kept.rglob("*") if path.is_file())
+    assert sorted(path.as_posix() for path in kept_files) == [
         "document/cache.v2 spec.json",
         "katex.css",
         "page-styles.html",

@@ -25,8 +25,12 @@ def tools(monkeypatch: pytest.MonkeyPatch, *available: str, toolchain: str = "ok
     def libreoffice() -> str | None:
         return which("libreoffice") or which("soffice")
 
+    def can_link() -> bool:
+        return True
+
     monkeypatch.setattr(suites.executables, "which", which)
     monkeypatch.setattr(suites.executables, "libreoffice", libreoffice)
+    monkeypatch.setattr(suites, "can_link", can_link)
     for name in TOOLCHAIN_CHECKS:
         check = Check(name.removeprefix("check_"), toolchain, "detail", "Run setup")
 
@@ -61,8 +65,23 @@ def test_every_suite_needs_the_pinned_pandoc(
     tools(monkeypatch, "git")
     monkeypatch.setattr(suites, "check_pandoc", lambda: Check("pandoc", status, detail))
     assert suites.missing_prerequisites(render=False) == [
-        f"pandoc {PANDOC_VERSION}: {detail} (run `make setup-pandoc`)"
+        f"pandoc {PANDOC_VERSION}: {detail} ({suites.SETUP_PANDOC})"
     ]
+
+
+@pytest.mark.usefixtures("pinned_pandoc")
+def test_every_suite_needs_symbolic_links(monkeypatch: pytest.MonkeyPatch) -> None:
+    def cannot_link() -> bool:
+        return False
+
+    tools(monkeypatch, "git")
+    monkeypatch.setattr(suites, "can_link", cannot_link)
+    assert suites.missing_prerequisites(render=False) == [suites.SYMBOLIC_LINKS]
+
+
+def test_symbolic_links_can_be_created_here() -> None:
+    # The run's own prerequisites, which a missing permission would have stopped.
+    assert suites.can_link()
 
 
 @pytest.mark.usefixtures("pinned_pandoc")

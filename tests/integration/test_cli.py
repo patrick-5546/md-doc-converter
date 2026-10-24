@@ -16,6 +16,9 @@ from md_doc_converter.toolchain.environment import PANDOC_VERSION, Toolchain
 from md_doc_converter.toolchain.install import PANDOC
 from tests.support.fake_tools import FakeTools
 
+# A quote for file names: Windows allows single quotes in them, but not double ones.
+QUOTE = "'" if sys.platform == "win32" else '"'
+
 
 @dataclass(frozen=True)
 class CommandLine:
@@ -86,16 +89,16 @@ def run_cli(fake_tools: FakeTools, tools: Toolchain, workspace: Path) -> Command
 
 @pytest.fixture
 def quoted_source(docs: Path) -> Path:
-    """A document whose name has a space, an apostrophe and double quotes."""
-    source = docs / 'input file\'s "review".md'
+    """A document whose name has a space, an apostrophe and quotes."""
+    source = docs / f"input file's {QUOTE}review{QUOTE}.md"
     source.write_text("# Example\n", encoding="utf-8")
     return source
 
 
 @pytest.fixture
 def table(docs: Path) -> Path:
-    """A CSV file whose name has a space, an apostrophe and double quotes."""
-    source = docs / 'signal table\'s "review".csv'
+    """A CSV file whose name has a space, an apostrophe and quotes."""
+    source = docs / f"signal table's {QUOTE}review{QUOTE}.csv"
     source.write_text("Name,Value\nsignal,one\n", encoding="utf-8")
     return source
 
@@ -113,9 +116,10 @@ def test_render_defaults_next_to_files_and_inside_folders(
 ) -> None:
     result = run_cli("md-to-html", "docs/input.md")
     html = docs / "input.html"
-    # Paths inside the working directory are shown relative to it.
-    assert result.stdout == "rendered docs/input.md -> docs/input.html\n"
-    assert result.stderr == "md-to-html: rendering docs/input.md\n"
+    # Paths inside the working directory are shown relative to it, as the system writes them.
+    shown_input, shown_html = Path("docs", "input.md"), Path("docs", "input.html")
+    assert result.stdout == f"rendered {shown_input} -> {shown_html}\n"
+    assert result.stderr == f"md-to-html: rendering {shown_input}\n"
     assert "# Example" in html.read_text(encoding="utf-8")
     run_cli("md-to-pdf", "docs")
     assert (docs / "docs.pdf").read_bytes() == b"%PDF-fake"
@@ -156,7 +160,9 @@ def test_render_defaults_next_to_files_and_inside_folders(
     ("output", "absolute"),
     [
         pytest.param(
-            Path('review output\'s "final"') / 'chosen "name".pdf', False, id="relative-output"
+            Path(f"review output's {QUOTE}final{QUOTE}") / f"chosen {QUOTE}name{QUOTE}.pdf",
+            False,
+            id="relative-output",
         ),
         pytest.param(Path("absolute output") / "chosen.pdf", True, id="absolute-output"),
     ],
@@ -271,7 +277,7 @@ def test_csv_to_md_writes_beside_the_source_by_default(
     ("output", "absolute"),
     [
         pytest.param(Path("converted"), False, id="relative"),
-        pytest.param(Path('converted output\'s "review"'), False, id="quoted"),
+        pytest.param(Path(f"converted output's {QUOTE}review{QUOTE}"), False, id="quoted"),
         pytest.param(Path("absolute output"), True, id="absolute"),
     ],
 )
