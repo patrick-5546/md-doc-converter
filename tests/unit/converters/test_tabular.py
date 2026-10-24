@@ -147,7 +147,10 @@ CELL_TEXT = st.text(
 
 def shown(text: str) -> str:
     """Cell text as a reader shows it: trimmed, a line break for each line ending, a space for
-    each tab, runs of spaces as one, and in NFC, the form Pandoc's GFM reader gives text."""
+    each tab, runs of spaces as one, and in NFC, the form Pandoc's GFM reader gives text. The
+    variation selector that Pandoc's HTML writer puts after ↔ and ↩, so that they show as text
+    rather than emoji, is left out."""
+    text = text.replace("\N{VARIATION SELECTOR-15}", "")
     text = text.strip().replace("\r\n", "\n").replace("\r", "\n").replace("\t", " ")
     return unicodedata.normalize("NFC", re.sub(r" {2,}", " ", text))
 
