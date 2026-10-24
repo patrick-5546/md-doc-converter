@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass
 from enum import StrEnum
@@ -56,6 +57,7 @@ PDF_TIMEOUT_MAX = 2_147_483
 HEADER_VARIABLE = "MD_DOC_CONVERTER_HEADER"
 FOOTER_VARIABLE = "MD_DOC_CONVERTER_FOOTER"
 PDF_TIMEOUT_VARIABLE = "MD_DOC_CONVERTER_PDF_TIMEOUT"
+WINDOWS = sys.platform == "win32"
 
 
 class RenderError(Exception):
@@ -269,8 +271,14 @@ def publish(staged: Path, destination: Path) -> None:
         partial.replace(destination)
     except OSError as error:
         partial.unlink(missing_ok=True)
+        # Windows cannot replace a file that a program holds open, as PDF viewers do.
+        hint = (
+            "; close any program that has it open"
+            if WINDOWS and isinstance(error, PermissionError)
+            else ""
+        )
         raise RenderError(
-            f"Cannot publish {destination}; any previous file is unchanged: {error}"
+            f"Cannot publish {destination}; any previous file is unchanged: {error}{hint}"
         ) from error
 
 

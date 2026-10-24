@@ -523,6 +523,27 @@ def test_publication_keeps_the_rendered_file_mode(tmp_path: Path) -> None:
     assert stat.S_IMODE(destination.stat().st_mode) == mode
 
 
+@pytest.mark.parametrize("windows", [True, False], ids=["windows", "linux"])
+def test_an_output_that_a_program_holds_open_is_named_to_close(
+    windows: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def held_open(self: Path, target: Path) -> Path:
+        raise PermissionError(13, "The file is being used by another process", str(target))
+
+    staged = tmp_path / "staged.pdf"
+    staged.write_text("new", encoding="utf-8")
+    destination = tmp_path / "doc.pdf"
+    destination.write_text("previous", encoding="utf-8")
+    monkeypatch.setattr(render, "WINDOWS", windows)
+    monkeypatch.setattr(Path, "replace", held_open)
+    with pytest.raises(render.RenderError, match="any previous file is unchanged") as raised:
+        render.publish(staged, destination)
+    # Windows keeps a file that a program holds open, as PDF viewers do.
+    assert ("close any program that has it open" in str(raised.value)) is windows
+    assert destination.read_text(encoding="utf-8") == "previous"
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["doc.pdf", "staged.pdf"]
+
+
 def test_intermediates_are_kept_on_request_even_when_rendering_fails(
     fake: FakeRenderer,
     tmp_path: Path,
