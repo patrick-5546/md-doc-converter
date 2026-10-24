@@ -1,13 +1,15 @@
 """Disposable stand-ins for the native renderer tools, and a fake toolchain.
 
 The executables are small scripts that run `tests.support.fake_tool`, which describes what
-each fake does; every call is recorded in a JSON-lines log.
+each fake does; on Windows, which runs only programs, each script is put into a program, as pip
+installs scripts. Every call is recorded in a JSON-lines log.
 """
 
 from __future__ import annotations
 
 import json
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -72,6 +74,27 @@ sys.exit(main({config!r}))
 """
 
 
+def write_executable(directory: Path, name: str, script: str) -> Path:
+    """Write the Python *script* as the executable *name* in *directory*; return its path."""
+    if sys.platform == "win32":
+        from distlib.scripts import ScriptMaker
+
+        # ScriptMaker puts a script whose first line runs "python" into a program that runs it
+        # with this Python.
+        stem = name.removesuffix(".exe")
+        with tempfile.TemporaryDirectory() as source:
+            (Path(source) / stem).write_text(script, encoding="utf-8")
+            maker = ScriptMaker(source, str(directory))
+            maker.clobber = True
+            maker.variants = {""}
+            maker.make(stem)
+        return directory / f"{stem}.exe"
+    executable = directory / name
+    executable.write_text(script, encoding="utf-8")
+    executable.chmod(0o755)
+    return executable
+
+
 def write_fake_tools(
     directory: Path,
     log: Path,
@@ -87,11 +110,11 @@ def write_fake_tools(
         "browser_path": BROWSER_PATH,
         "packages": PACKAGE_FILES,
     }
-    script = SHIM.format(python=sys.executable, root=str(PROJECT_ROOT), config=config)
+    # Windows runs a script with the Python that its program names.
+    python = "python" if sys.platform == "win32" else sys.executable
+    script = SHIM.format(python=python, root=str(PROJECT_ROOT), config=config)
     for name in names:
-        executable = directory / name
-        executable.write_text(script, encoding="utf-8")
-        executable.chmod(0o755)
+        write_executable(directory, name, script)
     return directory
 
 
@@ -134,7 +157,7 @@ class FakeTools:
         return write_fake_tools(self.bin, self.log, names or ("pandoc", "node", "npm"), versions)
 
     def path(self, name: str) -> Path:
-        """The fake executable *name*, which `write` writes."""
+        """The fake executable *name*, which `write` writes: on Windows, a program."""
         return self.bin / host_platform().executable(name)
 
     def toolchain(self, root: Path) -> Toolchain:

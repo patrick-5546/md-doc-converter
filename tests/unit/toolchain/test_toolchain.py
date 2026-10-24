@@ -89,13 +89,14 @@ def release(tmp_path: Path, fake_tools: FakeTools, downloads: Path) -> Release:
     """
 
     def make(archive: install.Archive, *, binary: bool = True) -> install.Archive:
-        tool = FakeTools(tmp_path / "archive", fake_tools.log).write(archive.executable)
+        tool = FakeTools(tmp_path / "archive", fake_tools.log)
+        tool.write("pandoc")
         bundle = downloads / archive.file
         license_file = tmp_path / "LICENSE"
         license_file.write_text("license", encoding="utf-8")
         members = [(license_file, "./LICENSE"), (license_file, "../escaped")]
         if binary:
-            members.insert(0, (tool / archive.executable, f"./{archive.member}"))
+            members.insert(0, (tool.path("pandoc"), f"./{archive.member}"))
         if archive.file.endswith(".zip"):
             with zipfile.ZipFile(bundle, "w") as files:
                 for path, name in members:
@@ -468,7 +469,8 @@ def test_only_the_executable_is_extracted_from_either_kind_of_archive(
     work.mkdir()
     executable = work / archive.executable
     install._extract_executable(archive, downloads / archive.file, executable)
-    assert executable.read_bytes() == (tmp_path / "archive" / archive.executable).read_bytes()
+    fake = FakeTools(tmp_path / "archive", tmp_path / "log").path("pandoc")
+    assert executable.read_bytes() == fake.read_bytes()
     assert [path.name for path in work.iterdir()] == [archive.executable]
     assert not (tmp_path / "escaped").exists()
 

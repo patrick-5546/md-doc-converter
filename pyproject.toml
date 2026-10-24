@@ -23,6 +23,8 @@ md-doc-converter = "md_doc_converter.__main__:main"
 [dependency-groups]
 dev = [
     "actionlint-py>=1.7.12.25",
+    # Makes the tests' fake tools programs that Windows can run.
+    "distlib>=0.4.4; sys_platform == 'win32'",
     "hypothesis>=6.170.1",
     "pyrefly>=1.1.1",
     "pytest>=9.1",
