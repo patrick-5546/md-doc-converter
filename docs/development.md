@@ -61,7 +61,9 @@ tell how each part works.
   the layout, the conventions and the workflows for changing the code.
 - Change the README or a guide when what users see or do changes. How a module
   works belongs in its docstrings, and why it changed in the commit message.
-- Say each thing in one place, and link to it from the others.
+- Say each thing in one place, and link to it from the others. Name a version
+  only where readers need it; `tests/unit/test_docs.py` checks the versions,
+  limits, commands and options that the docs name against the code.
 
 ## Environment
 

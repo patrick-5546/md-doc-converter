@@ -33,7 +33,7 @@ built wheel:
 
 ```sh
 uv tool install ./md-doc-converter
-# or: uv tool install md_doc_converter-0.1.0-py3-none-any.whl
+# or: uv tool install md_doc_converter-*.whl
 ```
 
 Install Node.js for rendering, and optionally LibreOffice and Poppler, from your
