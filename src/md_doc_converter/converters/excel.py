@@ -110,11 +110,14 @@ def excel_to_md(excel_path: str, output_dir: str | None = None, dry_run: bool = 
 
 def _parser(command: str, description: str) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog=f"md-doc-converter {command}", description=description)
-    parser.add_argument("excel_file", help="Path to the Excel workbook (.xlsx)")
+    parser.add_argument(
+        "excel_file", metavar="WORKBOOK", help="Excel workbook (.xlsx), which is not changed"
+    )
     parser.add_argument(
         "-o",
         "--output-dir",
-        help="Output directory (default: same as input file)",
+        metavar="DIR",
+        help="Folder to write in (default: the workbook's folder)",
     )
     return parser
 

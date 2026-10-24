@@ -126,12 +126,14 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "input",
-        help="Path to a .csv file or a directory to search recursively",
+        metavar="PATH",
+        help="CSV file, or a folder to search with its subfolders",
     )
     parser.add_argument(
         "-o",
         "--output-dir",
-        help="Output directory (default: same as each input file)",
+        metavar="DIR",
+        help="Folder to write in, keeping a folder input's subfolders (default: each CSV's folder)",
     )
     parser.add_argument(
         "--dry-run",

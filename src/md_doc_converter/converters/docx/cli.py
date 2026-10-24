@@ -18,11 +18,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "be converted as Word shows it"
         ),
     )
-    parser.add_argument("input", type=Path, help="Word document (.docx), which is not changed")
+    parser.add_argument(
+        "input", type=Path, metavar="DOCX", help="Word document (.docx), which is not changed"
+    )
     parser.add_argument(
         "-o",
         "--output",
         type=Path,
+        metavar="FILE.md",
         help=(
             "Markdown file to write, with the images in .images/<name>/ beside it (default: the "
             "input's name with .md, beside it)"

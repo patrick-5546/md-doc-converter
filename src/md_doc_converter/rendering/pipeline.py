@@ -471,24 +471,29 @@ def main(argv: list[str] | None = None, *, action: Literal["html", "pdf"]) -> in
         prog=f"md-doc-converter md-to-{action}",
         description=(
             f"Render a Markdown file, or a folder of Markdown files combined in order, to "
-            f"{action.upper()}. Prepared Markdown and other intermediates stay private."
+            f"{action.upper()}. The prepared document and other intermediates stay private."
         ),
     )
-    parser.add_argument("input", type=Path, help="Markdown file or folder")
+    parser.add_argument("input", type=Path, metavar="INPUT", help="Markdown file or folder")
     parser.add_argument(
         "-o",
         "--output",
         type=Path,
+        metavar=f"FILE.{action}",
         help=(
             f"Output file (default: <input name>.{action} next to a file input, "
             "or inside a folder input)"
         ),
     )
     parser.add_argument(
-        "--header", help=f"Page header text, top right (default: ${HEADER_VARIABLE}, or none)"
+        "--header",
+        metavar="TEXT",
+        help=f"Page header text, top right (default: ${HEADER_VARIABLE}, or none)",
     )
     parser.add_argument(
-        "--footer", help=f"Page footer text, bottom left (default: ${FOOTER_VARIABLE}, or none)"
+        "--footer",
+        metavar="TEXT",
+        help=f"Page footer text, bottom left (default: ${FOOTER_VARIABLE}, or none)",
     )
     parser.add_argument(
         "--extra-css",

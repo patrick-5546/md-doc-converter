@@ -17,6 +17,7 @@ from pathlib import Path, PurePosixPath
 
 from md_doc_converter.toolchain.checks import (
     NODE_FIX,
+    NODE_REQUIRED,
     check_browser,
     check_node,
     installed_version,
@@ -199,7 +200,7 @@ def main(argv: list[str] | None = None) -> int:
             "Install the pinned toolchain into MD_DOC_CONVERTER_HOME, by default "
             "~/.local/share/md-doc-converter: Pandoc, and for rendering, Mermaid, KaTeX and "
             "Puppeteer from npm with the headless browser they share. Rendering needs Node.js "
-            "22.13+ with npm."
+            f"{NODE_REQUIRED} or newer, with npm."
         ),
     )
     parser.add_argument(
