@@ -28,9 +28,25 @@ PANDOC_FIX = "Run `md-doc-converter setup`, or `setup --no-render` for conversio
 NODE_REQUIRED = ".".join(str(part) for part in NODE_MINIMUM[:2])
 # The platforms that setup supports, for messages: "setup requires ...".
 SUPPORTED_PLATFORMS = " or ".join(system.name for system in PLATFORMS.values())
+# How to install the other prerequisites: on Windows with winget, elsewhere as distributions do.
+WINDOWS = sys.platform == "win32"
 NODE_FIX = (
-    f"Install Node.js {NODE_REQUIRED} or newer with npm, from your distribution, nvm or "
+    f"Install Node.js {NODE_REQUIRED} or newer with npm: `winget install OpenJS.NodeJS.LTS`, "
+    "or from https://nodejs.org/"
+    if WINDOWS
+    else f"Install Node.js {NODE_REQUIRED} or newer with npm, from your distribution, nvm or "
     "https://nodejs.org/"
+)
+GIT_FIX = "Install Git: `winget install Git.Git`" if WINDOWS else "Install Git"
+LIBREOFFICE_FIX = (
+    "Install LibreOffice: `winget install TheDocumentFoundation.LibreOffice`"
+    if WINDOWS
+    else "Install LibreOffice"
+)
+POPPLER_FIX = (
+    "Install Poppler: `winget install oschwartz10612.Poppler`"
+    if WINDOWS
+    else "Install Poppler (`poppler-utils` in most distributions)"
 )
 SETUP_FIX = "Run `md-doc-converter setup`"
 REINSTALL_FIX = "Run `md-doc-converter setup --force`"
@@ -172,7 +188,7 @@ def check_git() -> Check:
         "git",
         executables.which("git"),
         "Git-ignored files are included when rendering a folder",
-        "Install Git",
+        GIT_FIX,
     )
 
 
@@ -181,7 +197,7 @@ def check_libreoffice() -> Check:
         "libreoffice",
         executables.libreoffice(),
         "EMF/WMF drawings in Word documents are kept in their original format",
-        "Install LibreOffice",
+        LIBREOFFICE_FIX,
     )
 
 
@@ -190,7 +206,7 @@ def check_pdftocairo() -> Check:
         "pdftocairo",
         executables.which("pdftocairo"),
         "the PDF fallback for EMF/WMF drawings is unavailable",
-        "Install Poppler (`poppler-utils` in most distributions)",
+        POPPLER_FIX,
     )
 
 

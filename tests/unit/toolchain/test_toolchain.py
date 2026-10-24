@@ -291,6 +291,15 @@ def test_doctor_lists_a_fix_for_each_missing_part(capsys: pytest.CaptureFixture[
     assert "Not ready to render" in report
 
 
+def test_fixes_install_with_the_package_manager_of_the_system() -> None:
+    fixes = (checks.NODE_FIX, checks.GIT_FIX, checks.LIBREOFFICE_FIX, checks.POPPLER_FIX)
+    # Windows has winget; elsewhere, each distribution has its own package manager.
+    if os.name == "nt":
+        assert all("`winget install " in fix for fix in fixes)
+    else:
+        assert not any("winget" in fix for fix in fixes)
+
+
 def test_versions_are_checked(fakes: FakeTools) -> None:
     fakes.write(versions={"node": "v20.11.1", "pandoc": "pandoc 3.1.9"})
     node = checks.check_node()
