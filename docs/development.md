@@ -5,6 +5,7 @@
 ```text
 src/md_doc_converter/
   __main__.py               # command-line entry point with lazy command dispatch
+  console.py                # what commands print: warnings by kind, errors, status
   resources.py, pandoc.py   # packaged file paths, version, typed Pandoc parsing
   media_types.py            # media types of the images and fonts that rendering embeds
   download.py               # downloads of images and stylesheet files, with limits
@@ -24,52 +25,43 @@ tests/
   rendering/                # real browser-backed HTML/PDF and LibreOffice workflows
 ```
 
-Word conversion runs in stages, which `docx/pipeline.py` coordinates and
-`cli.py` starts. `package.py` reads the Word package safely, and `prepare.py`
-writes a private copy that Pandoc reads as docx-to-md converts it: headings,
-code, fields, images and bookmarks in terms that Pandoc's DOCX reader
-understands. `tree.py` reads the copy into Pandoc's JSON document tree and
-writes GFM; `transforms.py`, `bookmarks.py` and `tables.py` rewrite the tree in
-between; `navigation.py` settles heading IDs, links and pages; `validation.py`
-checks the result; and `publication.py` and `diagnostics.py` write the outputs
-and the report. `media.py` publishes the images: one LibreOffice run, started in
-the background as soon as the package is read, converts the EMF and WMF drawings
-that the body shows while Pandoc reads the document. Where Pandoc's GFM writer
-would write something that reads back differently, a transform writes it
-instead: code fences, whose `text` label the writer drops (since Pandoc 3.10.1),
-emphasis that Markdown cannot close, and lines of `-` or `=`, which the writer
-leaves unescaped.
+`converters/docx/pipeline.py` runs Word conversion's stages: `package.py`
+reads the Word package, `prepare.py` writes the copy that Pandoc reads,
+`tree.py` reads it into Pandoc's document tree and writes GFM, `transforms.py`,
+`bookmarks.py`, `tables.py` and `media.py` rewrite the tree and publish the
+images, `navigation.py` settles heading IDs, links and pages, `validation.py`
+checks the result, and `publication.py` and `diagnostics.py` write the outputs
+and the report. `rendering/pipeline.py` renders: `markdown/preprocess.py`
+prepares the Markdown, Pandoc writes the HTML with `assets/pandoc-defaults.yaml`
+and its filters, and `rendering/print-pdf.mjs` prints a PDF. The docstrings
+tell how each part works.
 
-Rendering prepares the Markdown in `markdown/preprocess.py`: it collects a
-folder, adjusts what Pandoc's Markdown reader would read differently from
-GitHub, and embeds images, each as a short placeholder for its data. It parses
-the Markdown once, with `markdown/document.py`'s reader, and hands Pandoc the
-parsed document as Pandoc JSON, not written back to Markdown. A folder's files
-are parsed one by one and joined as document trees; one more Pandoc run, with
-`assets/heading-ids.lua`, gives their headings the identifiers that Pandoc gives
-them read as one document.
-`rendering/pipeline.py` then runs Pandoc in its sandbox with
-`assets/pandoc-defaults.yaml`, whose filters read GitHub's math, draw Mermaid
-diagrams and KaTeX math (each with one Node.js run, only for a document that
-has any), and adjust tables; puts the images' data in the HTML,
-which Pandoc would read slowly and in gigabytes of memory; and for a PDF, prints
-the HTML in headless Chrome with `rendering/print-pdf.mjs`.
+## Conventions
 
-Every command prints through `console.py`: warnings, the first three of each
-kind unless `--verbose`; errors; a status line on a terminal; and the result, on
-standard output. Shared code reports through the running command's console.
+- **Layers:** `console.py`, `markdown/`, `pandoc.py` and `resources.py`, which
+  every command shares, import no converter, rendering or toolchain module, and
+  the toolchain imports no converter, rendering or Markdown module.
+  `tests/unit/test_package.py` checks these layers, and that the imports form no
+  cycle.
+- **Messages:** commands print through `console.py`, which groups warnings by
+  kind. Shared code reports a warning with
+  `console.active().warning(message, kind=..., where=...)`. Word conversion
+  reports with `report.warn` or `report.skipped`, giving the warning's kind and
+  its section: `word` or `markdown`, the summary's two parts, or `detail`, which
+  only `--verbose` shows.
+- **Packaged files:** adding, renaming or removing a file in `assets/` also
+  changes `ASSETS` in `tests/unit/test_package.py` and the wheel check in
+  `.github/workflows/ci.yml`.
 
-Shared console, Markdown and Pandoc modules do not import converters, rendering
-or the toolchain, and the toolchain does not import converters, rendering or the
-Markdown layer; `tests/unit/test_package.py` enforces these layers and an
-acyclic import graph.
+## Documentation
 
-Parsed Markdown retains its input text and reader. DOCX heading discovery and
-page-link rewriting reuse an unchanged page parse; rewriting copies the AST and
-rejects mismatched content or readers. There is no global parse cache, and
-semantic checks after text transformations still parse the changed text
-independently. Such a check's parses, such as of a page before and after a
-rewrite, run at once with `pandoc.run_all`, each in a Pandoc process of its own.
+- The README covers what md-doc-converter does, installing it, its commands,
+  settings and messages. Each guide in `docs/` covers its commands for their
+  users: what they produce, their options and their messages. This file covers
+  the layout, the conventions and the workflows for changing the code.
+- Change the README or a guide when what users see or do changes. How a module
+  works belongs in its docstrings, and why it changed in the commit message.
+- Say each thing in one place, and link to it from the others.
 
 ## Environment
 
@@ -82,30 +74,17 @@ checkout unless it is already set, so the toolchain that the tests use stays out
 of your home directory.
 
 ```sh
-make lint    # Ruff, ty, Pyrefly, rumdl, typos, actionlint and zizmor
-make test    # core suite; installs the pinned Pandoc first
-make         # lists the tasks
+make              # lists every task
+make format       # format Python, and fix what rumdl can in Markdown
+make lint         # Ruff, ty, Pyrefly, rumdl, typos, actionlint and zizmor
+make test         # core suite; installs the pinned Pandoc first
+make test-render  # render suite; installs the toolchain first
 ```
 
-| Task | Purpose |
-| --- | --- |
-| `setup` | Install the toolchain into `.toolchain/`; needs Node.js |
-| `setup-pandoc` | Install only the pinned Pandoc into `.toolchain/` |
-| `doctor` | Check the prerequisites |
-| `format` | Format Python with Ruff, and fix what rumdl can in Markdown |
-| `lint` | Check Python (Ruff's formatter and linter, ty, Pyrefly), Markdown (rumdl), spelling (typos), and the GitHub workflow (actionlint with shellcheck, zizmor) |
-| `test` | Core suite: unit and integration tests, in parallel; runs `setup-pandoc` first |
-| `test-render` | Real rendering suite; runs `setup` first |
-| `test-all` | Both suites |
-| `coverage` | Core suite's line and branch coverage, listing the lines it misses |
-| `build` | Build the wheel and sdist into `dist/` |
-| `lock-npm` | Refresh `package-lock.json` after editing the bundled `package.json` |
-
-`uv run`, which each task uses, creates or updates `.venv` from `uv.lock` first, so
-every checker is a locked development dependency. Their settings are in
-`pyproject.toml`; `.editorconfig` gives editors the indentation and line endings.
-The `Makefile` runs recipes with bash's `-eu -o pipefail` and warns about undefined
-variables.
+`uv run`, which each task uses, creates or updates `.venv` from `uv.lock` first,
+so every checker is a locked development dependency. Their settings are in
+`pyproject.toml`; `.editorconfig` gives editors the indentation and line
+endings.
 
 ## Test suites
 
@@ -121,25 +100,15 @@ collecting when the selected suites miss a prerequisite, and a skipped test
 fails, so a missing tool never quietly reduces coverage. pytest runs in strict
 mode, and a warning fails the test that raises it.
 
-The core suite needs Git and the pinned Pandoc 3.12.1, because some converter
-tests compare exact Pandoc output; a run stops with a hint to run
-`make setup-pandoc` when that Pandoc is missing. The core suite does not
-need Node.js, the rest of the toolchain, browsers or LibreOffice: command-line
-and pipeline tests use disposable fake `pandoc`, `node`, `npm` and `mmdc`
-executables and a fake toolchain, and EMF conversion logic is covered with
-mocked native tools. Converter fixtures are synthetic documents built by
-`tests/support`.
+The core suite needs Git and the pinned Pandoc, which `make test` installs
+first, because some converter tests compare exact Pandoc output. It needs
+nothing else: command-line and pipeline tests use fake `pandoc`, `node`, `npm`
+and `mmdc` executables and a fake toolchain, and EMF conversion is tested with
+LibreOffice and Poppler mocked. The render suite runs the real tools: the
+installed toolchain, Node.js, LibreOffice (`libreoffice` or `soffice`) and
+Poppler's `pdftocairo`, `pdfinfo`, `pdftotext`, `pdftohtml` and `pdffonts`.
 
-The render suite exercises real EMF-to-SVG conversion (one LibreOffice run for
-a document's drawings, and the PDF fallback), a synthetic
-Word-to-Markdown-to-HTML/PDF workflow, a reference-linked folder with images,
-Mermaid and math, the printed PDF's pages, header and footer, bookmarks,
-tagging and fonts, and the PDF time limit. It needs the installed toolchain,
-Node.js, LibreOffice (`libreoffice` or `soffice`) and Poppler's `pdftocairo`,
-`pdfinfo`, `pdftotext`, `pdftohtml` and `pdffonts` on `PATH`.
-
-`.python-version` selects the newest supported Python, 3.15; to test the
-oldest, 3.11:
+`.python-version` selects the newest supported Python; to test the oldest:
 
 ```sh
 UV_PYTHON=3.11 UV_PROJECT_ENVIRONMENT=.venv-3.11 make test
@@ -149,19 +118,19 @@ Tests are plain pytest functions. A test asks for what it needs as fixtures:
 pytest's own, such as `tmp_path`, `monkeypatch` and `capsys`; the shared ones in
 `tests/conftest.py`, `pandoc` (the pinned Pandoc) and `fake_tools` (writes fake
 executables, which `tests/support/fake_tool.py` implements, installs a fake
-toolchain and reads the calls they recorded); and its module's own. Independent
-cases are `pytest.mark.parametrize` cases with readable ids.
+toolchain and reads the calls they recorded); and its module's own. Converter
+fixtures are synthetic documents built by `tests/support`. Independent cases are
+`pytest.mark.parametrize` cases with readable ids.
 
 pytest-randomly runs the tests in a random order, printed as `--randomly-seed`
-in the header, so no test depends on another; `--randomly-seed=N`
-repeats an order, and `-p no:randomly` turns it off. Properties of the escaping
-that keeps text literal, such as table cells, CSV rows, link titles and page
-header text, are [Hypothesis](https://hypothesis.readthedocs.io/) tests, which
-read the generated text back through Pandoc's GFM reader and the renderer's.
-They run 50 examples each; `HYPOTHESIS_PROFILE=thorough` runs 1,000.
-
-Every Markdown page that the Word conversion tests publish is also checked with
-rumdl, against the rules in `tests/support/converted.rumdl.toml`.
+in the header, so no test depends on another; `--randomly-seed=N` repeats an
+order, and `-p no:randomly` turns it off. Properties of the escaping that keeps
+text literal, such as table cells, CSV rows, link titles and page header text,
+are [Hypothesis](https://hypothesis.readthedocs.io/) tests, which read the
+generated text back through Pandoc's GFM reader and the renderer's. They run 50
+examples each; `HYPOTHESIS_PROFILE=thorough` runs 1,000. Every Markdown page
+that the Word conversion tests publish is also checked with rumdl, against the
+rules in `tests/support/converted.rumdl.toml`.
 
 `make coverage` measures the core suite's line and branch coverage, including
 the command-line processes that tests start, and lists the lines it misses. No
@@ -176,13 +145,12 @@ come separately. To update by hand:
 
 - **Python:** edit `pyproject.toml`, then run `uv lock`.
 - **npm packages:** edit `src/md_doc_converter/toolchain/package.json`, then run
-  `make lock-npm`. The next `setup` reinstalls the packages because the
-  manifests' digest changes. A test checks that every locked package resolves
-  from `registry.npmjs.org`. An override gives every package the KaTeX that the
-  math filter uses, so one copy is installed and Mermaid's math matches KaTeX's
-  stylesheet; a render test draws math inside a diagram. `setup` leaves out
-  optional packages, so one that rendering needs, such as Mermaid's tidy-tree
-  layout, is a direct dependency, which a render test checks. When a package needs a
+  `make lock-npm`; the next `setup` reinstalls the packages. Keep the override
+  that gives every package the math filter's KaTeX, so that Mermaid draws math
+  as KaTeX's stylesheet expects, and keep a package that rendering needs but
+  that is optional elsewhere, such as Mermaid's tidy-tree layout, a direct
+  dependency, since `setup` installs no optional packages; tests check both, and
+  that every package resolves from `registry.npmjs.org`. When a package needs a
   newer Node.js, raise `NODE_MINIMUM` in `toolchain/environment.py`, which
   `setup` and `doctor` check.
 - **Pandoc:** update `PANDOC_VERSION` in `toolchain/environment.py` and the
@@ -196,10 +164,10 @@ newer push to a pull request cancels its run in progress. Actions are pinned by
 commit SHA, checkouts keep no credentials, and each job has a time limit. The
 jobs:
 
-- `lint-and-core`: lint, then the core suite on Python 3.11 and 3.15, with the
-  pinned Pandoc cached by `toolchain/install.py`;
-- `render`: installs Node.js 24, LibreOffice and Poppler, runs `setup` (cached
-  by the npm manifests and the toolchain code) and the render suite;
+- `lint-and-core`: lint, then the core suite on the oldest and newest supported
+  Python, with the pinned Pandoc cached;
+- `render`: installs Node.js, LibreOffice and Poppler, runs `setup` (cached)
+  and the render suite;
 - `package`: builds the wheel and sdist, checks the wheel's contents, installs
   it with `uv tool install` and runs the installed command.
 

@@ -87,6 +87,14 @@ def decode_document(payload: str, *, pandoc: str = "pandoc") -> dict[str, JSONVa
 
 @dataclass(frozen=True)
 class ParsedMarkdown:
+    """Markdown parsed by *reader*, kept with its text and reader.
+
+    Word conversion reuses an unchanged page's parse to find its headings and to rewrite its
+    links; `copy_ast` gives a copy to rewrite, and refuses other text or another reader. There
+    is no parse cache: a check after a text rewrite parses the changed text itself, and
+    `run_all` runs a check's parses, such as of a page before and after a rewrite, at once.
+    """
+
     markdown: str
     reader: str
     ast: dict[str, JSONValue]
