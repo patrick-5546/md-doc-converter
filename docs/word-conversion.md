@@ -8,7 +8,8 @@ md-doc-converter docx-to-md docs/spec.docx -o wiki/review.md   # wiki/review.md,
 `docx-to-md` writes the Markdown beside the Word document, or to the `-o` file,
 and the document's images to `.images/<name>/` beside the Markdown. It needs
 Pandoc, which `md-doc-converter setup --no-render` installs, and for EMF and
-WMF drawings, LibreOffice and Poppler; `md-doc-converter doctor` checks them.
+WMF drawings, LibreOffice and Poppler, which Linux distributions package and
+winget installs on Windows; `md-doc-converter doctor` checks them.
 `md-doc-converter docx-to-md --help` lists its options; this guide explains the
 ones that need more than a line.
 

@@ -44,14 +44,14 @@ reads. In it, each embedded image's data is a short placeholder, which the HTML
 replaces with the data:
 
 ```sh
-md-doc-converter md-to-pdf docs/spec.md --keep-intermediates /tmp/spec-render
+md-doc-converter md-to-pdf docs/spec.md --keep-intermediates spec-render
 ```
 
 The HTML is self-contained: it embeds its images, the GitHub Markdown
 stylesheet and, for a document with math, KaTeX's stylesheet and fonts. It
 opens anywhere without a network, and printing it to PDF needs none either.
 Links to other local files point to their absolute paths on the machine that
-rendered them.
+rendered them, on Windows as `/C:/...`, as a `file:` URL names them.
 
 ## Messages
 
@@ -175,8 +175,8 @@ defaults; the options override them, and an empty option clears a default.
 
 The text is literal, never CSS or HTML, and is escaped safely. Quote it for the
 shell, using single quotes when it contains `$` or other shell-special
-characters. Headers, footers, and page numbers use the body's sans-serif font
-stack; code keeps its monospace stack.
+characters, in bash and PowerShell alike. Headers, footers, and page numbers use
+the body's sans-serif font stack; code keeps its monospace stack.
 
 Page-margin rules affect only PDF output. The header uses the `@top-right`
 margin box, the footer `@bottom-left`, and the page number `@bottom-center`.

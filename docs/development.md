@@ -7,9 +7,11 @@ src/md_doc_converter/
   __main__.py               # command-line entry point with lazy command dispatch
   console.py                # what commands print: warnings by kind, errors, status
   resources.py, pandoc.py   # packaged file paths, version, typed Pandoc parsing
+  executables.py            # the programs that it runs, found on PATH and never elsewhere
   media_types.py            # media types of the images and fonts that rendering embeds
   download.py               # downloads of images and stylesheet files, with limits
-  markdown/                 # preprocessing, headings, code regions, literal cells
+  markdown/                 # preprocessing, headings, code regions, literal cells,
+                            # file paths as the URL paths of targets
   converters/
     excel.py, csv.py
     docx/                   # responsibility-based Word conversion stages
@@ -52,6 +54,10 @@ tell how each part works.
 - **Packaged files:** adding, renaming or removing a file in `assets/` also
   changes `ASSETS` in `tests/unit/test_package.py` and the wheel check in
   `.github/workflows/ci.yml`.
+- **Programs:** run each program, such as Pandoc, Node.js or Git, by the path
+  that `executables.py` finds on `PATH`, never by its bare name, which Windows
+  would look for in the current folder first. Lua filters get the paths they
+  need from `render_environment`, such as `MD_DOC_CONVERTER_NODE`.
 
 ## Documentation
 
@@ -69,13 +75,14 @@ tell how each part works.
 
 ## Environment
 
-Development needs Linux x86_64, [uv](https://docs.astral.sh/uv/), make and Git,
-plus Node.js 22.13 or newer for the render suite, and LibreOffice and Poppler
-(`pdftocairo`) for its EMF tests. uv installs Python (version from
-`.python-version`) and the locked dependencies in `uv.lock`. The `Makefile` runs
-each task through uv and sets `MD_DOC_CONVERTER_HOME` to `.toolchain/` in the
-checkout unless it is already set, so the toolchain that the tests use stays out
-of your home directory.
+Development needs Linux x86_64 or Windows x86_64,
+[uv](https://docs.astral.sh/uv/) and Git, with make on Linux, plus Node.js
+22.13 or newer for the render suite, and LibreOffice and Poppler (`pdftocairo`)
+for its EMF tests. uv installs Python (version from `.python-version`) and the
+locked dependencies in `uv.lock`. The `Makefile` runs each task through uv and
+sets `MD_DOC_CONVERTER_HOME` to `.toolchain/` in the checkout unless it is
+already set, so the toolchain that the tests use stays out of your home
+directory. `.gitattributes` gives every file LF line endings, on Windows too.
 
 ```sh
 make              # lists every task
@@ -89,6 +96,24 @@ make test-render  # render suite; installs the toolchain first
 so every checker is a locked development dependency. Their settings are in
 `pyproject.toml`; `.editorconfig` gives editors the indentation and line
 endings.
+
+Windows has no make, so there each task runs with uv as the `Makefile` runs it,
+from the checkout, in PowerShell:
+
+```powershell
+$env:MD_DOC_CONVERTER_HOME = "$PWD\.toolchain"
+uv run md-doc-converter setup --no-render   # make setup-pandoc; make setup without --no-render
+uv run ruff format src tests                # make format
+uv run rumdl fmt .
+uv run pytest -n auto                       # make test
+uv run pytest tests/rendering               # make test-render
+uv run ruff format --check src tests        # make lint, but for actionlint and zizmor,
+uv run ruff check src tests                 # which check the workflow on Linux
+uv run ty check src tests
+uv run pyrefly check
+uv run rumdl check .
+uv run typos
+```
 
 ### Package mirrors
 
@@ -111,6 +136,15 @@ mirror=https://mirror.example/pypi/simple/
 uv export --frozen --all-groups --no-emit-project |
   uv pip sync --index-url "$mirror" --exclude-newer false -
 uv pip install --index-url "$mirror" --exclude-newer false --no-deps -e .
+```
+
+In PowerShell:
+
+```powershell
+$mirror = "https://mirror.example/pypi/simple/"
+uv export --frozen --all-groups --no-emit-project |
+  uv pip sync --index-url $mirror --exclude-newer false -
+uv pip install --index-url $mirror --exclude-newer false --no-deps -e .
 ```
 
 `--exclude-newer false` turns off the week-long limit that `pyproject.toml`

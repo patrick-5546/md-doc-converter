@@ -15,13 +15,14 @@ and PDF.
 
 ## Requirements
 
-- Linux x86_64.
+- Linux x86_64 or Windows x86_64.
 - Python 3.15. uv installs it if needed; on a host that cannot reach GitHub,
   where uv downloads Python from, install Python 3.15 another way.
 - [Node.js](https://nodejs.org/) 22.13 or newer, with npm, for rendering.
-- Optional: LibreOffice (`libreoffice` or `soffice`) and Poppler
-  (`pdftocairo`) to convert EMF and WMF drawings in Word documents to SVG, and
-  Git to skip Git-ignored files when converting or rendering a folder.
+- Optional: LibreOffice (`libreoffice` or `soffice`, or on Windows where its
+  installer puts it) and Poppler (`pdftocairo`) to convert EMF and WMF drawings
+  in Word documents to SVG, and Git to skip Git-ignored files when converting or
+  rendering a folder.
 
 `md-doc-converter setup` installs the rest, including Pandoc for Word
 conversion and rendering; see [Toolchain](#toolchain). Excel and CSV conversion
@@ -42,7 +43,15 @@ On a network that allows only a package mirror, see
 
 Install Node.js for rendering, and optionally LibreOffice and Poppler, from your
 distribution's packages; [nvm](https://github.com/nvm-sh/nvm) also installs
-Node.js without root. Then install the toolchain and check every prerequisite:
+Node.js without root. On Windows, install them with winget:
+
+```powershell
+winget install OpenJS.NodeJS.LTS
+winget install TheDocumentFoundation.LibreOffice   # optional
+winget install oschwartz10612.Poppler              # optional
+```
+
+Then install the toolchain and check every prerequisite:
 
 ```sh
 md-doc-converter setup
@@ -176,6 +185,14 @@ of PyPI and npm, set up each package manager for it:
   UV_DEFAULT_INDEX=https://mirror.example/pypi/simple/ uv tool install ./md-doc-converter
   ```
 
+  In PowerShell:
+
+  ```powershell
+  $env:UV_DEFAULT_INDEX = "https://mirror.example/pypi/simple/"
+  uv tool install ./md-doc-converter
+  Remove-Item Env:UV_DEFAULT_INDEX
+  ```
+
 - npm, which `setup` runs, downloads from its configured registry, which may be
   the mirror already. It fetches the locked packages from there, though the
   bundled lockfile names `registry.npmjs.org`:
@@ -196,11 +213,17 @@ guide.
 
 - Run `md-doc-converter doctor` first; it names each missing prerequisite and
   how to install it.
-- If the browser cannot start, install the shared libraries that Chrome needs
-  on your distribution. On hosts that restrict unprivileged user namespaces,
-  such as Ubuntu 23.10 and later, Chrome's sandbox needs that restriction
-  lifted (`kernel.apparmor_restrict_unprivileged_userns=0`).
+- If the browser cannot start on Linux, install the shared libraries that Chrome
+  needs on your distribution. On hosts that restrict unprivileged user
+  namespaces, such as Ubuntu 23.10 and later, Chrome's sandbox needs that
+  restriction lifted (`kernel.apparmor_restrict_unprivileged_userns=0`).
 - If a large PDF times out, raise `--pdf-timeout`, or set it to `0`.
+- On Windows, a PDF that is open in a viewer cannot be replaced: close it and
+  render again. The previous PDF is left unchanged.
+- On Windows, a link or image target in Markdown names a local file by its
+  path, relative or absolute, with slashes: `../images/chart.png` or
+  `/C:/docs/images/chart.png`, as a `file:///C:/docs/images/chart.png` URL
+  does.
 
 ## Development
 
