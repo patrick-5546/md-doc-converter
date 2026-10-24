@@ -1,17 +1,19 @@
-"""Where the toolchain lives and the environment its subprocesses need.
+r"""Where the toolchain lives and the environment its subprocesses need.
 
 ``md-doc-converter setup`` installs the pinned Pandoc, the pinned npm packages and the
-chrome-headless-shell build that their Puppeteer pins under one directory, by default
-``$XDG_DATA_HOME/md-doc-converter`` (``~/.local/share/md-doc-converter``).
-``MD_DOC_CONVERTER_HOME`` selects another directory.
+chrome-headless-shell build that their Puppeteer pins under one directory: by default
+``%LOCALAPPDATA%\md-doc-converter`` on Windows, and elsewhere ``$XDG_DATA_HOME/md-doc-converter``
+(``~/.local/share/md-doc-converter``). ``MD_DOC_CONVERTER_HOME`` selects another directory.
 """
 
 from __future__ import annotations
 
 import hashlib
 import os
+import platform
+import sys
 from collections.abc import Mapping, MutableMapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from md_doc_converter.resources import asset_path
@@ -28,20 +30,61 @@ PANDOC_VERSION = "3.12.1"
 BROWSER = "chrome-headless-shell"
 
 
-def default_home(environment: Mapping[str, str] | None = None) -> Path:
+@dataclass(frozen=True)
+class Platform:
+    """A platform that setup supports, and how the toolchain differs on it."""
+
+    name: str
+    windows: bool
+    # Puppeteer's name for the platform, which begins the folder of each browser build in its
+    # cache, and the end of the name of the folder in a build that holds the browser.
+    browser_platform: str
+    browser_folder: str
+
+    def executable(self, name: str) -> str:
+        """The file name of the executable *name*."""
+        return f"{name}.exe" if self.windows else name
+
+
+LINUX = Platform("Linux x86_64", windows=False, browser_platform="linux", browser_folder="linux64")
+WINDOWS = Platform("Windows x86_64", windows=True, browser_platform="win64", browser_folder="win64")
+# The supported platforms, by sys.platform and machine.
+PLATFORMS = {("linux", "x86_64"): LINUX, ("win32", "x86_64"): WINDOWS}
+
+
+def current_platform(system: str = sys.platform, machine: str | None = None) -> Platform | None:
+    """This computer's platform, or the one named by *system* and *machine*, if supported."""
+    machine = (platform.machine() if machine is None else machine).lower()
+    return PLATFORMS.get((system, "x86_64" if machine == "amd64" else machine))
+
+
+def host_platform() -> Platform:
+    """This computer's platform, or on another one, the supported platform of its kind."""
+    return current_platform() or (WINDOWS if sys.platform == "win32" else LINUX)
+
+
+def default_home(
+    environment: Mapping[str, str] | None = None, system: Platform | None = None
+) -> Path:
     environment = os.environ if environment is None else environment
     configured = environment.get(HOME_VARIABLE, "").strip()
     if configured:
         # Unlike Path.resolve, abspath keeps the configured spelling of symlinked folders.
         return Path(os.path.abspath(Path(configured).expanduser()))  # noqa: PTH100
-    data_home = environment.get("XDG_DATA_HOME", "").strip()
-    base = Path(data_home) if data_home and Path(data_home).is_absolute() else None
-    return (base or Path.home() / ".local" / "share") / "md-doc-converter"
+    if (system or host_platform()).windows:
+        data_home = environment.get("LOCALAPPDATA", "").strip()
+        fallback = Path.home() / "AppData" / "Local"
+    else:
+        data_home = environment.get("XDG_DATA_HOME", "").strip()
+        fallback = Path.home() / ".local" / "share"
+    base = Path(data_home) if data_home and Path(data_home).is_absolute() else fallback
+    return base / "md-doc-converter"
 
 
 @dataclass(frozen=True)
 class Toolchain:
     root: Path
+    system: Platform = field(default_factory=host_platform)
 
     @property
     def node_dir(self) -> Path:
@@ -69,18 +112,25 @@ class Toolchain:
 
     @property
     def pandoc(self) -> Path:
-        return self.bin_dir / "pandoc"
+        return self.bin_dir / self.system.executable("pandoc")
 
     def node_executable(self, name: str) -> Path:
         return self.node_bin / name
 
     def browser_builds(self) -> list[Path]:
         """The installed chrome-headless-shell executables, in Puppeteer's cache layout."""
-        return sorted(self.puppeteer_cache.glob(f"{BROWSER}/linux-*/{BROWSER}-linux64/{BROWSER}"))
+        system = self.system
+        build = f"{system.browser_platform}-*/{BROWSER}-{system.browser_folder}"
+        return sorted(self.puppeteer_cache.glob(f"{BROWSER}/{build}/{system.executable(BROWSER)}"))
 
 
 def toolchain(environment: Mapping[str, str] | None = None) -> Toolchain:
     return Toolchain(default_home(environment))
+
+
+def _same_folder(first: str, second: str) -> bool:
+    """Whether two PATH entries name the same folder, ignoring case on Windows."""
+    return os.path.normcase(os.path.normpath(first)) == os.path.normcase(os.path.normpath(second))
 
 
 def prefer_installed_tools(environment: MutableMapping[str, str] | None = None) -> None:
@@ -91,7 +141,7 @@ def prefer_installed_tools(environment: MutableMapping[str, str] | None = None) 
         return
     entries = [entry for entry in environment.get("PATH", "").split(os.pathsep) if entry]
     environment["PATH"] = os.pathsep.join(
-        [str(bin_dir), *(entry for entry in entries if entry != str(bin_dir))]
+        [str(bin_dir), *(entry for entry in entries if not _same_folder(entry, str(bin_dir)))]
     )
 
 

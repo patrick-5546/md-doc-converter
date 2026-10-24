@@ -189,8 +189,10 @@ then has every locked release. To update by hand:
   newer Node.js, raise `NODE_MINIMUM` in `toolchain/environment.py`, which
   `setup` and `doctor` check.
 - **Pandoc:** update `PANDOC_VERSION` in `toolchain/environment.py` and the
-  `PANDOC` checksum in `toolchain/install.py` (the `sha256sum` of the release's
-  `linux-amd64` archive), then update tests that compare exact Pandoc output.
+  checksums in `PANDOC_ARCHIVES` in `toolchain/install.py`, one for each
+  platform's release archive, which
+  `gh api repos/jgm/pandoc/releases/tags/VERSION --jq '.assets[] | [.name, .digest] | @tsv'`
+  lists; then update tests that compare exact Pandoc output.
 
 The week-long limits apply to a security fix too, for which Dependabot skips its
 cooldown. To take a release less than a week old, lift the limit for it alone:

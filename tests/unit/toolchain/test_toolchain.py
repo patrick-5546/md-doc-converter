@@ -6,8 +6,10 @@ import hashlib
 import os
 import re
 import shutil
+import stat
 import tarfile
 import urllib.error
+import zipfile
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
@@ -18,21 +20,31 @@ import pytest
 from md_doc_converter.resources import asset_path
 from md_doc_converter.toolchain import checks, install
 from md_doc_converter.toolchain.environment import (
+    LINUX,
     MANIFEST_DIR,
     MANIFESTS,
     PANDOC_VERSION,
+    PLATFORMS,
+    WINDOWS,
+    Platform,
     Toolchain,
+    current_platform,
     default_home,
+    host_platform,
     packages_current,
     prefer_installed_tools,
     render_environment,
     write_stamp,
 )
-from tests.support.fake_tools import BROWSER_PATH, FakeTools
+from tests.support.fake_tools import BROWSER_PATH, FakeTools, browser_path
 
-LOCAL = Path.home() / ".local" / "share" / "md-doc-converter"
+# The root of the file system that holds the current folder: / or a drive such as C:\.
+ROOT = Path(Path.cwd().anchor)
+LINUX_HOME = Path.home() / ".local" / "share" / "md-doc-converter"
+WINDOWS_HOME = Path.home() / "AppData" / "Local" / "md-doc-converter"
 NPM_CI = ("npm", ["ci", "--ignore-scripts", "--omit=optional", "--no-audit", "--no-fund"])
 BROWSER_INSTALL = ("puppeteer", ["browsers", "install", "chrome-headless-shell"])
+SYSTEMS = [pytest.param(system, id=system.name) for system in PLATFORMS.values()]
 Release = Callable[..., install.Archive]
 
 
@@ -53,7 +65,7 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Toolchain:
 
 
 @pytest.fixture
-def linux(monkeypatch: pytest.MonkeyPatch) -> None:
+def on_supported_platform(monkeypatch: pytest.MonkeyPatch) -> None:
     def supported() -> bool:
         return True
 
@@ -69,37 +81,123 @@ def downloads(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def release(tmp_path: Path, fake_tools: FakeTools, downloads: Path) -> Release:
-    """Write a fake release of a pinned archive into the downloads folder; return it re-pinned."""
+    """Write a fake release of a pinned archive into the downloads folder; return it re-pinned.
+
+    Besides the executable, the archive holds a license and a file that would be written
+    outside the folder it is extracted into.
+    """
 
     def make(archive: install.Archive, *, binary: bool = True) -> install.Archive:
         tool = FakeTools(tmp_path / "archive", fake_tools.log).write(archive.executable)
-        tarball = downloads / archive.file
+        bundle = downloads / archive.file
         license_file = tmp_path / "LICENSE"
         license_file.write_text("license", encoding="utf-8")
-        with tarfile.open(tarball, "w:gz") as bundle:
-            if binary:
-                bundle.add(tool / archive.executable, arcname=f"./{archive.member}")
-            bundle.add(license_file, arcname="./LICENSE")
-            bundle.add(license_file, arcname="../escaped")
-        return replace(archive, sha256=hashlib.sha256(tarball.read_bytes()).hexdigest())
+        members = [(license_file, "./LICENSE"), (license_file, "../escaped")]
+        if binary:
+            members.insert(0, (tool / archive.executable, f"./{archive.member}"))
+        if archive.file.endswith(".zip"):
+            with zipfile.ZipFile(bundle, "w") as files:
+                for path, name in members:
+                    files.write(path, name)
+        else:
+            with tarfile.open(bundle, "w:gz") as files:
+                for path, name in members:
+                    files.add(path, arcname=name)
+        return replace(archive, sha256=hashlib.sha256(bundle.read_bytes()).hexdigest())
 
     return make
 
 
 @pytest.mark.parametrize(
-    ("environment", "expected"),
+    ("system", "environment", "expected"),
     [
-        pytest.param({"MD_DOC_CONVERTER_HOME": "/opt/r"}, Path("/opt/r"), id="absolute"),
-        pytest.param({"MD_DOC_CONVERTER_HOME": "~/r"}, Path.home() / "r", id="user"),
-        pytest.param({"MD_DOC_CONVERTER_HOME": "r"}, Path.cwd() / "r", id="relative"),
-        pytest.param({"MD_DOC_CONVERTER_HOME": "  "}, LOCAL, id="blank"),
-        pytest.param({"XDG_DATA_HOME": "/data"}, Path("/data/md-doc-converter"), id="xdg"),
-        pytest.param({"XDG_DATA_HOME": "relative"}, LOCAL, id="xdg-relative"),
-        pytest.param({}, LOCAL, id="default"),
+        pytest.param(
+            LINUX,
+            {"MD_DOC_CONVERTER_HOME": str(ROOT / "opt" / "r")},
+            ROOT / "opt" / "r",
+            id="absolute",
+        ),
+        pytest.param(LINUX, {"MD_DOC_CONVERTER_HOME": "~/r"}, Path.home() / "r", id="user"),
+        pytest.param(LINUX, {"MD_DOC_CONVERTER_HOME": "r"}, Path.cwd() / "r", id="relative"),
+        pytest.param(LINUX, {"MD_DOC_CONVERTER_HOME": "  "}, LINUX_HOME, id="blank"),
+        pytest.param(
+            LINUX,
+            {"XDG_DATA_HOME": str(ROOT / "data")},
+            ROOT / "data" / "md-doc-converter",
+            id="xdg",
+        ),
+        pytest.param(LINUX, {"XDG_DATA_HOME": "relative"}, LINUX_HOME, id="xdg-relative"),
+        pytest.param(LINUX, {"LOCALAPPDATA": str(ROOT / "data")}, LINUX_HOME, id="local-app-data"),
+        pytest.param(LINUX, {}, LINUX_HOME, id="default"),
+        pytest.param(
+            WINDOWS, {"MD_DOC_CONVERTER_HOME": "r"}, Path.cwd() / "r", id="windows-relative"
+        ),
+        pytest.param(
+            WINDOWS,
+            {"LOCALAPPDATA": str(ROOT / "data")},
+            ROOT / "data" / "md-doc-converter",
+            id="windows-local-app-data",
+        ),
+        pytest.param(
+            WINDOWS,
+            {"LOCALAPPDATA": "relative"},
+            WINDOWS_HOME,
+            id="windows-local-app-data-relative",
+        ),
+        pytest.param(
+            WINDOWS, {"XDG_DATA_HOME": str(ROOT / "data")}, WINDOWS_HOME, id="windows-xdg"
+        ),
+        pytest.param(WINDOWS, {}, WINDOWS_HOME, id="windows-default"),
     ],
 )
-def test_default_home(environment: dict[str, str], expected: Path) -> None:
-    assert default_home(environment) == expected
+def test_default_home(system: Platform, environment: dict[str, str], expected: Path) -> None:
+    assert default_home(environment, system) == expected
+
+
+@pytest.mark.parametrize(
+    ("system", "machine", "expected"),
+    [
+        pytest.param("linux", "x86_64", LINUX, id="linux"),
+        pytest.param("win32", "AMD64", WINDOWS, id="windows"),
+        pytest.param("linux", "aarch64", None, id="linux-arm"),
+        pytest.param("win32", "ARM64", None, id="windows-arm"),
+        pytest.param("darwin", "arm64", None, id="macos"),
+    ],
+)
+def test_setup_supports_linux_and_windows_on_x86_64(
+    system: str, machine: str, expected: Platform | None
+) -> None:
+    assert current_platform(system, machine) is expected
+
+
+def test_doctor_names_the_platform_or_those_that_setup_supports(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def windows() -> Platform:
+        return WINDOWS
+
+    def unsupported() -> None:
+        return None
+
+    monkeypatch.setattr(checks, "current_platform", windows)
+    assert checks.check_platform() == checks.Check("platform", "ok", "Windows x86_64")
+    monkeypatch.setattr(checks, "current_platform", unsupported)
+    check = checks.check_platform()
+    assert check.status == "warn"
+    assert check.detail.endswith("not supported; setup requires Linux x86_64 or Windows x86_64")
+
+
+@pytest.mark.parametrize("system", SYSTEMS)
+def test_the_browser_is_found_in_the_build_for_the_platform(
+    system: Platform, tmp_path: Path
+) -> None:
+    tools = Toolchain(tmp_path / "home", system)
+    for build in PLATFORMS.values():
+        browser = tools.puppeteer_cache / browser_path(build)
+        browser.parent.mkdir(parents=True)
+        browser.write_text("", encoding="utf-8")
+    assert tools.browser_builds() == [tools.puppeteer_cache / browser_path(system)]
+    assert tools.pandoc == tools.bin_dir / system.executable("pandoc")
 
 
 def test_render_environment_puts_the_toolchain_first() -> None:
@@ -188,6 +286,18 @@ def test_preferring_a_missing_toolchain_changes_nothing(tmp_path: Path) -> None:
     environment = {"MD_DOC_CONVERTER_HOME": str(tmp_path / "none"), "PATH": "/usr/bin"}
     prefer_installed_tools(environment)
     assert environment["PATH"] == "/usr/bin"
+
+
+def test_the_toolchain_is_on_path_once_however_it_is_spelled(tmp_path: Path) -> None:
+    tools = Toolchain(tmp_path / "home")
+    tools.bin_dir.mkdir(parents=True)
+    folder = str(tools.bin_dir)
+    entries = [folder + os.sep, folder.upper(), "other"]
+    environment = {"MD_DOC_CONVERTER_HOME": str(tools.root), "PATH": os.pathsep.join(entries)}
+    prefer_installed_tools(environment)
+    # Windows names a folder in any case; elsewhere, the upper-case spelling is another folder.
+    others = ["other"] if os.name == "nt" else [folder.upper(), "other"]
+    assert environment["PATH"].split(os.pathsep) == [folder, *others]
 
 
 def test_render_problems_name_each_missing_part(fakes: FakeTools, tmp_path: Path) -> None:
@@ -295,10 +405,63 @@ def test_the_pinned_archive_installs_only_its_verified_executable(
     assert install.install_executable(tools, archive, force=False, downloads=downloads)
     assert not install.install_executable(tools, archive, force=False)
     download.assert_not_called()
-    assert [path.name for path in tools.bin_dir.iterdir()] == ["pandoc"]
+    assert [path.name for path in tools.bin_dir.iterdir()] == [tools.pandoc.name]
     assert checks.installed_version(tools.pandoc) == PANDOC_VERSION
     assert not (tmp_path / "escaped").exists()
     assert not (tools.root / "escaped").exists()
+
+
+def test_each_platform_has_a_pinned_pandoc_release_archive() -> None:
+    assert install.PANDOC is install.PANDOC_ARCHIVES[host_platform()]
+    assert set(install.PANDOC_ARCHIVES) == set(PLATFORMS.values())
+    for system, archive in install.PANDOC_ARCHIVES.items():
+        assert archive.version == PANDOC_VERSION
+        assert archive.url == (
+            f"https://github.com/jgm/pandoc/releases/download/{PANDOC_VERSION}/{archive.file}"
+        )
+        assert archive.executable == system.executable("pandoc")
+        assert re.fullmatch(r"[0-9a-f]{64}", archive.sha256)
+    assert install.PANDOC_ARCHIVES[LINUX].file.endswith(".tar.gz")
+    assert install.PANDOC_ARCHIVES[WINDOWS].file.endswith(".zip")
+
+
+@pytest.mark.parametrize("system", SYSTEMS)
+def test_only_the_executable_is_extracted_from_either_kind_of_archive(
+    system: Platform, release: Release, downloads: Path, tmp_path: Path
+) -> None:
+    archive = release(install.PANDOC_ARCHIVES[system])
+    work = tmp_path / "work"
+    work.mkdir()
+    executable = work / archive.executable
+    install._extract_executable(archive, downloads / archive.file, executable)
+    assert executable.read_bytes() == (tmp_path / "archive" / archive.executable).read_bytes()
+    assert [path.name for path in work.iterdir()] == [archive.executable]
+    assert not (tmp_path / "escaped").exists()
+
+
+def test_a_link_in_a_zip_archive_is_not_installed(downloads: Path, tmp_path: Path) -> None:
+    archive = install.PANDOC_ARCHIVES[WINDOWS]
+    link = zipfile.ZipInfo(str(archive.member))
+    link.external_attr = (stat.S_IFLNK | 0o777) << 16
+    with zipfile.ZipFile(downloads / archive.file, "w") as files:
+        files.writestr(link, "/usr/bin/pandoc")
+    with pytest.raises(install.SetupError, match="does not contain"):
+        install._extract_executable(archive, downloads / archive.file, tmp_path / "pandoc.exe")
+    assert not (tmp_path / "pandoc.exe").exists()
+
+
+def test_a_pandoc_that_cannot_be_replaced_is_reported(
+    release: Release, downloads: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def busy(self: Path, target: Path) -> Path:
+        raise PermissionError(13, "The process cannot access the file", str(target))
+
+    archive = release(install.PANDOC)
+    tools = Toolchain(tmp_path / "home")
+    monkeypatch.setattr(Path, "replace", busy)
+    with pytest.raises(install.SetupError, match="Close the programs that run it"):
+        install.install_executable(tools, archive, force=False, downloads=downloads)
+    assert not tools.pandoc.exists()
 
 
 def test_checksum_mismatch_installs_nothing(
@@ -336,7 +499,9 @@ def test_download_failure_suggests_a_downloads_folder(
 @pytest.mark.parametrize(
     ("supported", "message"),
     [
-        pytest.param(False, "Linux x86_64 only", id="unsupported-platform"),
+        pytest.param(
+            False, "setup requires Linux x86_64 or Windows x86_64", id="unsupported-platform"
+        ),
         pytest.param(True, "--no-render", id="old-node"),
     ],
 )
@@ -359,7 +524,7 @@ def test_setup_checks_the_platform_and_node_before_installing(
     assert not home.root.exists()
 
 
-@pytest.mark.usefixtures("fakes", "linux")
+@pytest.mark.usefixtures("fakes", "on_supported_platform")
 def test_no_render_installs_only_pandoc_without_node(
     release: Release,
     downloads: Path,
@@ -369,12 +534,12 @@ def test_no_render_installs_only_pandoc_without_node(
 ) -> None:
     monkeypatch.setattr(install, "PANDOC", release(install.PANDOC))
     assert install.main(["--no-render", "--downloads", str(downloads)]) == 0
-    assert [path.name for path in home.bin_dir.iterdir()] == ["pandoc"]
+    assert [path.name for path in home.bin_dir.iterdir()] == [home.pandoc.name]
     assert not home.node_dir.exists()
     assert "Rendering needs a full `setup`" in capsys.readouterr().out
 
 
-@pytest.mark.usefixtures("linux")
+@pytest.mark.usefixtures("on_supported_platform")
 def test_setup_installs_a_complete_toolchain(
     fakes: FakeTools,
     release: Release,
@@ -392,7 +557,7 @@ def test_setup_installs_a_complete_toolchain(
     assert "md-doc-converter doctor" in capsys.readouterr().out
 
 
-@pytest.mark.usefixtures("linux")
+@pytest.mark.usefixtures("on_supported_platform")
 def test_downloads_must_be_a_folder(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert install.main(["--downloads", str(tmp_path / "missing")]) == 1
     assert "--downloads must be a folder" in capsys.readouterr().err

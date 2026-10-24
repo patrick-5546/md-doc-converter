@@ -106,7 +106,7 @@ Command-line options override these environment variables.
 
 | Variable | Purpose |
 | --- | --- |
-| `MD_DOC_CONVERTER_HOME` | Toolchain directory (default `~/.local/share/md-doc-converter`) |
+| `MD_DOC_CONVERTER_HOME` | Toolchain directory (default `~/.local/share/md-doc-converter`, or `%LOCALAPPDATA%\md-doc-converter` on Windows) |
 | `MD_DOC_CONVERTER_HEADER` | Default `--header` text |
 | `MD_DOC_CONVERTER_FOOTER` | Default `--footer` text |
 | `MD_DOC_CONVERTER_PDF_TIMEOUT` | Default `--pdf-timeout`, in seconds (600; `0` = no limit) |
@@ -114,10 +114,12 @@ Command-line options override these environment variables.
 ## Toolchain
 
 `setup` installs into `$MD_DOC_CONVERTER_HOME`, by default
-`$XDG_DATA_HOME/md-doc-converter` or `~/.local/share/md-doc-converter`:
+`$XDG_DATA_HOME/md-doc-converter` or `~/.local/share/md-doc-converter`, and on
+Windows `%LOCALAPPDATA%\md-doc-converter`:
 
-- `bin/pandoc`: Pandoc 3.12.1, the version md-doc-converter is tested with,
-  from its GitHub release, verified against a pinned SHA-256 checksum;
+- `bin/pandoc` (`bin\pandoc.exe` on Windows): Pandoc 3.12.1, the version
+  md-doc-converter is tested with, from its GitHub release, verified against a
+  pinned SHA-256 checksum;
 - `node/`, for rendering: the Mermaid, KaTeX and Puppeteer npm packages from
   the lockfile bundled with md-doc-converter, which holds only releases at
   least a week old, installed without their install scripts or optional
@@ -138,7 +140,8 @@ the command, run `uv tool uninstall md-doc-converter`.
 
 npm uses your npm configuration, including proxies and registry mirrors; see
 [Package mirrors](#package-mirrors). On a
-host that cannot reach GitHub, download `pandoc-3.12.1-linux-amd64.tar.gz` from
+host that cannot reach GitHub, download the archive for your platform,
+`pandoc-3.12.1-linux-amd64.tar.gz` or `pandoc-3.12.1-windows-x86_64.zip`, from
 the [Pandoc 3.12.1 release](https://github.com/jgm/pandoc/releases/tag/3.12.1)
 another way into a folder and pass that folder to `setup`, which still verifies
 the archive's checksum:

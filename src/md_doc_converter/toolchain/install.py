@@ -7,27 +7,35 @@ import hashlib
 import os
 import platform
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
 import tempfile
 import urllib.request
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from md_doc_converter.toolchain.checks import (
     NODE_FIX,
     NODE_REQUIRED,
+    SUPPORTED_PLATFORMS,
     check_browser,
     check_node,
     installed_version,
 )
 from md_doc_converter.toolchain.environment import (
     BROWSER,
+    LINUX,
     MANIFEST_DIR,
     MANIFESTS,
     PANDOC_VERSION,
+    WINDOWS,
+    Platform,
     Toolchain,
+    current_platform,
+    host_platform,
     packages_current,
     toolchain,
     write_stamp,
@@ -52,15 +60,25 @@ class Archive:
         return self.member.name
 
 
-PANDOC = Archive(
-    "Pandoc",
-    PANDOC_VERSION,
-    f"pandoc-{PANDOC_VERSION}-linux-amd64.tar.gz",
-    f"https://github.com/jgm/pandoc/releases/download/{PANDOC_VERSION}/"
-    f"pandoc-{PANDOC_VERSION}-linux-amd64.tar.gz",
-    "d0c90410e90204c9ca83b8539fac5c7aed01fd537207e4585849f8abc5df20b8",
-    PurePosixPath(f"pandoc-{PANDOC_VERSION}/bin/pandoc"),
-)
+def _pandoc(file: str, sha256: str, member: str) -> Archive:
+    url = f"https://github.com/jgm/pandoc/releases/download/{PANDOC_VERSION}/{file}"
+    return Archive("Pandoc", PANDOC_VERSION, file, url, sha256, PurePosixPath(member))
+
+
+# Each platform's archive from the Pandoc release, with its SHA-256 checksum.
+PANDOC_ARCHIVES: dict[Platform, Archive] = {
+    LINUX: _pandoc(
+        f"pandoc-{PANDOC_VERSION}-linux-amd64.tar.gz",
+        "d0c90410e90204c9ca83b8539fac5c7aed01fd537207e4585849f8abc5df20b8",
+        f"pandoc-{PANDOC_VERSION}/bin/pandoc",
+    ),
+    WINDOWS: _pandoc(
+        f"pandoc-{PANDOC_VERSION}-windows-x86_64.zip",
+        "6ef431cb20b2c24a0371fc19200dc49d452be54b1b5c9239f3462841ef53e587",
+        f"pandoc-{PANDOC_VERSION}/pandoc.exe",
+    ),
+}
+PANDOC = PANDOC_ARCHIVES[host_platform()]
 NO_RENDER_HINT = (
     "or run `md-doc-converter setup --no-render` to install only Pandoc, for conversion"
 )
@@ -71,7 +89,7 @@ class SetupError(Exception):
 
 
 def supported_platform() -> bool:
-    return sys.platform.startswith("linux") and platform.machine().lower() in {"x86_64", "amd64"}
+    return current_platform() is not None
 
 
 def install_packages(tools: Toolchain, npm: str, *, force: bool) -> bool:
@@ -141,20 +159,31 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _extract_executable(archive: Archive, tarball: Path, destination: Path) -> None:
+def _extract_executable(archive: Archive, bundle: Path, destination: Path) -> None:
     """Copy only the expected executable out of the archive, whatever else it contains."""
     try:
-        with tarfile.open(tarball, "r:gz") as bundle:
-            for member in bundle.getmembers():
-                if member.isfile() and PurePosixPath(member.name) == archive.member:
-                    stream = bundle.extractfile(member)
-                    if stream is None:
-                        break
-                    with stream, destination.open("wb") as output:
+        if archive.file.endswith(".zip"):
+            with zipfile.ZipFile(bundle) as files:
+                for info in files.infolist():
+                    # A zip file can keep a Unix mode, which tells a link from a file.
+                    link = stat.S_ISLNK(info.external_attr >> 16)
+                    if info.is_dir() or link or PurePosixPath(info.filename) != archive.member:
+                        continue
+                    with files.open(info) as stream, destination.open("wb") as output:
                         shutil.copyfileobj(stream, output)
                     return
-    except (OSError, tarfile.TarError) as error:
-        raise SetupError(f"cannot read {tarball}: {error}") from error
+        else:
+            with tarfile.open(bundle, "r:gz") as files:
+                for member in files.getmembers():
+                    if member.isfile() and PurePosixPath(member.name) == archive.member:
+                        stream = files.extractfile(member)
+                        if stream is None:
+                            break
+                        with stream, destination.open("wb") as output:
+                            shutil.copyfileobj(stream, output)
+                        return
+    except (OSError, tarfile.TarError, zipfile.BadZipFile) as error:
+        raise SetupError(f"cannot read {bundle}: {error}") from error
     raise SetupError(f"{archive.file} does not contain {archive.member}")
 
 
@@ -170,23 +199,29 @@ def install_executable(
     tools.bin_dir.mkdir(parents=True, exist_ok=True)
     local = downloads / archive.file if downloads is not None else None
     with tempfile.TemporaryDirectory(prefix=f".{archive.executable}-", dir=tools.bin_dir) as work:
-        tarball = Path(work) / archive.file
+        bundle = Path(work) / archive.file
         if local is not None and local.is_file():
             print(f"{label}: using {local}")
             try:
-                shutil.copyfile(local, tarball)
+                shutil.copyfile(local, bundle)
             except OSError as error:
                 raise SetupError(f"cannot read {local}: {error}") from error
         else:
             print(f"{label}: downloading {archive.url}")
-            _download(archive, tarball)
-        digest = _sha256(tarball)
+            _download(archive, bundle)
+        digest = _sha256(bundle)
         if digest != archive.sha256:
             raise SetupError(f"{archive.file} has SHA-256 {digest}, expected {archive.sha256}")
         staged = Path(work) / archive.executable
-        _extract_executable(archive, tarball, staged)
+        _extract_executable(archive, bundle, staged)
         staged.chmod(0o755)
-        staged.replace(target)
+        try:
+            staged.replace(target)
+        except OSError as error:
+            # Windows cannot replace a program that is running.
+            raise SetupError(
+                f"cannot replace {target}: {error}. Close the programs that run it and try again"
+            ) from error
     if installed_version(target) != archive.version:
         raise SetupError(f"the installed {target} does not report version {archive.version}")
     print(f"{label}: installed {archive.version} at {target}")
@@ -198,9 +233,9 @@ def main(argv: list[str] | None = None) -> int:
         prog="md-doc-converter setup",
         description=(
             "Install the pinned toolchain into MD_DOC_CONVERTER_HOME, by default "
-            "~/.local/share/md-doc-converter: Pandoc, and for rendering, Mermaid, KaTeX and "
-            "Puppeteer from npm with the headless browser they share. Rendering needs Node.js "
-            f"{NODE_REQUIRED} or newer, with npm."
+            "~/.local/share/md-doc-converter, or %LOCALAPPDATA%\\md-doc-converter on Windows: "
+            "Pandoc, and for rendering, Mermaid, KaTeX and Puppeteer from npm with the headless "
+            f"browser they share. Rendering needs Node.js {NODE_REQUIRED} or newer, with npm."
         ),
     )
     parser.add_argument(
@@ -226,7 +261,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if not supported_platform():
             raise SetupError(
-                f"setup supports Linux x86_64 only, not {sys.platform} {platform.machine()}"
+                f"setup requires {SUPPORTED_PLATFORMS}, not {sys.platform} {platform.machine()}"
             )
         downloads = arguments.downloads
         if downloads is not None and not downloads.is_dir():

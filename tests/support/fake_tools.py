@@ -11,7 +11,13 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from md_doc_converter.toolchain.environment import BROWSER, Toolchain, write_stamp
+from md_doc_converter.toolchain.environment import (
+    BROWSER,
+    Platform,
+    Toolchain,
+    host_platform,
+    write_stamp,
+)
 from tests.support.fake_tool import Config
 from tests.support.project import PROJECT_ROOT
 
@@ -33,9 +39,16 @@ PACKAGE_FILES = {
     "github-markdown-css/package.json": "{}",
     "github-markdown-css/github-markdown-light.css": ".markdown-body { color: #1f2328; }\n",
 }
-BROWSER_BUILD = "linux-131.0.6778.204"
-# Where Puppeteer's cache keeps a chrome-headless-shell build.
-BROWSER_PATH = f"{BROWSER}/{BROWSER_BUILD}/{BROWSER}-linux64/{BROWSER}"
+BROWSER_VERSION = "131.0.6778.204"
+
+
+def browser_path(system: Platform) -> str:
+    """Where Puppeteer's cache keeps a chrome-headless-shell build for *system*."""
+    build = f"{system.browser_platform}-{BROWSER_VERSION}"
+    return f"{BROWSER}/{build}/{BROWSER}-{system.browser_folder}/{system.executable(BROWSER)}"
+
+
+BROWSER_PATH = browser_path(host_platform())
 RECORDED_VARIABLES = (
     "PATH",
     "PUPPETEER_CACHE_DIR",

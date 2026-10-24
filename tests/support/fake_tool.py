@@ -122,7 +122,7 @@ def _npm(config: Config) -> None:
 
 
 def main(config: Config) -> int:
-    tool = Path(sys.argv[0]).name
+    tool = Path(sys.argv[0]).stem
     arguments = sys.argv[1:]
     if arguments[:1] == ["--version"]:
         print(config["versions"][tool])

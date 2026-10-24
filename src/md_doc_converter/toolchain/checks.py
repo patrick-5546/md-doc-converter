@@ -16,13 +16,17 @@ from md_doc_converter.toolchain.environment import (
     BROWSER,
     NODE_MINIMUM,
     PANDOC_VERSION,
+    PLATFORMS,
     Toolchain,
+    current_platform,
     packages_current,
     toolchain,
 )
 
 PANDOC_FIX = "Run `md-doc-converter setup`, or `setup --no-render` for conversion only"
 NODE_REQUIRED = ".".join(str(part) for part in NODE_MINIMUM[:2])
+# The platforms that setup supports, for messages: "setup requires ...".
+SUPPORTED_PLATFORMS = " or ".join(system.name for system in PLATFORMS.values())
 NODE_FIX = (
     f"Install Node.js {NODE_REQUIRED} or newer with npm, from your distribution, nvm or "
     "https://nodejs.org/"
@@ -75,13 +79,14 @@ def _executable(path: Path) -> bool:
 
 
 def check_platform() -> Check:
-    machine = platform.machine()
-    if sys.platform.startswith("linux") and machine.lower() in {"x86_64", "amd64"}:
-        return Check("platform", "ok", f"Linux {machine}")
+    system = current_platform()
+    if system is not None:
+        return Check("platform", "ok", system.name)
     return Check(
         "platform",
         "warn",
-        f"{sys.platform} {machine} is not supported; setup requires Linux x86_64",
+        f"{sys.platform} {platform.machine()} is not supported; setup requires "
+        f"{SUPPORTED_PLATFORMS}",
     )
 
 
@@ -146,7 +151,8 @@ def check_browser(tools: Toolchain) -> Check:
     builds = [path.parents[1].name for path in tools.browser_builds() if _executable(path)]
     if not builds:
         return Check("browser", "error", f"no {BROWSER} in {cache}", REINSTALL_FIX)
-    versions = ", ".join(build.removeprefix("linux-") for build in builds)
+    prefix = f"{tools.system.browser_platform}-"
+    versions = ", ".join(build.removeprefix(prefix) for build in builds)
     return Check("browser", "ok", f"{BROWSER} {versions} ({cache})")
 
 
