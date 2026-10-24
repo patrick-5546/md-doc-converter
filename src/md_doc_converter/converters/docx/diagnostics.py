@@ -310,6 +310,7 @@ def write_diagnostics(
     with tempfile.NamedTemporaryFile(
         mode="w",
         encoding="utf-8",
+        newline="\n",
         prefix=".diagnostics-",
         suffix=".json",
         dir=work,

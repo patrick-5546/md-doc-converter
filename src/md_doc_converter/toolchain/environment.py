@@ -180,7 +180,7 @@ def packages_current(tools: Toolchain) -> bool:
 
 
 def write_stamp(tools: Toolchain) -> None:
-    tools.stamp.write_text(manifest_digest() + "\n", encoding="utf-8")
+    tools.stamp.write_text(manifest_digest() + "\n", encoding="utf-8", newline="\n")
 
 
 def render_environment(tools: Toolchain, base: Mapping[str, str] | None = None) -> dict[str, str]:

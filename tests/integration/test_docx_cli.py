@@ -77,10 +77,29 @@ def test_actual_cli_preserves_caller_relative_paths(tmp_path: Path) -> None:
         cwd=tmp_path,
     )
     assert result.returncode == 0, result.stderr
-    assert "CLI text" in (tmp_path / "out" / "Explicit Name.md").read_text(encoding="utf-8")
+    markdown = (tmp_path / "out" / "Explicit Name.md").read_bytes()
+    assert b"CLI text" in markdown
     assert (tmp_path / "out" / ".images" / "Explicit Name" / "image.png").is_file()
-    assert (tmp_path / "debug" / "diagnostics.json").is_file()
+    # The Markdown and the report have LF line endings on every system.
+    assert b"\r" not in markdown + (tmp_path / "debug" / "diagnostics.json").read_bytes()
     assert not (tmp_path / "in" / "Renamed.v2.md").exists()
+
+
+def test_pages_have_lf_line_endings_on_every_system(tmp_path: Path) -> None:
+    write_docx(
+        tmp_path / "guide.docx",
+        [
+            paragraph("First", "Heading1"),
+            paragraph("One."),
+            paragraph("Second", "Heading1"),
+            paragraph("Two."),
+        ],
+    )
+    result = docx_to_md("guide.docx", "--split-depth", "1", cwd=tmp_path)
+    assert result.returncode == 0, result.stderr
+    pages = sorted(tmp_path.rglob("*.md"))
+    assert len(pages) == 3
+    assert all(b"\r" not in page.read_bytes() for page in pages)
 
 
 def test_cli_error_has_no_traceback() -> None:

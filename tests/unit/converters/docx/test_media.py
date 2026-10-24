@@ -96,7 +96,7 @@ class FakeDrawingTools:
         if args[1] == "-svg":
             written = self.outputs[Path(args[2]).stem].get("cairo")
             if isinstance(written, str):
-                Path(args[3]).write_text(written, encoding="utf-8")
+                Path(args[3]).write_text(written, encoding="utf-8", newline="\n")
             return ""
         kind = args[args.index("--convert-to") + 1]
         folder = Path(args[args.index("--outdir") + 1])
@@ -104,7 +104,7 @@ class FakeDrawingTools:
             name = Path(source).stem
             written = self.outputs[name].get(kind, kind != "svg")
             if kind == "svg" and isinstance(written, str):
-                (folder / f"{name}.svg").write_text(written, encoding="utf-8")
+                (folder / f"{name}.svg").write_text(written, encoding="utf-8", newline="\n")
             elif kind == "pdf" and written:
                 (folder / f"{name}.pdf").write_bytes(b"synthetic mocked PDF")
             elif kind == "odg" and written:
@@ -261,6 +261,19 @@ def test_only_a_unitless_page_size_gets_points(before: str, after: str, tmp_path
     assert (
         path.read_text(encoding="utf-8") == f"<?xml version='1.0'?>\n{after}<g width='5'/></svg>\n"
     )
+
+
+@pytest.mark.parametrize("newline", [b"\n", b"\r\n"], ids=["lf", "crlf"])
+def test_a_rewritten_svg_keeps_the_line_endings_of_its_tool(newline: bytes, tmp_path: Path) -> None:
+    def page(tag: bytes) -> bytes:
+        return newline.join((b"<?xml version='1.0'?>", tag, b"</svg>", b""))
+
+    path = tmp_path / "page.svg"
+    path.write_bytes(page(b'<svg width="10" height="20" viewBox="0 0 10 20">'))
+    _media._size_in_points(path)
+    assert path.read_bytes() == page(b'<svg width="10pt" height="20pt" viewBox="0 0 10 20">')
+    assert _media._crop_svg(path, (0, 0, 0.5, 0.5), fraction=True) is None
+    assert path.read_bytes() == page(b'<svg width="5pt" height="10pt" viewBox="0 0 5 10">')
 
 
 def test_all_drawings_convert_in_one_libreoffice_run(convert: Convert) -> None:

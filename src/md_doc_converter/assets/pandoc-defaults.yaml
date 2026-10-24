@@ -3,6 +3,8 @@
 # markdown-implicit_figures-yaml_metadata_block+gfm_auto_identifiers
 from: json
 toc-depth: 6
+# The HTML has LF line endings on Windows too.
+eol: lf
 filters:
   - "${.}/gfm-math.lua"  # read GitHub's $`...`$ and math code blocks as math
   - "${.}/mermaid.lua"  # render Mermaid diagrams with mermaid-cli

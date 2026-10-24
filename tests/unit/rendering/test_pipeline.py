@@ -96,7 +96,8 @@ class FakeRenderer:
             katex = Path(environment[render.KATEX_STYLESHEET_VARIABLE])
             self.katex_stylesheets.append(katex.read_text(encoding="utf-8"))
             self.pandoc_calls.append((command, kwargs))
-            Path(command[command.index("-o") + 1]).write_text(self.html, encoding="utf-8")
+            # Exactly as given: in text mode, Windows would write each \n as \r\n.
+            Path(command[command.index("-o") + 1]).write_bytes(self.html.encode("utf-8"))
         elif command[:2] == [found("node"), str(render.PDF_PRINTER)]:
             self.printer_commands.append(command)
             self.printed.append(Path(command[-1]).read_bytes().decode("utf-8"))

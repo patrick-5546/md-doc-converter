@@ -175,7 +175,7 @@ def _convert_in_work(
             }
         )
         staged_markdown = work / "final.md"
-        staged_markdown.write_text(pages[Path(paths.output.name)], encoding="utf-8")
+        staged_markdown.write_text(pages[Path(paths.output.name)], encoding="utf-8", newline="\n")
         staged_pages: Path | None = None
         if paths.split_depth:
             staged_pages = work / "final-pages"
@@ -185,7 +185,7 @@ def _convert_in_work(
                     continue
                 destination = staged_pages / page.relative_to(paths.output.stem)
                 destination.parent.mkdir(parents=True, exist_ok=True)
-                destination.write_text(content, encoding="utf-8")
+                destination.write_text(content, encoding="utf-8", newline="\n")
         _diagnostics.write_diagnostics(
             work, paths, findings, stats, changes, "validated", source=navigation, report=report
         )

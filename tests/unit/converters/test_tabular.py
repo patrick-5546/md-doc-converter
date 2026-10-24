@@ -349,6 +349,8 @@ def test_excel_to_md_writes_the_pages_csv_to_md_writes_from_excel_to_csv(
         two_steps = (tmp_path / "csv" / name).read_text(encoding="utf-8").splitlines()
         # Only the notes, which name the sources, differ.
         assert direct[:2] + direct[3:] == two_steps[:2] + two_steps[3:]
+        # Pages have LF line endings on every system.
+        assert b"\r" not in (pages / name).read_bytes() + (tmp_path / "csv" / name).read_bytes()
 
 
 def test_excel_to_md_dry_run_names_the_pages_beside_the_workbook(

@@ -385,7 +385,8 @@ def _crop_svg(path: Path, frame: Frame, *, fraction: bool = False) -> str | None
     """Crop the SVG page at *path* to *frame*, given in user units or as fractions of the page;
     return why it could not be cropped."""
     try:
-        text = path.read_text(encoding="utf-8")
+        # Its line endings are kept as LibreOffice wrote them.
+        text = path.read_text(encoding="utf-8", newline="")
     except (OSError, UnicodeDecodeError) as error:
         return f"the SVG could not be read: {error}"
     start = re.search(r"<svg\b[^>]*>", text)
@@ -437,7 +438,7 @@ def _crop_svg(path: Path, frame: Frame, *, fraction: bool = False) -> str | None
     }
     for begin, end, name in sorted(((*span, name) for name, span in spans.items()), reverse=True):
         tag = tag[:begin] + values[name] + tag[end:]
-    path.write_text(text[: start.start()] + tag + text[start.end() :], encoding="utf-8")
+    path.write_text(text[: start.start()] + tag + text[start.end() :], encoding="utf-8", newline="")
     return None
 
 
@@ -454,7 +455,8 @@ def _size_in_points(path: Path) -> None:
     drawing would show at 75% of its size.
     """
     try:
-        text = path.read_text(encoding="utf-8")
+        # Its line endings are kept as pdftocairo wrote them.
+        text = path.read_text(encoding="utf-8", newline="")
     except (OSError, UnicodeDecodeError) as error:
         raise ConversionError(f"PDF-to-SVG fallback SVG could not be read: {error}") from error
     start = re.search(r"<svg\b[^>]*>", text)
@@ -463,7 +465,7 @@ def _size_in_points(path: Path) -> None:
     tag = _UNITLESS_SIZE.sub(
         lambda size: f"{size[1]}{size[2]}{size[3]}{size[4]}pt{size[3]}", start.group(0)
     )
-    path.write_text(text[: start.start()] + tag + text[start.end() :], encoding="utf-8")
+    path.write_text(text[: start.start()] + tag + text[start.end() :], encoding="utf-8", newline="")
 
 
 # A converted drawing's SVG, or why it could not be converted, and notes on the conversion.

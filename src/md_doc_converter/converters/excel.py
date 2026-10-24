@@ -98,7 +98,7 @@ def excel_to_md(excel_path: str, output_dir: str | None = None, dry_run: bool = 
             print(f"Would write: {md_path}")
             continue
         out.mkdir(parents=True, exist_ok=True)
-        md_path.write_text(page, encoding="utf-8")
+        md_path.write_text(page, encoding="utf-8", newline="\n")
         print(f"Written: {md_path}")
 
 

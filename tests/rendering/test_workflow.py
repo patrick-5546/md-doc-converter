@@ -95,6 +95,8 @@ def test_word_to_html_and_pdf_next_to_the_canonical_markdown(tmp_path: Path) -> 
     command(tmp_path, *CLI, "md-to-html", relative)
     html = canonical.with_suffix(".html")
     rendered = html.read_text(encoding="utf-8")
+    # The HTML has LF line endings on every system.
+    assert b"\r" not in html.read_bytes()
     # The blank Word row shows nothing, so it is omitted.
     assert len(re.findall(r"<tr(?:\s|>)", rendered)) == word_rows - 1
     assert 'id="1-cache"' in rendered

@@ -108,7 +108,7 @@ def convert(
             print(f"Would write: {md_path}")
         else:
             out.mkdir(parents=True, exist_ok=True)
-            md_path.write_text(md_text, encoding="utf-8")
+            md_path.write_text(md_text, encoding="utf-8", newline="\n")
             print(f"Written: {md_path}")
 
 

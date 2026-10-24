@@ -388,15 +388,16 @@ def render_markdown(
                 respect_gitignore=filter_gitignored,
                 download_images=options.download_images,
             )
-            document.write_text(json.dumps(prepared.document), encoding="utf-8")
+            document.write_text(json.dumps(prepared.document), encoding="utf-8", newline="\n")
 
             styles_file = work / "page-styles.html"
             styles_file.write_text(
                 f"{CONTENT_SECURITY_POLICY}\n<style>\n{base_css.strip()}\n</style>\n{styles}",
                 encoding="utf-8",
+                newline="\n",
             )
             katex_file = work / "katex.css"
-            katex_file.write_text(math_css, encoding="utf-8")
+            katex_file.write_text(math_css, encoding="utf-8", newline="\n")
             staged_dir = work / "render"
             staged_dir.mkdir()
             html = staged_dir / f"{name}.html"
