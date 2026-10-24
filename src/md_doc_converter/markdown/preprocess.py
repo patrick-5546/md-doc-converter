@@ -236,13 +236,15 @@ def trim_fence_info_strings(text: str, source_path: str | None, stats: Counter[s
 
 
 def strip_ado_macros(text: str, source_path: str | None, stats: Counter[str]) -> str:
-    """Remove Azure DevOps wiki macro lines such as [[_TOC_]] and [[_TOSP_]]."""
-    text, removed = re.subn(r"^\[\[_(?:TOC|TOSP)_\]\]\s*$", "", text, flags=re.MULTILINE)
+    """Remove Azure DevOps wiki macro lines such as [[_TOC_]] and [[_TOSP_]].
+
+    Each leaves an empty line, so the lines after it keep their numbers, and code keeps its
+    blank lines.
+    """
+    text, removed = re.subn(r"^\[\[_(?:TOC|TOSP)_\]\][ \t]*$", "", text, flags=re.MULTILINE)
     if removed:
         stats["macros removed"] += removed
-    # Removing a macro line leaves an empty line between the surrounding blanks;
-    # collapse the run so we don't introduce MD012 (multiple consecutive blanks).
-    return re.sub(r"\n{3,}", "\n\n", text)
+    return text
 
 
 def escape_bit_ranges(text: str, source_path: str | None, stats: Counter[str]) -> str:

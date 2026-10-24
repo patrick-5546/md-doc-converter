@@ -375,6 +375,26 @@ def test_md_to_html_reports_the_cell_whose_rest_it_drops(
     assert "dropped" not in html
 
 
+def test_wiki_macros_go_without_moving_lines_or_blank_lines_in_code(convert: Convert) -> None:
+    code = "def a():\n    pass\n\n\ndef b():\n    pass"
+    source = f"[[_TOC_]]\n\n\n[[_TOSP_]]  \n\n```python\n{code}\n```\n"
+
+    stats: Counter[str] = Counter()
+    assert preprocess.strip_ado_macros(source, "page.md", stats).splitlines() == [
+        "",
+        "",
+        "",
+        "",
+        "",
+        "```python",
+        *code.splitlines(),
+        "```",
+    ]
+    assert stats["macros removed"] == 2
+    html = convert(preprocess.preprocess(source, "page.md"), "html5")
+    assert "pass\n\n\n" in re.sub(r"<[^>]+>", "", html)
+
+
 def test_missing_pandoc_is_an_explicit_error(monkeypatch: pytest.MonkeyPatch) -> None:
     missing = mock.Mock(side_effect=FileNotFoundError("missing executable"))
     monkeypatch.setattr(subprocess, "run", missing)
