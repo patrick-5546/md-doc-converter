@@ -20,6 +20,7 @@ import pytest
 
 from md_doc_converter.markdown import preprocess
 from md_doc_converter.markdown.document import READER, MarkdownError
+from md_doc_converter.markdown.file_paths import url_path
 from md_doc_converter.markdown.headings import HeadingError
 from md_doc_converter.pandoc import JSONValue
 from md_doc_converter.rendering import pipeline as render
@@ -439,7 +440,7 @@ def test_files_that_the_extra_stylesheet_names_are_embedded(
     web.files["/mark.svg"] = (b"<svg/>", "image/svg+xml")
     css = (
         "@font-face { src: url(fonts/brand.woff2) format('woff2'); }\n"
-        f'.logo {{ background: url("{logo}"), url({web.url}/mark.svg#top); }}\n'
+        f'.logo {{ background: url("{url_path(str(logo))}"), url({web.url}/mark.svg#top); }}\n'
         ".mask { mask: url(#shape), url(data:image/png;base64,AA==), url(missing.png), "
         f"url({web.url}/gone.svg); }}\n"
     )

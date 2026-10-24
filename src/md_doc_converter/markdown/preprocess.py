@@ -47,6 +47,7 @@ from md_doc_converter import executables
 from md_doc_converter import pandoc as _pandoc
 from md_doc_converter.console import active, shown
 from md_doc_converter.download import DownloadError, download
+from md_doc_converter.markdown import file_paths
 from md_doc_converter.markdown.document import READER as _RENDERER_READER
 from md_doc_converter.markdown.document import MarkdownDocument, MarkdownError
 from md_doc_converter.markdown.headings import combined_identifiers, header_blocks
@@ -78,17 +79,17 @@ def resolve_relative_paths(
     if source_path is None:
         return
 
-    source_dir = posixpath.dirname(source_path)
+    source_dir = os.path.dirname(source_path)  # noqa: PTH120
     if not source_dir:
         return
+    # Link targets are URL paths. Encode filesystem characters without decoding
+    # reserved URL delimiters.
+    directory = file_paths.url_path(source_dir)
 
     def _resolve(target: str, _image: bool) -> str:
         url = urlsplit(target)
         if url.scheme or url.netloc or not url.path or url.path.startswith("/"):
             return target
-        # Link targets are URL paths. Encode filesystem characters without decoding
-        # reserved URL delimiters.
-        directory = quote(source_dir, safe="/")
         resolved = posixpath.normpath(posixpath.join(directory, url.path))
         result = urlunsplit(("", "", resolved, url.query, url.fragment))
         if result != target:
@@ -325,7 +326,7 @@ def warn_broken_images(
         if url.scheme or url.netloc or not url.path:
             return
         path = unquote(url.path)
-        resolved = os.path.normpath(source_dir / path)
+        resolved = os.path.normpath(source_dir / file_paths.file_path(url.path))
         if resolved not in warned_files and not Path(resolved).is_file():
             warned_files.add(resolved)
             active().warning(
@@ -484,7 +485,7 @@ def warn_crossfile_md_links(
         if target in warned:
             return target
         warned.add(target)
-        if (source_dir / unquote(url.path)).is_file():
+        if (source_dir / file_paths.file_path(url.path)).is_file():
             active().warning(
                 f"cross-file link to '{target}' will not resolve in single-file output; "
                 "render the containing folder instead",
@@ -705,7 +706,8 @@ def collect_directory(
         active().detail(f"reading {shown(file_path)}")
         content = file_path.read_text(encoding="utf-8")
         document = _prepare_document(content, source_path=str(file_path), stats=stats, embed=embed)
-        return _CollectedMarkdown(os.path.normpath(file_path), document)
+        # Windows names a file in any case, so links find it whatever case they spell.
+        return _CollectedMarkdown(os.path.normcase(os.path.normpath(file_path)), document)
 
     def _collect(
         directory: Path, title_content: _CollectedMarkdown | None = None
@@ -852,7 +854,7 @@ def _file_link_resolver(
                 )
             return path
 
-        normalized = os.path.normpath(unquote(file_path))
+        normalized = os.path.normcase(os.path.normpath(file_paths.file_path(file_path)))
         if normalized not in file_anchor_map:
             if normalized not in warned:
                 warned.add(normalized)
@@ -1006,7 +1008,7 @@ class ImageEmbedder:
                 return self._left(target, "rendering downloads images only with --download-images")
             return self._download(target)
         try:
-            path = Path(unquote(url.path)).resolve(strict=True)
+            path = Path(file_paths.file_path(url.path)).resolve(strict=True)
         except OSError, RuntimeError:
             return self._left(target, None)  # warn_broken_images names a missing image.
         if not path.is_relative_to(self.root):

@@ -10,8 +10,14 @@ import pytest
 
 from md_doc_converter.markdown import preprocess
 from md_doc_converter.markdown.document import MarkdownDocument
+from md_doc_converter.markdown.file_paths import url_path
 from tests.support import documents
 from tests.support.web_server import WebServer
+
+
+def target(path: Path) -> str:
+    """The absolute path of a file as an image target, as an author writes it on this system."""
+    return url_path(str(path))
 
 
 def test_only_image_files_inside_the_root_are_embedded(
@@ -25,24 +31,24 @@ def test_only_image_files_inside_the_root_are_embedded(
     (folder / "pictures" / "escape.png").symlink_to(tmp_path / "secret.png")
     chart, secret = folder / "pictures" / "chart.png", tmp_path / "secret.png"
     kept = [
-        str(secret),
+        target(secret),
         secret.as_uri(),
-        str(folder / "pictures" / "escape.png"),
-        str(folder / "pictures"),
-        str(folder / "notes.txt"),
+        target(folder / "pictures" / "escape.png"),
+        target(folder / "pictures"),
+        target(folder / "notes.txt"),
         "https://example.test/remote.png",
         "ftp://example.test/remote.png",
-        str(folder / "missing.png"),
+        target(folder / "missing.png"),
     ]
     document = MarkdownDocument(
-        f'![chart]({chart}#part) <img src="{chart}">\n\n'
-        + " ".join(f"![kept]({target})" for target in kept)
+        f'![chart]({target(chart)}#part) <img src="{target(chart)}">\n\n'
+        + " ".join(f"![kept]({image})" for image in kept)
         + "\n\n![data](data:image/png;base64,ZGF0YQ==) [link](https://example.test/page)\n"
     )
     embed = preprocess.ImageEmbedder(folder)
 
     embed(document)
-    embed(MarkdownDocument(f"![again]({secret})\n"))
+    embed(MarkdownDocument(f"![again]({target(secret)})\n"))
     prepared = documents.markdown(pandoc, document.ast)
     result = preprocess.embed_images(prepared, embed.images)
 
@@ -51,19 +57,22 @@ def test_only_image_files_inside_the_root_are_embedded(
     assert list(embed.images.values()) == ["Y2hhcnQ="]
     assert "data:image/png;base64,Y2hhcnQ=#part" in result
     assert '<img src="data:image/png;base64,Y2hhcnQ=">' in result
-    for target in kept:
-        assert f"]({target})" in result
+    for image in kept:
+        assert f"]({image})" in result
     assert "](data:image/png;base64,ZGF0YQ==)" in result
     assert "[link](https://example.test/page)" in result
     assert embed.unembedded == set(kept)
     # Each is reported once, except a missing image, which warn_broken_images reports.
     image = "md-doc-converter: warning: image"
     assert capsys.readouterr().err.splitlines() == [
-        f"{image} {secret} is not embedded: it is outside {folder}",
+        f"{image} {target(secret)} is not embedded: it is outside {folder}",
         f"{image} {secret.as_uri()} is not embedded: it is outside {folder}",
-        f"{image} {folder / 'pictures' / 'escape.png'} is not embedded: it is outside {folder}",
-        f"{image} {folder / 'pictures'} is not embedded: it is not a file",
-        f"{image} {folder / 'notes.txt'} is not embedded: it is not an image",
+        (
+            f"{image} {target(folder / 'pictures' / 'escape.png')} is not embedded: "
+            f"it is outside {folder}"
+        ),
+        f"{image} {target(folder / 'pictures')} is not embedded: it is not a file",
+        f"{image} {target(folder / 'notes.txt')} is not embedded: it is not an image",
         (
             f"{image} https://example.test/remote.png is not embedded: "
             "rendering downloads images only with --download-images"
@@ -81,8 +90,8 @@ def test_placeholders_are_unique_to_each_render_and_only_its_own_are_replaced(
     (tmp_path / "a.png").write_bytes(b"a")
     first, second = preprocess.ImageEmbedder(tmp_path), preprocess.ImageEmbedder(tmp_path)
 
-    first(MarkdownDocument(f"![a]({tmp_path / 'a.png'})\n"))
-    second(MarkdownDocument(f"![a]({tmp_path / 'a.png'})\n"))
+    first(MarkdownDocument(f"![a]({target(tmp_path / 'a.png')})\n"))
+    second(MarkdownDocument(f"![a]({target(tmp_path / 'a.png')})\n"))
     [mine], [other] = first.images, second.images
 
     assert mine != other
@@ -99,7 +108,7 @@ def test_pandoc_keeps_the_placeholders_that_the_image_data_replaces(
     # Pandoc drops an image whose data URI it cannot decode, so a placeholder must be base64.
     chart = tmp_path / "chart.png"
     chart.write_bytes(b"chart")
-    document = MarkdownDocument(f'![chart]({chart})\n\n<img src="{chart}">\n')
+    document = MarkdownDocument(f'![chart]({target(chart)})\n\n<img src="{target(chart)}">\n')
     embed = preprocess.ImageEmbedder(tmp_path)
     embed(document)
     # The renderer hands Pandoc the prepared document as JSON.

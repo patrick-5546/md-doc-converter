@@ -21,6 +21,7 @@ from md_doc_converter import executables
 from md_doc_converter import pandoc as _pandoc
 from md_doc_converter.console import Console, activated, active, add_verbosity_options, shown
 from md_doc_converter.download import DownloadError, download
+from md_doc_converter.markdown import file_paths
 from md_doc_converter.media_types import FONT_TYPES, IMAGE_TYPES
 from md_doc_converter.rendering.header import page_css
 from md_doc_converter.resources import asset_path
@@ -177,7 +178,7 @@ def embed_stylesheet_files(css: str, folder: Path) -> str:
             return match[0]
         try:
             if local:
-                path = folder / unquote(url.path)
+                path = folder / file_paths.file_path(url.path)
                 data = path.read_bytes()
                 suffix = path.suffix.casefold()
                 kind = (

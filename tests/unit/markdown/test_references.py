@@ -16,13 +16,14 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import override
 from unittest import mock
-from urllib.parse import quote, unquote, urlsplit
+from urllib.parse import quote, urlsplit
 
 import pytest
 
 from md_doc_converter.console import Console, activated
 from md_doc_converter.markdown import preprocess
 from md_doc_converter.markdown.document import MarkdownDocument, MarkdownError
+from md_doc_converter.markdown.file_paths import file_path, url_path
 from tests.support import documents
 
 
@@ -126,7 +127,7 @@ def test_collection_resolves_reference_forms_before_combining_files(
     ] * 3
     assert output.links[4][2] == "formatted label"
     assert len(output.images) == 3
-    assert all(unquote(image[0]) == str(docs / "pic.png") for image in output.images)
+    assert all(file_path(image[0]) == str(docs / "pic.png") for image in output.images)
     assert all(image[1] == "Picture" for image in output.images)
     assert "[unbound]" in "".join(output.text)
     assert "undefined reference link '[absent]'" in stderr
@@ -170,11 +171,11 @@ def test_multiline_casefolded_definitions_titles_and_encoded_image_paths(
         ("#r%C3%A9sum%C3%A9", "Anchor title", "multi line"),
     ]
     assert output.links[3][1] == 'Title "quoted"'
-    assert unquote(urlsplit(output.links[3][0]).path) == str(root / "other page(1).md")
+    assert file_path(urlsplit(output.links[3][0]).path) == str(root / "other page(1).md")
     assert len(output.images) == 2
     for image, title in output.images:
         url = urlsplit(image)
-        assert unquote(url.path) == str(picture)
+        assert file_path(url.path) == str(picture)
         assert url.query == "version=1&mode=2"
         assert url.fragment == "part"
         assert title == "Image title"
@@ -195,7 +196,7 @@ def test_repeated_reference_image_labels_are_scoped_to_their_source(
             f"# {name}\n\n![pic][]\n\n[pic]: pic.png\n", encoding="utf-8"
         )
     result = preprocess.collect_directory(tmp_path, defaultdict(Counter))
-    assert [unquote(path) for path, _title in rendered(result).images] == expected
+    assert [file_path(path) for path, _title in rendered(result).images] == expected
 
 
 def test_escaped_reference_labels_and_literal_brackets(
@@ -288,9 +289,10 @@ def test_missing_reference_targets_warn_without_guessing_or_losing_titles(
     result = preprocess.collect_directory(tmp_path, defaultdict(Counter))
     stderr = capsys.readouterr().err
     output = rendered(result)
+    target = url_path(str(tmp_path / "b.md"))
     assert output.links == [
-        (str(tmp_path / "b.md") + "#absent", "Missing", "missing"),
-        (str(tmp_path / "b.md") + "?version=1#b", "Query", "query"),
+        (target + "#absent", "Missing", "missing"),
+        (target + "?version=1#b", "Query", "query"),
         ("https://example.test/b.md#b", "Remote", "remote"),
     ]
     assert "heading not found in target file" in stderr
