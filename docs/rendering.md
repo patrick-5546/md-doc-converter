@@ -75,8 +75,9 @@ as GitHub shows it:
 - Heading IDs are GitHub's, the same that Word conversion writes. In a folder,
   links between files lead to the right heading of the combined document, even
   among repeated headings; a link to a heading that does not exist is reported.
-- Each file's link references and footnotes are its own, so a label used in two
-  files keeps each file's definition.
+- Each file's link references, footnotes and lists are its own: a label used in
+  two files keeps each file's definition, and a list that ends one file does not
+  continue into the next.
 - A code block's language is the first word of its info string, so
   `` ```python title="x.py" `` opens a Python code block.
 - GitHub's math syntax works; see [Math](#math).

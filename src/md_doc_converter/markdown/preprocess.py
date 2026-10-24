@@ -4,9 +4,10 @@ Markdown preprocessor that prepares files for pandoc ingestion.
 Per-file text cleanup removes Azure DevOps macros and defuses accidental
 bit-notation reference definitions. Pandoc then resolves inline, full, collapsed
 and shortcut links/images with the renderer's reader. Targets are checked and
-made source-relative before files are combined; reference labels from different
-source files cannot collide. Only private prepared Markdown is normalized;
-source files are never rewritten.
+made source-relative in each file's parsed document. The result is a Pandoc
+document, not Markdown, so a folder's files are combined as document trees:
+reference labels, footnotes and lists stay within their file. Source files are
+never rewritten.
 
 Warnings cover missing images, empty placeholder data URIs, undefined reference
 labels and same-file links without matching headings. Literal code is not
@@ -24,7 +25,8 @@ directory has a sibling ``.md`` file with the same name (e.g.
 ``topic.md`` next to ``topic/``), that file is used as the title page for
 the directory.  Cross-file ``.md`` links are resolved to internal heading
 anchors (bare links to the target's first heading, ``#fragment`` links to the
-matching heading), and unresolved ones are reported on stderr.
+matching heading), and unresolved ones are reported on stderr.  Heading
+identifiers are the ones Pandoc gives the files' headings read as one document.
 ``prepare_markdown(folder, respect_gitignore=True)`` skips files and directories
 that git ignores.
 """
@@ -41,13 +43,13 @@ from collections import Counter, defaultdict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
 from urllib.parse import quote, unquote, urldefrag, urlsplit, urlunsplit
 
 from md_doc_converter import pandoc as _pandoc
 from md_doc_converter.download import DownloadError, download
 from md_doc_converter.markdown.document import READER as _RENDERER_READER
 from md_doc_converter.markdown.document import MarkdownDocument, MarkdownError
+from md_doc_converter.markdown.headings import combined_identifiers, header_blocks
 from md_doc_converter.markdown.syntax import (
     container_line,
     inline_code_spans,
@@ -55,9 +57,6 @@ from md_doc_converter.markdown.syntax import (
     transform_outside_code,
 )
 from md_doc_converter.media_types import IMAGE_TYPES
-
-if TYPE_CHECKING:
-    from md_doc_converter.markdown.headings import Heading
 
 # ---------------------------------------------------------------------------
 
@@ -498,22 +497,9 @@ def warn_crossfile_md_links(
     document.transform_targets(_check)
 
 
-def _pandoc_headings(markdown: str, source_path: str | None) -> list["Heading"]:
-    """Return actual renderer heading identities for *markdown*."""
-    from md_doc_converter.markdown.headings import HeadingError, headings
-
-    try:
-        return headings(markdown, reader=_RENDERER_READER)
-    except HeadingError as exc:
-        location = f" in {source_path}" if source_path else ""
-        raise HeadingError(f"failed to collect heading identifiers{location}: {exc}") from exc
-
-
 @dataclass(frozen=True)
 class _CollectedMarkdown:
     path: str
-    content: str
-    headings: list["Heading"]
     document: MarkdownDocument
 
 
@@ -547,34 +533,14 @@ def _prepare_document(
         stats = defaultdict(Counter)
     for transform in TEXT_TRANSFORMS:
         text = transform(text, source_path, stats[transform.__name__])
-    document = MarkdownDocument(text, source_path=source_path or "")
+    document = MarkdownDocument(text)
     if single_file:
         warn_crossfile_md_links(document, source_path, stats["warn_crossfile_md_links"])
     for target_transform in TARGET_TRANSFORMS:
         target_transform(document, source_path, stats[target_transform.__name__])
     if embed is not None:
         embed(document)
-    if not single_file and _defines_references(text):
-        # A folder's files are joined as Markdown, where a definition would reach every file.
-        document.render(normalize_references=True)
     return document
-
-
-def _defines_references(text: str) -> bool:
-    """Whether *text* defines a link reference or a footnote outside code.
-
-    Definitions are file-scoped, even when their labels are unused locally. The parser
-    resolves full, collapsed and shortcut references, not this check.
-    """
-    references = False
-
-    def _detect_references(prose: str) -> str:
-        nonlocal references
-        references = references or re.search(r"(?<!\\)(?:\\\\)*\]:", prose) is not None
-        return prose
-
-    transform_outside_code(text, _detect_references)
-    return references
 
 
 def preprocess(
@@ -656,8 +622,8 @@ def collect_directory(
     respect_gitignore: bool = False,
     *,
     embed: Callable[[MarkdownDocument], None] | None = None,
-) -> str:
-    """Collect all .md files in a directory tree into one document.
+) -> dict[str, _pandoc.JSONValue]:
+    """Collect all .md files in a directory tree into one document, as Pandoc JSON.
 
     If a ``.order`` file exists in a directory, its lines determine the
     order of entries (each line is a stem — either a ``.md`` file or a
@@ -665,10 +631,12 @@ def collect_directory(
     sorted order.  Directories without a ``.order`` file are sorted
     alphabetically.
 
-    Each file's image paths are resolved relative to its own location
-    before concatenation.  Cross-file ``.md`` links are resolved to
-    internal heading anchors when the target file is part of the
-    collection.
+    Each file is parsed on its own, so its reference definitions,
+    footnotes and lists stay its own, and its image paths are resolved
+    relative to its own location; the document is the files' parsed
+    blocks, in order.  Headings get the identifiers that Pandoc gives them
+    in one document of all the files, and cross-file ``.md`` links are
+    resolved to them when the target file is part of the collection.
     """
     if respect_gitignore and not in_git_work_tree(root):
         print(
@@ -678,10 +646,10 @@ def collect_directory(
         )
         respect_gitignore = False
 
-    # Cross-file link resolution state, populated after collection by parsing
-    # both each file and the combined document through Pandoc. This keeps local
-    # and combined anchors aligned to the actual renderer's GFM-compatible IDs,
-    # including Unicode, punctuation, explicit attributes and duplicate suffixes.
+    # Cross-file link resolution state, populated after collection from each
+    # file's headings and their identifiers in the combined document, which
+    # Pandoc assigns: the renderer's GFM-compatible IDs, including Unicode,
+    # punctuation, explicit attributes and duplicate suffixes.
     file_slug_map: dict[str, str] = {}
     file_anchor_map: dict[str, dict[str, str]] = {}
 
@@ -722,12 +690,11 @@ def collect_directory(
         return sorted(entries)
 
     def _read_md(file_path: Path) -> _CollectedMarkdown:
-        """Read a markdown file, run all transforms, and record its heading anchors."""
+        """Read a markdown file and run all transforms."""
         print(f"  {file_path}", file=sys.stderr)
         content = file_path.read_text(encoding="utf-8")
         document = _prepare_document(content, source_path=str(file_path), stats=stats, embed=embed)
-        normalized = os.path.normpath(file_path)
-        return _CollectedMarkdown(normalized, document.render(), document.headings, document)
+        return _CollectedMarkdown(os.path.normpath(file_path), document)
 
     def _collect(
         directory: Path, title_content: _CollectedMarkdown | None = None
@@ -773,29 +740,30 @@ def collect_directory(
         title_content = _read_md(sibling_md)
 
     collected = _collect(root, title_content)
-    result = "\n\n".join(item.content for item in collected if item.content)
-    combined = _pandoc_headings(result, str(root))
-    expected = sum(len(item.headings) for item in collected)
-    if len(combined) != expected:
-        raise RuntimeError(
-            "combined markdown heading count changed during collection "
-            f"({len(combined)} parsed, expected {expected})"
-        )
+    pages = [item for item in collected if item.document.ast["blocks"]]
+    headers = [header_blocks(_blocks(item.document)) for item in pages]
+    combined = combined_identifiers(
+        headers,
+        reader=_RENDERER_READER,
+        api=pages[0].document.ast["pandoc-api-version"] if pages else [],
+    )
 
     index = 0
-    for item in collected:
-        item_combined = combined[index : index + len(item.headings)]
-        index += len(item.headings)
-        file_anchor_map[item.path] = {
-            local.identifier: merged.identifier
-            for local, merged in zip(item.headings, item_combined, strict=True)
-        }
-        if item_combined:
-            file_slug_map[item.path] = item_combined[0].identifier
+    for item, page in zip(pages, headers, strict=True):
+        identifiers = combined[index : index + len(page)]
+        index += len(page)
+        anchors: dict[str, str] = {}
+        for header, identifier in zip(page, identifiers, strict=True):
+            if not header.in_table:
+                anchors[header.identifier] = identifier
+                file_slug_map.setdefault(item.path, identifier)
+            # Pandoc reads the combined document as JSON, so it keeps these identifiers.
+            header.set_identifier(identifier)
+        file_anchor_map[item.path] = anchors
 
     resolve_file = _file_link_resolver(file_slug_map, file_anchor_map)
 
-    def _remap_links(item: _CollectedMarkdown) -> str:
+    def _remap_links(item: _CollectedMarkdown) -> None:
         anchors = file_anchor_map[item.path]
 
         def _remap(target: str, image: bool) -> str:
@@ -807,9 +775,27 @@ def collect_directory(
             return f"#{quote(combined_anchor, safe='')}" if combined_anchor is not None else target
 
         item.document.transform_targets(_remap)
-        return item.document.render()
 
-    return "\n\n".join(_remap_links(item) for item in collected if item.content)
+    blocks: list[_pandoc.JSONValue] = []
+    for item in pages:
+        _remap_links(item)
+        blocks.extend(_blocks(item.document))
+    if not pages:
+        return {"pandoc-api-version": [], "meta": {}, "blocks": []}
+    # The first page's metadata, such as a title block, is the document's.
+    first = pages[0].document.ast
+    return {
+        "pandoc-api-version": first["pandoc-api-version"],
+        "meta": first["meta"],
+        "blocks": blocks,
+    }
+
+
+def _blocks(document: MarkdownDocument) -> list[_pandoc.JSONValue]:
+    blocks = document.ast["blocks"]
+    if not isinstance(blocks, list):
+        raise MarkdownError("pandoc JSON did not include a blocks list")
+    return blocks
 
 
 def _file_link_resolver(
@@ -1053,11 +1039,10 @@ def prepare_markdown(
     embed = ImageEmbedder(image_root(source), download=download_images)
     if source.is_dir():
         # Each file is preprocessed during collection.
-        combined = collect_directory(
+        document = collect_directory(
             source, stats, respect_gitignore=respect_gitignore, embed=embed
         )
         print_stats(stats)
-        document = MarkdownDocument(combined).ast
     else:
         text = source.read_text(encoding="utf-8")
         document = preprocess(

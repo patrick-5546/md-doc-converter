@@ -12,46 +12,70 @@ from unittest import mock
 import pytest
 
 from md_doc_converter.markdown import preprocess
-from md_doc_converter.markdown.headings import Heading, HeadingError, headings
+from md_doc_converter.markdown.document import MarkdownDocument
+from md_doc_converter.markdown.headings import (
+    HeaderBlock,
+    Heading,
+    HeadingError,
+    combined_identifiers,
+    header_blocks,
+)
+from md_doc_converter.pandoc import JSONValue
+from tests.support import documents
 
 RENDERER_READER = "markdown-implicit_figures-yaml_metadata_block+gfm_auto_identifiers"
 
 
-def test_headings_reads_document_once(monkeypatch: pytest.MonkeyPatch) -> None:
-    payload = (
-        '{"blocks":['
-        '{"t":"Header","c":[1,["first",[],[]],[{"t":"Str","c":"First"}]]},'
-        '{"t":"Table","c":[{"t":"Header","c":[3,["cell",[],[]],[{"t":"Str","c":"Cell"}]]}]},'
-        '{"t":"Header","c":[2,["second",[],[]],[{"t":"Str","c":"Second"}]]}'
-        "]}"
+def header(level: int, identifier: str, text: str) -> HeaderBlock:
+    node: dict[str, JSONValue] = {
+        "t": "Header",
+        "c": [level, [identifier, [], []], [{"t": "Str", "c": text}]],
+    }
+    return HeaderBlock(node, in_table=False)
+
+
+def identify(*pages: list[HeaderBlock], pandoc: str = "pandoc") -> list[str]:
+    return combined_identifiers(pages, reader=RENDERER_READER, api=[1, 23], pandoc=pandoc)
+
+
+def parsed_headers(markdown: str, pandoc: str) -> list[HeaderBlock]:
+    blocks = MarkdownDocument(markdown, pandoc=pandoc).ast["blocks"]
+    assert isinstance(blocks, list)
+    return header_blocks(blocks)
+
+
+def test_combined_identifiers_take_one_pandoc_run_for_every_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = json.dumps(
+        {"blocks": [header(1, "same", "Same").node, header(1, "same-1", "Same").node]}
     )
-    completed = subprocess.CompletedProcess(
-        ["pandoc", "--from=gfm+raw_html", "--to=json"],
-        0,
-        stdout=payload,
-        stderr="",
-    )
-    run = mock.Mock(return_value=completed)
+    run = mock.Mock(return_value=subprocess.CompletedProcess(["pandoc"], 0, payload, ""))
     monkeypatch.setattr(subprocess, "run", run)
 
-    actual = headings("# First\n\n## Second\n")
-
-    assert actual == [Heading(1, "first", "First"), Heading(2, "second", "Second")]
+    assert identify([header(1, "same", "Same")], [header(1, "same", "Same")]) == ["same", "same-1"]
     run.assert_called_once()
+
+
+def test_no_headings_need_no_pandoc_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    run = mock.Mock()
+    monkeypatch.setattr(subprocess, "run", run)
+    assert identify([], []) == []
+    run.assert_not_called()
 
 
 def test_missing_pandoc_reports_the_command_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     missing = mock.Mock(side_effect=FileNotFoundError("missing executable"))
     monkeypatch.setattr(subprocess, "run", missing)
     with pytest.raises(HeadingError, match=r"failed to run.*missing executable"):
-        headings("# Heading\n", pandoc="missing-pandoc")
+        identify([header(1, "a", "A")], pandoc="missing-pandoc")
 
 
 def test_failed_pandoc_reports_its_diagnostic(monkeypatch: pytest.MonkeyPatch) -> None:
     completed = subprocess.CompletedProcess(["pandoc"], 1, stdout="", stderr="bad reader")
     monkeypatch.setattr(subprocess, "run", mock.Mock(return_value=completed))
     with pytest.raises(HeadingError, match=r"bad reader"):
-        headings("# Heading\n")
+        identify([header(1, "a", "A")])
 
 
 @pytest.mark.parametrize(
@@ -60,6 +84,8 @@ def test_failed_pandoc_reports_its_diagnostic(monkeypatch: pytest.MonkeyPatch) -
         pytest.param("not JSON", id="not-json"),
         pytest.param("[]", id="not-an-object"),
         pytest.param("{}", id="no-blocks"),
+        pytest.param('{"blocks":[]}', id="a-heading-lost"),
+        pytest.param('{"blocks":[{"t":"Para","c":[]}]}', id="not-a-heading"),
         pytest.param('{"blocks":[{"t":"Header","c":[]}]}', id="header-without-parts"),
         pytest.param(
             '{"blocks":[{"t":"Header","c":["1",["id",[],[]],[]]}]}', id="level-not-an-integer"
@@ -73,7 +99,7 @@ def test_malformed_pandoc_output_is_rejected(payload: str, monkeypatch: pytest.M
     completed = subprocess.CompletedProcess(["pandoc"], 0, stdout=payload, stderr="")
     monkeypatch.setattr(subprocess, "run", mock.Mock(return_value=completed))
     with pytest.raises(HeadingError):
-        headings("# Heading\n")
+        identify([header(1, "a", "A")])
 
 
 def test_gfm_heading_ids_match_pandoc(pandoc: str) -> None:
@@ -93,7 +119,7 @@ def test_gfm_heading_ids_match_pandoc(pandoc: str) -> None:
 | # Table Example |
 """
 
-    actual = headings(markdown, pandoc=pandoc)
+    actual = MarkdownDocument(markdown, pandoc=pandoc).headings
 
     assert [heading.identifier for heading in actual] == [
         "1-overview",
@@ -107,16 +133,30 @@ def test_gfm_heading_ids_match_pandoc(pandoc: str) -> None:
 
 
 def test_renderer_reader_honors_explicit_heading_ids(pandoc: str) -> None:
-    actual = headings(
-        "# Explicit {#custom-id}\n# 1. Overview\n",
-        pandoc=pandoc,
-        reader=RENDERER_READER,
-    )
+    actual = MarkdownDocument("# Explicit {#custom-id}\n# 1. Overview\n", pandoc=pandoc).headings
 
     assert actual == [
         Heading(1, "custom-id", "Explicit"),
         Heading(1, "1-overview", "1. Overview"),
     ]
+
+
+def test_headings_in_quotes_lists_and_tables_are_identified_as_one_document_would(
+    pandoc: str,
+) -> None:
+    pages = [
+        "# Same\n\nText.\n\n# Résumé\n",
+        "# Same\n\n# 1. Overview\n# Résumé\n\n# Explicit {#custom-id}\n\n# Same\n",
+        "# Intro {#same-1 .cls}\n\n> # Quoted\n\n- # In a list\n\n# Same\n",
+        "+---------------+\n| # In a table  |\n+---------------+\n\n# In a table\n",
+    ]
+    headers = [parsed_headers(page, pandoc) for page in pages]
+    joined = parsed_headers("\n\n".join(pages), pandoc)
+
+    combined = combined_identifiers(headers, reader=RENDERER_READER, api=[1, 23], pandoc=pandoc)
+
+    assert combined == [header.identifier for header in joined]
+    assert [header.in_table for page in headers for header in page].count(True) == 1
 
 
 def test_same_file_anchor_warning_uses_renderer_ids(capsys: pytest.CaptureFixture[str]) -> None:
@@ -178,7 +218,8 @@ def test_directory_links_remap_to_combined_renderer_ids(
     )
     stats: dict[str, Counter[str]] = defaultdict(Counter)
 
-    result = preprocess.collect_directory(docs, stats)
+    document = preprocess.collect_directory(docs, stats)
+    result = documents.markdown(pandoc, document)
 
     stderr = capsys.readouterr().err
     assert "[bare](#same-1)" in result
@@ -196,15 +237,9 @@ def test_directory_links_remap_to_combined_renderer_ids(
     assert "broken anchor" not in stderr
     assert "target not found" not in stderr
 
-    rendered = subprocess.run(
-        [pandoc, f"--from={RENDERER_READER}", "--to=json"],
-        input=result,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    blocks = json.loads(rendered.stdout)["blocks"]
-    assert [block["c"][1][0] for block in blocks if block["t"] == "Header"] == [
+    blocks = document["blocks"]
+    assert isinstance(blocks, list)
+    assert [header.identifier for header in header_blocks(blocks)] == [
         "same",
         "résumé",
         "same-1",

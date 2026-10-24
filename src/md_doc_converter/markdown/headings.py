@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 
 from md_doc_converter import pandoc as _pandoc
+from md_doc_converter.pandoc import JSONValue
+from md_doc_converter.resources import asset_path
 
 
 @dataclass(frozen=True)
@@ -17,22 +20,93 @@ class HeadingError(RuntimeError):
     pass
 
 
-def headings(
-    markdown: str, *, pandoc: str = "pandoc", reader: str = "gfm+raw_html"
-) -> list[Heading]:
-    """Return Pandoc-assigned heading identities for *markdown*.
+@dataclass(frozen=True)
+class HeaderBlock:
+    """A Header block of Pandoc JSON, and whether it is in a table."""
 
-    The document is parsed once through Pandoc's typed JSON AST. Only real
-    Markdown ``Header`` blocks outside tables are returned; headings appearing
-    as literal code/examples or inside table cells are ignored.
+    node: dict[str, JSONValue]
+    in_table: bool
+
+    @property
+    def identifier(self) -> str:
+        return _parse_header(self.node).identifier
+
+    def set_identifier(self, identifier: str) -> None:
+        content = self.node.get("c")
+        if not isinstance(content, list) or len(content) != 3:
+            raise HeadingError("pandoc JSON contained a malformed Header block")
+        attributes = content[1]
+        if not isinstance(attributes, list) or not attributes:
+            raise HeadingError("pandoc JSON Header attribute did not include an identifier")
+        attributes[0] = identifier
+
+
+def header_blocks(blocks: Sequence[JSONValue]) -> list[HeaderBlock]:
+    """Each Header block in *blocks*, in document order.
+
+    collect_headings() reads those that are not in a table.
     """
+    found: list[HeaderBlock] = []
+
+    def visit(value: JSONValue, in_table: bool) -> None:
+        if isinstance(value, list):
+            for item in value:
+                visit(item, in_table)
+        elif isinstance(value, dict):
+            if value.get("t") == "Header":
+                found.append(HeaderBlock(value, in_table))
+            else:
+                visit(value.get("c"), in_table or value.get("t") == "Table")
+
+    visit(list(blocks), False)
+    return found
+
+
+def combined_identifiers(
+    pages: Sequence[Sequence[HeaderBlock]],
+    *,
+    reader: str,
+    api: JSONValue,
+    pandoc: str = "pandoc",
+) -> list[str]:
+    """The identifiers that Pandoc's *reader* gives the Header blocks of *pages*, each page's
+    in document order, when the pages are read as one document.
+
+    Each page's identifiers are its own, made unique across the pages, as Pandoc makes them:
+    one Pandoc run writes each page's headings as Markdown on their own, and reads them all back
+    as one document (assets/heading-ids.lua). *api* is the pages' pandoc-api-version.
+    """
+    count = sum(len(page) for page in pages)
+    if not count:
+        return []
+    document: dict[str, JSONValue] = {
+        "pandoc-api-version": api,
+        "meta": {"md-doc-converter-reader": {"t": "MetaString", "c": reader}},
+        "blocks": [
+            {"t": "Div", "c": [["", [], []], [header.node for header in page]]} for page in pages
+        ],
+    }
     try:
-        document = _pandoc.parse_markdown(
-            markdown, pandoc=pandoc, reader=reader, description="parsing markdown headings"
+        payload = _pandoc.run(
+            json.dumps(document),
+            "--from=json",
+            "--to=json",
+            "--lua-filter",
+            str(asset_path("heading-ids.lua")),
+            pandoc=pandoc,
+            description="identifying headings",
         )
+        blocks = _pandoc.decode_document(payload, pandoc=pandoc)["blocks"]
     except _pandoc.PandocError as error:
         raise HeadingError(str(error)) from error
-    return collect_headings(document.blocks)
+    if not isinstance(blocks, list) or len(blocks) != count:
+        raise HeadingError(f"Pandoc read {count} headings as something else")
+    identifiers: list[str] = []
+    for block in blocks:
+        if _tag(block) != "Header":
+            raise HeadingError(f"Pandoc read a heading as {_tag(block)}")
+        identifiers.append(_parse_header(block).identifier)
+    return identifiers
 
 
 def collect_headings(blocks: Sequence[object]) -> list[Heading]:

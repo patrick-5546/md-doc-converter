@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -9,11 +10,12 @@ import pytest
 
 from md_doc_converter.markdown import preprocess
 from md_doc_converter.markdown.document import MarkdownDocument
+from tests.support import documents
 from tests.support.web_server import WebServer
 
 
 def test_only_image_files_inside_the_root_are_embedded(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, pandoc: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
     folder = tmp_path / "docs"
     (folder / "pictures").mkdir(parents=True)
@@ -41,7 +43,7 @@ def test_only_image_files_inside_the_root_are_embedded(
 
     embed(document)
     embed(MarkdownDocument(f"![again]({secret})\n"))
-    prepared = document.render()
+    prepared = documents.markdown(pandoc, document.ast)
     result = preprocess.embed_images(prepared, embed.images)
 
     # Pandoc reads a short placeholder for the chart's data, which the HTML gets after it.
@@ -102,8 +104,9 @@ def test_pandoc_keeps_the_placeholders_that_the_image_data_replaces(
     document = MarkdownDocument(f'![chart]({chart})\n\n<img src="{chart}">\n')
     embed = preprocess.ImageEmbedder(tmp_path)
     embed(document)
-    prepared = tmp_path / "prepared.md"
-    prepared.write_text(document.render(), encoding="utf-8")
+    # The renderer hands Pandoc the prepared document as JSON.
+    prepared = tmp_path / "prepared.json"
+    prepared.write_text(json.dumps(document.ast), encoding="utf-8")
 
     html = subprocess.run(
         [
@@ -114,7 +117,7 @@ def test_pandoc_keeps_the_placeholders_that_the_image_data_replaces(
             "--metadata",
             "title=t",
             "--from",
-            "markdown-implicit_figures",
+            "json",
             "--to",
             "html",
             str(prepared),
@@ -146,7 +149,7 @@ def test_images_are_embedded_from_the_repository_or_the_folder_holding_the_input
 
 
 def test_images_shown_by_url_are_downloaded_once_each(
-    web: WebServer, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    web: WebServer, tmp_path: Path, pandoc: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
     web.files["/logo.svg"] = (b"<svg/>", "image/svg+xml")
     web.files["/page.html"] = (b"<p>page</p>", "text/html")
@@ -158,7 +161,7 @@ def test_images_shown_by_url_are_downloaded_once_each(
     embed = preprocess.ImageEmbedder(tmp_path, download=True)
 
     embed(document)
-    prepared = document.render()
+    prepared = documents.markdown(pandoc, document.ast)
 
     assert "PHN2Zy8+" not in prepared
     assert list(embed.images.values()) == ["PHN2Zy8+"]

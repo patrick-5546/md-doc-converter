@@ -6,8 +6,9 @@ Each fake answers ``--version`` with its configured version, records every other
 writes the files that the real tool would:
 
 - pandoc answers the preprocessor's ``--to=json`` parses with headings only, so test inputs
-  should be plain Markdown without links or reference definitions, and otherwise writes the
-  headings of the document it reads, as Markdown, wrapped in the inlined styles as the HTML;
+  should be plain Markdown without links or reference definitions; answers a folder's
+  heading-identifier run by reading its pages' headings as one document; and otherwise writes
+  the headings of the document it reads, as Markdown, wrapped in the inlined styles as the HTML;
 - node writes a placeholder PDF;
 - npm installs the package files that rendering reads, an mmdc and a Puppeteer command line;
 - mmdc writes each diagram's text as its SVG, and fails on a diagram that contains ``FAIL``;
@@ -56,7 +57,13 @@ def _headings(markdown: str) -> dict[str, object]:
                 "c": [len(heading[1]), [identifier, [], []], [{"t": "Str", "c": title}]],
             }
         )
-    return {"blocks": blocks}
+    return {"pandoc-api-version": [1, 23, 1], "meta": {}, "blocks": blocks}
+
+
+def _identified(document: object) -> dict[str, object]:
+    """What assets/heading-ids.lua makes of *document*: its pages' headings, read as one."""
+    pages = document.get("blocks", []) if isinstance(document, dict) else []
+    return _headings("".join(_heading_lines({"blocks": page["c"][1]}) for page in pages))
 
 
 def _heading_lines(document: object) -> str:
@@ -114,7 +121,9 @@ def main(config: Config) -> int:
         print(config["versions"][tool])
         return 0
     if tool == "pandoc" and "--to=json" in arguments:
-        print(json.dumps(_headings(sys.stdin.read())))
+        source = sys.stdin.read()
+        document = _identified(json.loads(source)) if "--from=json" in arguments else None
+        print(json.dumps(document or _headings(source)))
         return 0
     if os.environ.get("FAKE_TOOL_FAIL") == tool:
         return 3

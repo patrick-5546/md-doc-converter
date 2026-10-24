@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import copy
-import hashlib
 import html
-import json
 import re
 from collections.abc import Callable
 from html.parser import HTMLParser
@@ -14,7 +11,6 @@ from typing_extensions import override
 
 from md_doc_converter import pandoc as _pandoc
 from md_doc_converter.markdown.headings import Heading, collect_headings
-from md_doc_converter.resources import asset_path
 
 READER = "markdown-implicit_figures-yaml_metadata_block+gfm_auto_identifiers"
 TargetTransform = Callable[[str, bool], str]
@@ -82,9 +78,8 @@ def strip_column_widths(value: object) -> None:
     """Give every table column in Pandoc JSON *value* the default width.
 
     Pandoc's reader gives a pipe table column widths when one of its lines is longer than 72
-    characters. Rendering never uses them (see assets/strip-colwidths.lua), but the Markdown
-    writer can keep a table with widths only as a multiline table, which reads back with
-    every column left-aligned.
+    characters. Rendering never uses them (see assets/strip-colwidths.lua), so two parses of a
+    table whose lines differ only in length are the same without them.
     """
     if isinstance(value, list):
         for item in value:
@@ -99,49 +94,37 @@ def strip_column_widths(value: object) -> None:
             strip_column_widths(child)
 
 
-def _transform_targets(value: object, transform: TargetTransform, *, raw_html: bool = True) -> bool:
-    changed = False
+def _transform_targets(value: object, transform: TargetTransform) -> None:
     if isinstance(value, list):
         for item in value:
-            changed = _transform_targets(item, transform, raw_html=raw_html) or changed
+            _transform_targets(item, transform)
     elif isinstance(value, dict):
         tag, content = value.get("t"), value.get("c")
         if tag in {"Code", "CodeBlock"}:
-            return False
+            return
         if tag in {"Link", "Image"}:
             if not isinstance(content, list) or len(content) != 3:
                 raise MarkdownError(f"pandoc JSON contained a malformed {tag}")
             target = content[2]
             if not isinstance(target, list) or len(target) != 2 or not isinstance(target[0], str):
                 raise MarkdownError(f"pandoc JSON contained a malformed {tag} target")
-            replacement = transform(target[0], tag == "Image")
-            changed = replacement != target[0]
-            target[0] = replacement
-        elif raw_html and tag in {"RawInline", "RawBlock"}:
+            target[0] = transform(target[0], tag == "Image")
+        elif tag in {"RawInline", "RawBlock"}:
             if (
                 isinstance(content, list)
                 and len(content) == 2
                 and content[0] == "html"
                 and isinstance(content[1], str)
             ):
-                replacement = _HTMLTargets(content[1], transform).rewritten()
-                changed = replacement != content[1]
-                content[1] = replacement
+                content[1] = _HTMLTargets(content[1], transform).rewritten()
         for child in value.values():
-            changed = _transform_targets(child, transform, raw_html=raw_html) or changed
-    return changed
+            _transform_targets(child, transform)
 
 
 class MarkdownDocument:
-    """Parse once, transform typed targets, and serialize only changed inputs."""
+    """Markdown parsed once by the renderer's reader; transforms edit its typed targets."""
 
-    def __init__(self, markdown: str, *, source_path: str = "", pandoc: str = "pandoc") -> None:
-        self.pandoc = pandoc
-        self._markdown = markdown
-        self.changed = False
-        self.note_prefix = (
-            "md-doc-converter-" + hashlib.sha256(source_path.encode()).hexdigest() + "-"
-        )
+    def __init__(self, markdown: str, *, pandoc: str = "pandoc") -> None:
         try:
             parsed = _pandoc.parse_markdown(
                 markdown,
@@ -154,18 +137,6 @@ class MarkdownDocument:
             raise MarkdownError(str(error)) from error
         self.ast = parsed.ast
 
-    def _run(self, text: str, *arguments: str) -> str:
-        try:
-            return _pandoc.run(
-                text,
-                *arguments,
-                pandoc=self.pandoc,
-                description="preparing Markdown",
-                emit_warnings=True,
-            )
-        except _pandoc.PandocError as error:
-            raise MarkdownError(str(error)) from error
-
     @property
     def headings(self) -> list[Heading]:
         blocks = self.ast["blocks"]
@@ -174,28 +145,4 @@ class MarkdownDocument:
         return collect_headings(blocks)
 
     def transform_targets(self, transform: TargetTransform) -> None:
-        self.changed = _transform_targets(self.ast, transform) or self.changed
-
-    def render(self, *, normalize_references: bool = False) -> str:
-        if not self.changed and not normalize_references:
-            return self._markdown
-        ast = copy.deepcopy(self.ast)
-        strip_column_widths(ast)
-        # Pandoc's Markdown writer leaves entity-like URL text unescaped.
-        _transform_targets(
-            ast, lambda target, _image: html.escape(target, quote=False), raw_html=False
-        )
-        self._markdown = self._run(
-            json.dumps(ast),
-            "--from=json",
-            f"--to={READER}-simple_tables-raw_attribute",
-            "--standalone",
-            "--lua-filter",
-            str(asset_path("reference-notes.lua")),
-            "--metadata",
-            f"md-doc-converter-note-prefix:{self.note_prefix}",
-            "--wrap=none",
-            "--markdown-headings=atx",
-        )
-        self.changed = False
-        return self._markdown
+        _transform_targets(self.ast, transform)

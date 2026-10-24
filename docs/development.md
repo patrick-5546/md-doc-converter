@@ -41,7 +41,10 @@ Rendering prepares the Markdown in `markdown/preprocess.py`: it collects a
 folder, adjusts what Pandoc's Markdown reader would read differently from
 GitHub, and embeds images, each as a short placeholder for its data. It parses
 the Markdown once, with `markdown/document.py`'s reader, and hands Pandoc the
-parsed document as Pandoc JSON, not written back to Markdown.
+parsed document as Pandoc JSON, not written back to Markdown. A folder's files
+are parsed one by one and joined as document trees; one more Pandoc run, with
+`assets/heading-ids.lua`, gives their headings the identifiers that Pandoc gives
+them read as one document.
 `rendering/pipeline.py` then runs Pandoc in its sandbox with
 `assets/pandoc-defaults.yaml`, whose filters read GitHub's math, draw Mermaid
 diagrams and KaTeX math, and adjust tables; puts the images' data in the HTML,

@@ -5,7 +5,6 @@ Most tests render the preprocessed Markdown with the pinned Pandoc and check its
 
 from __future__ import annotations
 
-import json
 import re
 import subprocess
 import time
@@ -223,61 +222,6 @@ def test_reference_labels_ending_in_an_escaped_backslash_remain_file_scoped(
     assert rendered(result).links == [("#a", "", "local"), ("#b", "", "local")]
 
 
-def test_normalization_preserves_parsed_content_including_entity_like_urls(
-    convert: Convert,
-) -> None:
-    source = """% Document title
-% Author name
-% 2026-09-18
-
-# Same
-
-# Same
-
-# Explicit {#custom}
-
-[formatted `code`][ref] [ref][] [ref] ![picture][image]
-
-[ref]: <other page.md#target> "Title"
-[image]: .images/picture.png "Image title"
-
-<div class="table-sm">
-
-| A | B |
-| --- | --- |
-| [cell][ref] | &lt;mask&gt; &amp;copy; |
-
-</div>
-
-```text
-[ref]: untouched.md
-<a href="literal.md">literal</a>
-```
-
-    [ref]: also-untouched.md
-
-`[ref][]` and `[ref]: untouched.md`
-
-\\[escaped][ref]
-
-[entity](target&amp;copy;.md#x) [query](target.md?a=1&amp;b=2#x)
-
-A footnote[^note].
-
-[^note]: Paragraph with a [ref] and **emphasis**.
-
-    Second paragraph.
-
-    - List item
-
-    ```text
-    literal
-    ```
-"""
-    result = MarkdownDocument(source).render(normalize_references=True)
-    assert json.loads(convert(source, "json")) == json.loads(convert(result, "json"))
-
-
 def test_directory_normalization_keeps_distinct_footnote_bodies(
     tmp_path: Path, rendered: Render, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -401,26 +345,6 @@ def test_html_table_cells_with_bit_ranges_keep_their_text(convert: Convert) -> N
     assert re.search(r"<td>\s*\[1:0\]: QOS_SEL\s*</td>", html)
 
 
-def test_a_rewritten_page_keeps_table_alignment_however_long_its_lines(convert: Convert) -> None:
-    # A table line longer than 72 characters gives the table column widths in Pandoc.
-    row = "| rst | I | " + "Long description text which makes this row longer. " * 2 + "|"
-    source = (
-        "![Picture](picture.png)\n\n"
-        "| Signal | Dir | Description |\n| --- | :-: | --- |\n" + row + "\n"
-    )
-    document = MarkdownDocument(source)
-    document.transform_targets(lambda target, _image: "images/" + target)
-    markdown = document.render()
-    assert "images/picture.png" in markdown
-    blocks = json.loads(convert(markdown, "json"))["blocks"]
-    table = next(block for block in blocks if block["t"] == "Table")
-    assert [spec[0]["t"] for spec in table["c"][2]] == [
-        "AlignDefault",
-        "AlignCenter",
-        "AlignDefault",
-    ]
-
-
 def test_block_html_in_a_pipe_table_cell_is_reported_with_its_line(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -473,11 +397,3 @@ def test_failed_and_malformed_parser_output_are_rejected(
     monkeypatch.setattr(subprocess, "run", mock.Mock(return_value=completed))
     with pytest.raises(MarkdownError):
         MarkdownDocument("[text][ref]")
-
-
-def test_failed_writer_is_an_explicit_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    document = MarkdownDocument("# Heading\n")
-    completed = subprocess.CompletedProcess(["pandoc"], 1, "", "writer failure")
-    monkeypatch.setattr(subprocess, "run", mock.Mock(return_value=completed))
-    with pytest.raises(MarkdownError, match=r"writer failure"):
-        document.render(normalize_references=True)

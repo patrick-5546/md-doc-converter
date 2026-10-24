@@ -36,7 +36,7 @@ ASSETS = (
     "markdown-body-close.html",
     "strip-colwidths.lua",
     "table-code-pipes.lua",
-    "reference-notes.lua",
+    "heading-ids.lua",
 )
 DOCX_ORCHESTRATION = {
     "md_doc_converter.converters.docx.cli",

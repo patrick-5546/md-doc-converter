@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from collections import Counter, defaultdict
 from collections.abc import Iterator
 from pathlib import Path
@@ -10,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from md_doc_converter.markdown import preprocess
+from md_doc_converter.markdown.headings import collect_headings
 
 
 def write_tree(root: Path, files: dict[str, str]) -> None:
@@ -21,7 +21,9 @@ def write_tree(root: Path, files: dict[str, str]) -> None:
 
 def collected_titles(docs: Path) -> list[str]:
     result = preprocess.collect_directory(docs, defaultdict(Counter))
-    return re.findall(r"^# (.+?)\s*$", result, re.MULTILINE)
+    blocks = result["blocks"]
+    assert isinstance(blocks, list)
+    return [heading.text for heading in collect_headings(blocks) if heading.level == 1]
 
 
 @pytest.mark.parametrize(
@@ -85,3 +87,18 @@ def test_unordered_directory_leads_with_its_first_file(tmp_path: Path) -> None:
     )
 
     assert collected_titles(docs) == ["Readme", "Nested", "Last"]
+
+
+def test_a_list_that_ends_a_page_does_not_run_on_into_the_next(tmp_path: Path) -> None:
+    # Joined as Markdown, the two pages' lists read as one list of three items.
+    docs = tmp_path / "docs"
+    write_tree(docs, {"a.md": "# A\n\n- one\n- two\n", "b.md": "- three\n"})
+
+    result = preprocess.collect_directory(docs, defaultdict(Counter))
+
+    blocks = result["blocks"]
+    assert isinstance(blocks, list)
+    lists = [
+        block["c"] for block in blocks if isinstance(block, dict) and block["t"] == "BulletList"
+    ]
+    assert [len(items) if isinstance(items, list) else None for items in lists] == [2, 1]
