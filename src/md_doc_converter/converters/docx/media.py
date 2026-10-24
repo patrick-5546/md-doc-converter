@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import html
 import re
-import shutil
 import urllib.parse
 import zipfile
 from collections import Counter, defaultdict
@@ -14,6 +13,7 @@ from concurrent.futures import Future, ThreadPoolExecutor, wait
 from pathlib import Path, PurePosixPath
 from xml.etree import ElementTree as ET
 
+from md_doc_converter import executables
 from md_doc_converter.converters.docx import ooxml as _ooxml
 from md_doc_converter.converters.docx import reference as _reference
 from md_doc_converter.converters.docx.diagnostics import TransformReport
@@ -481,7 +481,7 @@ def _convert_vectors(drawings: dict[str, tuple[bytes, str]], work: Path) -> dict
     export take the PDF fallback together: one PDF run, one ODG run for their frames, and
     pdftocairo for each.
     """
-    office = shutil.which("libreoffice") or shutil.which("soffice")
+    office = executables.libreoffice()
     if office is None:
         missing = "EMF conversion requires LibreOffice/soffice; other images do not"
         return {name: (missing, []) for name in drawings}
@@ -536,7 +536,7 @@ def _convert_vectors(drawings: dict[str, tuple[bytes, str]], work: Path) -> dict
         frames[name] = _svg_frame(ET.parse(svg).getroot())
 
     if fallback:
-        cairo = shutil.which("pdftocairo")
+        cairo = executables.which("pdftocairo")
         pdfs, failure = (
             export("pdf", list(fallback), "EMF-to-PDF fallback conversion")
             if cairo is not None

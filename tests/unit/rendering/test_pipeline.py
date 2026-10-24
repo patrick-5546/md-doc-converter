@@ -38,11 +38,12 @@ def document(*blocks: JSONValue) -> dict[str, JSONValue]:
 
 @dataclass
 class FakeRenderer:
-    """Prepares Markdown, and runs git, pandoc and the PDF printer, recording what they get.
+    """Prepares Markdown, and finds and runs git, pandoc and the PDF printer, recording what
+    they get.
 
-    git reports whether the input is in a work tree. pandoc writes *html*, or fails with
-    status 7; the PDF printer records the HTML it gets and writes a placeholder PDF. Any other
-    command fails the test.
+    Each program is found at /found/<name>. git reports whether the input is in a work tree.
+    pandoc writes *html*, or fails with status 7; the PDF printer records the HTML it gets and
+    writes a placeholder PDF. Any other command fails the test.
     """
 
     git_work_tree: bool = False
@@ -59,6 +60,7 @@ class FakeRenderer:
     prepared: list[Path] = field(default_factory=list)
     styles: list[str] = field(default_factory=list)
     katex_stylesheets: list[str] = field(default_factory=list)
+    lookups: list[tuple[str, str | None]] = field(default_factory=list)
     pandoc_calls: list[tuple[list[str], dict[str, object]]] = field(default_factory=list)
     printer_commands: list[list[str]] = field(default_factory=list)
     printed: list[str] = field(default_factory=list)
@@ -69,11 +71,16 @@ class FakeRenderer:
         self.prepare_calls.append((source, respect_gitignore, download_images))
         return self.preparation
 
+    def resolve(self, name: str, path: str | None = None) -> str:
+        self.lookups.append((name, path))
+        return found(name)
+
     def run(self, command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        if command[0] == "git":
+        program = Path(command[0]).stem
+        if program == "git":
             stdout = "true\n" if self.git_work_tree else ""
             return subprocess.CompletedProcess(command, 0 if stdout else 128, stdout, "")
-        if command[0] == "pandoc":
+        if command[0] == found("pandoc"):
             self.prepared.append(Path(command[-1]))
             if self.pandoc_fails:
                 raise subprocess.CalledProcessError(7, command)
@@ -87,13 +94,18 @@ class FakeRenderer:
             self.katex_stylesheets.append(katex.read_text(encoding="utf-8"))
             self.pandoc_calls.append((command, kwargs))
             Path(command[command.index("-o") + 1]).write_text(self.html, encoding="utf-8")
-        elif command[:2] == ["node", str(render.PDF_PRINTER)]:
+        elif command[:2] == [found("node"), str(render.PDF_PRINTER)]:
             self.printer_commands.append(command)
             self.printed.append(Path(command[-1]).read_bytes().decode("utf-8"))
             Path(command[command.index("-o") + 1]).write_bytes(b"PDF")
         else:
             pytest.fail(f"Unexpected command: {command}")
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+
+def found(name: str) -> str:
+    """Where FakeRenderer finds the program *name*."""
+    return str(Path(os.sep, "found", name))
 
 
 @pytest.fixture
@@ -114,7 +126,8 @@ def tools(tmp_path_factory: pytest.TempPathFactory) -> Toolchain:
 
 @pytest.fixture
 def fake(monkeypatch: pytest.MonkeyPatch) -> FakeRenderer:
-    """No missing prerequisites, and a FakeRenderer for preparation and for subprocess.run."""
+    """No missing prerequisites, and a FakeRenderer for preparation, for finding the programs
+    that rendering runs, and for subprocess.run."""
     renderer = FakeRenderer()
 
     def no_problems(tools: Toolchain, *, pdf: bool) -> list[str]:
@@ -122,6 +135,7 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> FakeRenderer:
 
     monkeypatch.setattr(render, "render_problems", no_problems)
     monkeypatch.setattr(render, "_prepare_markdown", renderer.prepare)
+    monkeypatch.setattr(render.executables, "resolve", renderer.resolve)
     monkeypatch.setattr(subprocess, "run", renderer.run)
     return renderer
 
@@ -233,6 +247,20 @@ def test_render_publishes_only_the_deliverable_and_keeps_scratch_private(
         'src:url(data:font/woff2;base64,d09GMg==) format("woff2")}'
         ".katex{font:normal 1.21em KaTeX_Main}"
     )
+
+
+def test_render_runs_the_programs_that_its_path_holds(
+    fake: FakeRenderer, source: Path, tools: Toolchain
+) -> None:
+    render.render_markdown(source, FORMAT.PDF, tools=tools)
+    [(command, options)] = fake.pandoc_calls
+    environment = options["env"]
+    assert isinstance(environment, dict)
+    # Each by its path on the render PATH, which starts with the toolchain's folders, so no
+    # program in the current folder runs, as Windows would run one started by name.
+    assert fake.lookups == [("pandoc", environment["PATH"]), ("node", environment["PATH"])]
+    assert command[0] == found("pandoc")
+    assert [printer[0] for printer in fake.printer_commands] == [found("node")]
 
 
 @pytest.mark.parametrize(

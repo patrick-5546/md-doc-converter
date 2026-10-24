@@ -64,10 +64,8 @@ def test_no_headings_need_no_pandoc_run(monkeypatch: pytest.MonkeyPatch) -> None
     run.assert_not_called()
 
 
-def test_missing_pandoc_reports_the_command_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    missing = mock.Mock(side_effect=FileNotFoundError("missing executable"))
-    monkeypatch.setattr(subprocess, "run", missing)
-    with pytest.raises(HeadingError, match=r"failed to run.*missing executable"):
+def test_missing_pandoc_reports_the_command_failure() -> None:
+    with pytest.raises(HeadingError, match=r"failed to run 'missing-pandoc': .*No such file"):
         identify([header(1, "a", "A")], pandoc="missing-pandoc")
 
 

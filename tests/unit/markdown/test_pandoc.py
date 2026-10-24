@@ -11,7 +11,7 @@ from unittest import mock
 
 import pytest
 
-from md_doc_converter import pandoc
+from md_doc_converter import executables, pandoc
 from md_doc_converter.converters.docx import navigation, reference
 from md_doc_converter.converters.docx.models import ConversionError, SectionTarget
 
@@ -50,7 +50,9 @@ def test_explicit_reader_is_used_and_document_is_parsed_once(
     assert parsed.reader == "gfm+raw_html"
     assert parsed.blocks == []
     run.assert_called_once()
-    assert run.call_args.args[0] == ["pandoc", "--from=gfm+raw_html", "--to=json"]
+    # Pandoc as found on PATH, by its absolute path.
+    command = [executables.resolve("pandoc"), "--from=gfm+raw_html", "--to=json"]
+    assert run.call_args.args[0] == command
 
 
 @pytest.mark.parametrize(

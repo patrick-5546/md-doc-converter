@@ -15,6 +15,7 @@ from html.parser import HTMLParser
 from typing import override
 from xml.etree import ElementTree as ET
 
+from md_doc_converter import executables
 from md_doc_converter.converters.docx.models import ConversionError
 from md_doc_converter.markdown.syntax import VOID_TAGS
 from md_doc_converter.pandoc import JSONValue, PandocError, ParsedMarkdown, decode_document
@@ -146,7 +147,11 @@ def run_command(
     """
     try:
         result = subprocess.run(
-            command, input=input_text, check=True, capture_output=True, text=True
+            [executables.resolve(command[0]), *command[1:]],
+            input=input_text,
+            check=True,
+            capture_output=True,
+            text=True,
         )
     except FileNotFoundError as error:
         raise ConversionError(

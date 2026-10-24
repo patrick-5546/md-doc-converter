@@ -21,6 +21,7 @@ from tests.support.project import PROJECT_ROOT, SOURCE_ROOT
 
 SHARED_LAYERS = (
     "md_doc_converter.console",
+    "md_doc_converter.executables",
     "md_doc_converter.markdown",
     "md_doc_converter.pandoc",
     "md_doc_converter.resources",

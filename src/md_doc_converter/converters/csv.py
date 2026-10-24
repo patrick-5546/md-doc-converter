@@ -12,6 +12,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from md_doc_converter import executables
 from md_doc_converter.markdown.tables import table_page
 
 # The delimiters that detection chooses from, by name; on a tie the first wins.
@@ -67,7 +68,15 @@ def convert(
         # Use git ls-files to respect .gitignore; -z lists each name unquoted, after a NUL.
         try:
             result = subprocess.run(
-                ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "*.csv"],
+                [
+                    executables.resolve("git"),
+                    "ls-files",
+                    "-z",
+                    "--cached",
+                    "--others",
+                    "--exclude-standard",
+                    "*.csv",
+                ],
                 cwd=src,
                 capture_output=True,
                 text=True,

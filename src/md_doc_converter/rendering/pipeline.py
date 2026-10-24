@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 from urllib.parse import unquote, urlsplit
 
+from md_doc_converter import executables
 from md_doc_converter import pandoc as _pandoc
 from md_doc_converter.console import Console, activated, active, add_verbosity_options, shown
 from md_doc_converter.download import DownloadError, download
@@ -398,7 +399,7 @@ def render_markdown(
             staged_dir.mkdir()
             html = staged_dir / f"{name}.html"
             command = [
-                "pandoc",
+                executables.resolve("pandoc", environment.get("PATH")),
                 # Read no file and fetch no URL that the document names; the images that it
                 # may show are embedded during preparation.
                 "--sandbox",
@@ -436,7 +437,7 @@ def render_markdown(
                 staged = staged_dir / f"{name}.pdf"
                 subprocess.run(
                     [
-                        "node",
+                        executables.resolve("node", environment.get("PATH")),
                         str(PDF_PRINTER),
                         "--node-modules",
                         str(tools.node_modules),
@@ -462,7 +463,9 @@ def render_markdown(
 
 def _failed_step(error: subprocess.CalledProcessError) -> str:
     command = error.cmd[0] if isinstance(error.cmd, list) and error.cmd else error.cmd
-    return f"{Path(str(command)).name} failed with exit status {error.returncode}"
+    return (
+        f"{Path(str(command)).name.removesuffix('.exe')} failed with exit status {error.returncode}"
+    )
 
 
 def main(argv: list[str] | None = None, *, action: Literal["html", "pdf"]) -> int:

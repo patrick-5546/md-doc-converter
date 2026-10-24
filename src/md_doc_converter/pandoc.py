@@ -10,6 +10,8 @@ from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
+from md_doc_converter import executables
+
 type JSONValue = bool | int | float | str | list[JSONValue] | dict[str, JSONValue] | None
 
 
@@ -61,7 +63,11 @@ def run(
 ) -> str:
     try:
         result = subprocess.run(
-            [pandoc, *arguments], input=text, capture_output=True, text=True, check=False
+            [executables.resolve(pandoc), *arguments],
+            input=text,
+            capture_output=True,
+            text=True,
+            check=False,
         )
     except OSError as error:
         raise PandocError(f"failed to run {pandoc!r}: {error}") from error

@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import os
-import shutil
 import tempfile
 from pathlib import Path
 
+from md_doc_converter import executables
 from md_doc_converter.console import plural
 from md_doc_converter.converters.docx import bookmarks as _bookmarks
 from md_doc_converter.converters.docx import diagnostics as _diagnostics
@@ -115,7 +115,7 @@ def _convert_in_work(
     stager: _media.ImageStager | None = None
     try:
         package = _package.read_package(paths)
-        pandoc = shutil.which("pandoc")
+        pandoc = executables.which("pandoc")
         if pandoc is None:
             raise ConversionError(_NEEDS_PANDOC)
         stager = _media.ImageStager(work, package)

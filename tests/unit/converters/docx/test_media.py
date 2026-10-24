@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-import shutil
 import zipfile
 from collections.abc import Callable, Collection
 from pathlib import Path, PurePosixPath
@@ -11,6 +10,7 @@ from xml.etree import ElementTree as ET
 
 import pytest
 
+from md_doc_converter import executables
 from md_doc_converter.converters.docx import media as _media
 from md_doc_converter.converters.docx import models as _models
 from md_doc_converter.converters.docx import ooxml as _ooxml
@@ -140,13 +140,17 @@ def convert(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.Monkey
     ) -> tuple[Results, FakeDrawingTools]:
         tools = FakeDrawingTools(outputs, failing)
 
-        def which(name: str) -> str | None:
+        def which(name: str, path: str | None = None) -> str | None:
             return None if name in missing else "/test/" + name
+
+        def libreoffice() -> str | None:
+            return which("libreoffice") or which("soffice")
 
         drawings = {name: (synthetic_emf(), ".emf") for name in outputs}
         work = tmp_path_factory.mktemp("docx-emf") / "work"
         with monkeypatch.context() as patch:
-            patch.setattr(shutil, "which", which)
+            patch.setattr(executables, "which", which)
+            patch.setattr(executables, "libreoffice", libreoffice)
             patch.setattr(_reference, "run_command", tools)
             results = _media._convert_vectors(drawings, work)
         decoded = {

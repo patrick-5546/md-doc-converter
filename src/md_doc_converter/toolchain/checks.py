@@ -5,12 +5,12 @@ from __future__ import annotations
 import argparse
 import platform
 import re
-import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from md_doc_converter import executables
 from md_doc_converter.resources import package_version
 from md_doc_converter.toolchain.environment import (
     BROWSER,
@@ -75,7 +75,7 @@ def installed_version(executable: Path) -> str | None:
 
 
 def _executable(path: Path) -> bool:
-    return path.is_file() and shutil.which(path.name, path=str(path.parent)) is not None
+    return path.is_file() and executables.runnable(path)
 
 
 def check_platform() -> Check:
@@ -92,7 +92,7 @@ def check_platform() -> Check:
 
 def check_pandoc() -> Check:
     """The Pandoc that conversion and rendering use: setup's pinned copy, first on PATH."""
-    pandoc = shutil.which("pandoc")
+    pandoc = executables.which("pandoc")
     if pandoc is None:
         return Check("pandoc", "error", "not installed", PANDOC_FIX)
     version = installed_version(Path(pandoc))
@@ -110,7 +110,7 @@ def check_pandoc() -> Check:
 
 
 def check_node() -> Check:
-    node = shutil.which("node")
+    node = executables.which("node")
     if node is None:
         return Check("node", "error", "not found on PATH", NODE_FIX)
     version = _version([node, "--version"])
@@ -123,7 +123,7 @@ def check_node() -> Check:
 
 
 def check_npm(tools: Toolchain) -> Check:
-    npm = shutil.which("npm")
+    npm = executables.which("npm")
     if npm is not None:
         return Check("npm", "ok", npm)
     # npm is only needed to install or update the renderer packages.
@@ -156,24 +156,25 @@ def check_browser(tools: Toolchain) -> Check:
     return Check("browser", "ok", f"{BROWSER} {versions} ({cache})")
 
 
-def _optional(name: str, candidates: tuple[str, ...], purpose: str, fix: str) -> Check:
-    for candidate in candidates:
-        path = shutil.which(candidate)
-        if path is not None:
-            return Check(name, "ok", path)
+def _optional(name: str, path: str | None, purpose: str, fix: str) -> Check:
+    if path is not None:
+        return Check(name, "ok", path)
     return Check(name, "warn", f"not found; {purpose}", fix)
 
 
 def check_git() -> Check:
     return _optional(
-        "git", ("git",), "Git-ignored files are included when rendering a folder", "Install Git"
+        "git",
+        executables.which("git"),
+        "Git-ignored files are included when rendering a folder",
+        "Install Git",
     )
 
 
 def check_libreoffice() -> Check:
     return _optional(
         "libreoffice",
-        ("libreoffice", "soffice"),
+        executables.libreoffice(),
         "EMF/WMF drawings in Word documents are kept in their original format",
         "Install LibreOffice",
     )
@@ -182,7 +183,7 @@ def check_libreoffice() -> Check:
 def check_pdftocairo() -> Check:
     return _optional(
         "pdftocairo",
-        ("pdftocairo",),
+        executables.which("pdftocairo"),
         "the PDF fallback for EMF/WMF drawings is unavailable",
         "Install Poppler (`poppler-utils` in most distributions)",
     )

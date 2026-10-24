@@ -7,7 +7,6 @@ import inspect
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import sysconfig
@@ -24,6 +23,7 @@ from xml.etree import ElementTree as ET
 
 import pytest
 
+from md_doc_converter import executables
 from md_doc_converter.converters import packages
 from md_doc_converter.converters.docx import diagnostics as _diagnostics
 from md_doc_converter.converters.docx import media as _media
@@ -205,13 +205,13 @@ def list_shape(root: ET.Element) -> list[tuple[str, str, int, int]]:
 
 
 def hide_pandoc(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Let `shutil.which` find every tool but Pandoc, as where Pandoc is not installed."""
-    original = shutil.which
+    """Let md-doc-converter find every program but Pandoc, as where Pandoc is not installed."""
+    original = executables.which
 
-    def which(command: str, mode: int = os.F_OK | os.X_OK, path: str | None = None) -> str | None:
-        return None if command == "pandoc" else original(command, mode, path)
+    def which(name: str, path: str | None = None) -> str | None:
+        return None if name == "pandoc" else original(name, path)
 
-    monkeypatch.setattr(shutil, "which", which)
+    monkeypatch.setattr(executables, "which", which)
 
 
 def test_default_keeps_step_and_status_labels_and_index_content(convert: Converter) -> None:
@@ -1764,14 +1764,18 @@ def test_a_note_reference_in_a_hyperlink_follows_the_link(convert: Converter) ->
 def test_png_and_svg_do_not_require_office_or_poppler(
     convert: Converter, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    original = shutil.which
+    original = executables.which
 
-    def forbid_optional(command: str) -> str | None:
-        if command in {"libreoffice", "soffice", "pdftocairo"}:
-            pytest.fail(f"Unnecessary optional dependency probe: {command}")
-        return original(command)
+    def forbid_optional(name: str, path: str | None = None) -> str | None:
+        if name in {"libreoffice", "soffice", "pdftocairo"}:
+            pytest.fail(f"Unnecessary optional dependency probe: {name}")
+        return original(name, path)
 
-    monkeypatch.setattr(shutil, "which", forbid_optional)
+    def forbid_office() -> str | None:
+        pytest.fail("Unnecessary optional dependency probe: LibreOffice")
+
+    monkeypatch.setattr(executables, "which", forbid_optional)
+    monkeypatch.setattr(executables, "libreoffice", forbid_office)
     result, stats = convert(
         [image("png"), image("svg")],
         relations=(

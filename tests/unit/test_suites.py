@@ -19,10 +19,14 @@ TOOLCHAIN_CHECKS = ("check_packages", "check_browser")
 def tools(monkeypatch: pytest.MonkeyPatch, *available: str, toolchain: str = "ok") -> None:
     """Make only *available* commands exist, and every toolchain check report *toolchain*."""
 
-    def which(name: str) -> str | None:
+    def which(name: str, path: str | None = None) -> str | None:
         return f"/bin/{name}" if name in available else None
 
-    monkeypatch.setattr(suites.shutil, "which", which)
+    def libreoffice() -> str | None:
+        return which("libreoffice") or which("soffice")
+
+    monkeypatch.setattr(suites.executables, "which", which)
+    monkeypatch.setattr(suites.executables, "libreoffice", libreoffice)
     for name in TOOLCHAIN_CHECKS:
         check = Check(name.removeprefix("check_"), toolchain, "detail", "Run setup")
 

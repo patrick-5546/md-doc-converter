@@ -17,6 +17,7 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
+from md_doc_converter import executables
 from md_doc_converter.toolchain.checks import (
     NODE_FIX,
     NODE_REQUIRED,
@@ -271,7 +272,7 @@ def main(argv: list[str] | None = None) -> int:
             node = check_node()
             if node.status != "ok":
                 raise SetupError(f"node: {node.detail}. {node.fix}, {NO_RENDER_HINT}.")
-            npm = shutil.which("npm")
+            npm = executables.which("npm")
             if npm is None:
                 raise SetupError(f"npm was not found on PATH. {NODE_FIX}, {NO_RENDER_HINT}.")
         print(f"Toolchain: {tools.root}")

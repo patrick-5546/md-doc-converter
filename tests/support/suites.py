@@ -11,10 +11,10 @@
 from __future__ import annotations
 
 import os
-import shutil
 from collections.abc import MutableMapping, Sequence
 from pathlib import Path
 
+from md_doc_converter import executables
 from md_doc_converter.toolchain.checks import check_browser, check_packages, check_pandoc
 from md_doc_converter.toolchain.environment import (
     PANDOC_VERSION,
@@ -48,20 +48,20 @@ def selects_rendering(arguments: Sequence[str], base: Path) -> bool:
 
 def pinned_pandoc() -> str:
     """The pinned Pandoc, which every suite requires before it runs."""
-    pandoc = shutil.which("pandoc")
+    pandoc = executables.which("pandoc")
     assert pandoc is not None, "the suites' prerequisites guarantee Pandoc"
     return pandoc
 
 
 def missing_prerequisites(*, render: bool) -> list[str]:
-    missing = [] if shutil.which("git") else ["git"]
+    missing = [] if executables.which("git") else ["git"]
     # Converter tests compare exact Pandoc output, so they need the pinned version.
     pandoc = check_pandoc()
     if pandoc.status != "ok":
         missing.append(f"pandoc {PANDOC_VERSION}: {pandoc.detail} ({SETUP_PANDOC})")
     if render:
-        missing.extend(tool for tool in ("node", *POPPLER) if shutil.which(tool) is None)
-        if not (shutil.which("libreoffice") or shutil.which("soffice")):
+        missing.extend(tool for tool in ("node", *POPPLER) if executables.which(tool) is None)
+        if executables.libreoffice() is None:
             missing.append("libreoffice/soffice (EMF regression coverage)")
         tools = toolchain()
         missing.extend(

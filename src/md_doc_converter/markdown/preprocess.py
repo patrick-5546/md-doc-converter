@@ -36,7 +36,6 @@ import os
 import posixpath
 import re
 import secrets
-import shutil
 import subprocess
 from collections import Counter, defaultdict
 from collections.abc import Callable, Mapping
@@ -44,6 +43,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import quote, unquote, urldefrag, urlsplit, urlunsplit
 
+from md_doc_converter import executables
 from md_doc_converter import pandoc as _pandoc
 from md_doc_converter.console import active, shown
 from md_doc_converter.download import DownloadError, download
@@ -585,11 +585,12 @@ def print_stats(stats: dict[str, Counter[str]]) -> None:
 
 def in_git_work_tree(directory: Path) -> bool:
     """Return True if git is available and *directory* is inside a work tree."""
-    if shutil.which("git") is None:
+    git = executables.which("git")
+    if git is None:
         return False
     try:
         proc = subprocess.run(
-            ["git", "-C", str(directory), "rev-parse", "--is-inside-work-tree"],
+            [git, "-C", str(directory), "rev-parse", "--is-inside-work-tree"],
             capture_output=True,
             text=True,
             check=False,
@@ -611,7 +612,7 @@ def _git_ignored(names: list[str], directory: Path) -> set[str]:
         return set()
     try:
         proc = subprocess.run(
-            ["git", "check-ignore", "--stdin", "-z"],
+            [executables.resolve("git"), "check-ignore", "--stdin", "-z"],
             input="\0".join(names),
             cwd=directory,
             capture_output=True,
@@ -922,11 +923,12 @@ def embed_images(text: str, images: Mapping[str, str]) -> str:
 
 def _git_toplevel(directory: Path) -> Path | None:
     """The root of the Git work tree that holds *directory*, if Git is available."""
-    if shutil.which("git") is None:
+    git = executables.which("git")
+    if git is None:
         return None
     try:
         proc = subprocess.run(
-            ["git", "-C", str(directory), "rev-parse", "--show-toplevel"],
+            [git, "-C", str(directory), "rev-parse", "--show-toplevel"],
             capture_output=True,
             text=True,
             check=False,
