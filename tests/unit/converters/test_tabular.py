@@ -107,6 +107,7 @@ def test_literal_cells_do_not_create_markup_or_extra_columns(reader: str, pandoc
         "[link](target) [ref] [0] [3:0]",
         "first\nsecond",
         r"\_literal\_ and \*literal\*",
+        "\U00013460@0 and _x_\U000323b0",
     ]
     markdown = table_row(["Value"]) + "\n" + table_row(["---"]) + "\n"
     markdown += "\n".join(table_row([literal_cell(value)]) for value in values)
@@ -125,6 +126,13 @@ def test_literal_cells_do_not_create_markup_or_extra_columns(reader: str, pandoc
         pytest.param("12:30, :smile: and a:b:c", "12:30, \\:smile: and a\\:b:c", id="colons"),
         pytest.param("snake_case_name and _x_", "snake_case_name and _x\\_", id="underscores"),
         pytest.param("<b> & \u00a9", "&lt;b&gt; &amp; \u00a9", id="html"),
+        # Letters of Unicode 16 and 17, which Pandoc reads as symbols, and a letter of Unicode
+        # 3.2 that is a mark now.
+        pytest.param(
+            "\U00013460@0 \U000323b0@0 _x_\U00013460 \u1885@0",
+            "\U00013460\\@0 \U000323b0\\@0 _x\\_\U00013460 \u1885\\@0",
+            id="letters-unknown-to-pandoc",
+        ),
     ],
 )
 def test_literal_cells_escape_only_what_would_be_read_as_markup(text: str, written: str) -> None:
