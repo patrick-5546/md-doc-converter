@@ -394,7 +394,8 @@ def test_csv_to_md_converts_the_csv_files_that_git_does_not_ignore(
 ) -> None:
     subprocess.run(["git", "init", "--quiet", str(tmp_path)], check=True)
     (tmp_path / ".gitignore").write_text("ignored.csv\n", encoding="utf-8")
-    for name in ("kept.csv", "ignored.csv", "nested/also kept.csv"):
+    # Git quotes a name that is not ASCII, unless it separates the names with NULs.
+    for name in ("kept.csv", "ignored.csv", "nested/also kept.csv", "r\u00e9sum\u00e9.csv"):
         (tmp_path / name).parent.mkdir(exist_ok=True)
         (tmp_path / name).write_text("Name\nvalue\n", encoding="utf-8")
     (tmp_path / "empty.csv").write_text("", encoding="utf-8")
@@ -404,6 +405,7 @@ def test_csv_to_md_converts_the_csv_files_that_git_does_not_ignore(
     assert sorted(path.relative_to(tmp_path).as_posix() for path in tmp_path.rglob("*.md")) == [
         "kept.md",
         "nested/also kept.md",
+        "r\u00e9sum\u00e9.md",
     ]
     assert f"Skipped (empty): {tmp_path / 'empty.csv'}" in capsys.readouterr().out
 

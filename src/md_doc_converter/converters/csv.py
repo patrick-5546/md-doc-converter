@@ -64,16 +64,16 @@ def convert(
         raise FileNotFoundError(f"not found: {input_path}")
 
     if src.is_dir():
-        # Use git ls-files to respect .gitignore
+        # Use git ls-files to respect .gitignore; -z lists each name unquoted, after a NUL.
         try:
             result = subprocess.run(
-                ["git", "ls-files", "--cached", "--others", "--exclude-standard", "*.csv"],
+                ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "*.csv"],
                 cwd=src,
                 capture_output=True,
                 text=True,
                 check=True,
             )
-            csv_files = sorted(src / line for line in result.stdout.splitlines() if line)
+            csv_files = sorted(src / name for name in result.stdout.split("\0") if name)
         except (subprocess.CalledProcessError, FileNotFoundError):
             # Fall back to rglob if git is unavailable
             csv_files = sorted(src.rglob("*.csv"))
