@@ -39,7 +39,9 @@ lines of `-` or `=`, which the writer leaves unescaped.
 
 Rendering prepares the Markdown in `markdown/preprocess.py`: it collects a
 folder, adjusts what Pandoc's Markdown reader would read differently from
-GitHub, and embeds images, each as a short placeholder for its data.
+GitHub, and embeds images, each as a short placeholder for its data. It parses
+the Markdown once, with `markdown/document.py`'s reader, and hands Pandoc the
+parsed document as Pandoc JSON, not written back to Markdown.
 `rendering/pipeline.py` then runs Pandoc in its sandbox with
 `assets/pandoc-defaults.yaml`, whose filters read GitHub's math, draw Mermaid
 diagrams and KaTeX math, and adjust tables; puts the images' data in the HTML,

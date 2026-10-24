@@ -1,4 +1,7 @@
-from: markdown-implicit_figures-yaml_metadata_block+gfm_auto_identifiers
+# The renderer hands Pandoc the document that it prepared, as Pandoc JSON. It read the
+# Markdown with markdown/document.py's READER:
+# markdown-implicit_figures-yaml_metadata_block+gfm_auto_identifiers
+from: json
 toc-depth: 6
 filters:
   - "${.}/gfm-math.lua"  # read GitHub's $`...`$ and math code blocks as math

@@ -34,11 +34,13 @@ a failed render leaves the previous file untouched. Rendering refuses an output
 that is the input, the extra stylesheet, a symlink or a directory.
 
 The source Markdown and its images are never changed, and no public
-intermediate files are written. Prepared Markdown, generated styles and, for a
-PDF, the staged HTML stay in a private temporary directory that is removed
-after the render. To inspect them, keep them in a new or empty directory; they
-are kept even when rendering fails. In the prepared Markdown, each embedded
-image's data is a short placeholder, which the HTML replaces with the data:
+intermediate files are written. The prepared document, generated styles and,
+for a PDF, the staged HTML stay in a private temporary directory that is
+removed after the render. To inspect them, keep them in a new or empty
+directory; they are kept even when rendering fails. The prepared document is
+the Markdown as parsed and prepared, in Pandoc's JSON format, which Pandoc then
+reads. In it, each embedded image's data is a short placeholder, which the HTML
+replaces with the data:
 
 ```sh
 md-doc-converter md-to-pdf docs/spec.md --keep-intermediates /tmp/spec-render

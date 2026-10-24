@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import json
 import mimetypes
 import os
 import re
@@ -25,7 +26,7 @@ from md_doc_converter.toolchain.checks import render_problems
 from md_doc_converter.toolchain.environment import Toolchain, render_environment, toolchain
 
 if TYPE_CHECKING:
-    from md_doc_converter.markdown.preprocess import PreparedMarkdown
+    from md_doc_converter.markdown.preprocess import PreparedDocument
 
 PDF_PRINTER = Path(__file__).with_name("print-pdf.mjs")
 # Stylesheets in the installed npm packages.
@@ -279,7 +280,7 @@ def _filter_gitignored(choice: bool | None, source: Path) -> bool:
 
 def _prepare_markdown(
     source: Path, *, respect_gitignore: bool, download_images: bool = False
-) -> PreparedMarkdown:
+) -> PreparedDocument:
     # Imported here so command-line help does not load the Markdown toolchain.
     from md_doc_converter.markdown.document import MarkdownError
     from md_doc_converter.markdown.headings import HeadingError
@@ -371,14 +372,16 @@ def render_markdown(
             )
         try:
             name = destination.stem
-            prepared = work / "markdown" / f"{name}.md"
-            prepared.parent.mkdir()
-            markdown = _prepare_markdown(
+            # Pandoc reads the document as prepared, already parsed, as Pandoc JSON. Its HTML
+            # title, without a heading to take it from, is the name of this file.
+            document = work / "document" / f"{name}.json"
+            document.parent.mkdir()
+            prepared = _prepare_markdown(
                 source,
                 respect_gitignore=filter_gitignored,
                 download_images=options.download_images,
             )
-            prepared.write_text(markdown.text, encoding="utf-8")
+            document.write_text(json.dumps(prepared.document), encoding="utf-8")
 
             styles_file = work / "page-styles.html"
             styles_file.write_text(
@@ -402,7 +405,7 @@ def render_markdown(
                 str(styles_file),
                 "-o",
                 str(html),
-                str(prepared),
+                str(document),
             ]
             converted = subprocess.run(
                 command,
@@ -412,13 +415,13 @@ def render_markdown(
                 text=True,
                 check=False,
             )
-            sys.stderr.write(pandoc_messages(converted.stderr or "", markdown.unembedded))
+            sys.stderr.write(pandoc_messages(converted.stderr or "", prepared.unembedded))
             if converted.returncode:
                 raise subprocess.CalledProcessError(converted.returncode, command)
-            if markdown.images:
+            if prepared.images:
                 # Pandoc read a short placeholder for each embedded image's data.
                 written = html.read_bytes().decode("utf-8")
-                html.write_bytes(markdown.embed_images(written).encode("utf-8"))
+                html.write_bytes(prepared.embed_images(written).encode("utf-8"))
             staged = html
             if pdf:
                 staged = staged_dir / f"{name}.pdf"

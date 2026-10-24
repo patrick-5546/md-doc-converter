@@ -554,9 +554,18 @@ def _prepare_document(
         target_transform(document, source_path, stats[target_transform.__name__])
     if embed is not None:
         embed(document)
+    if not single_file and _defines_references(text):
+        # A folder's files are joined as Markdown, where a definition would reach every file.
+        document.render(normalize_references=True)
+    return document
 
-    # Definitions are file-scoped, even when their labels are unused locally.
-    # The parser resolves full, collapsed and shortcut references, not this check.
+
+def _defines_references(text: str) -> bool:
+    """Whether *text* defines a link reference or a footnote outside code.
+
+    Definitions are file-scoped, even when their labels are unused locally. The parser
+    resolves full, collapsed and shortcut references, not this check.
+    """
     references = False
 
     def _detect_references(prose: str) -> str:
@@ -565,9 +574,7 @@ def _prepare_document(
         return prose
 
     transform_outside_code(text, _detect_references)
-    if references:
-        document.render(normalize_references=True)
-    return document
+    return references
 
 
 def preprocess(
@@ -577,11 +584,9 @@ def preprocess(
     *,
     single_file: bool = False,
     embed: Callable[[MarkdownDocument], None] | None = None,
-) -> str:
-    """Return private, prepared Markdown without changing its source."""
-    return _prepare_document(
-        text, source_path, stats, single_file=single_file, embed=embed
-    ).render()
+) -> dict[str, _pandoc.JSONValue]:
+    """The prepared document, as Pandoc JSON; its source is not changed."""
+    return _prepare_document(text, source_path, stats, single_file=single_file, embed=embed).ast
 
 
 def print_stats(stats: dict[str, Counter[str]]) -> None:
@@ -892,14 +897,15 @@ def _file_link_resolver(
 
 
 @dataclass(frozen=True)
-class PreparedMarkdown:
-    """Markdown ready for Pandoc, the image targets in it that were not embedded, and the data
-    of those that were."""
+class PreparedDocument:
+    """The document ready for Pandoc, as Pandoc JSON; the image targets in it that were not
+    embedded; and the data of those that were."""
 
-    text: str
+    document: dict[str, _pandoc.JSONValue]
     # Each was reported with its reason, so Pandoc, which cannot read them, need not repeat it.
     unembedded: frozenset[str] = frozenset()
-    # The base64 data of each embedded image, by the placeholder that stands for it in *text*.
+    # The base64 data of each embedded image, by the placeholder that stands for it in
+    # *document*.
     images: Mapping[str, str] = field(default_factory=dict)
 
     def embed_images(self, text: str) -> str:
@@ -907,7 +913,7 @@ class PreparedMarkdown:
         return embed_images(text, self.images)
 
 
-# Stands for an embedded image's data in the Markdown that Pandoc reads; see ImageEmbedder.
+# Stands for an embedded image's data in the document that Pandoc reads; see ImageEmbedder.
 # Pandoc drops an image whose data URI is not base64, so placeholders are: 32 base64 letters.
 IMAGE_PLACEHOLDER = re.compile(r"MdcImage[0-9a-f]{16}[0-9]{8}")
 
@@ -1035,7 +1041,7 @@ class ImageEmbedder:
 
 def prepare_markdown(
     source: Path, *, respect_gitignore: bool = False, download_images: bool = False
-) -> PreparedMarkdown:
+) -> PreparedDocument:
     """Prepare a Markdown file, or every Markdown file in a folder, for Pandoc.
 
     Report what changed on stderr. *respect_gitignore* skips what Git ignores in a folder.
@@ -1047,11 +1053,15 @@ def prepare_markdown(
     embed = ImageEmbedder(image_root(source), download=download_images)
     if source.is_dir():
         # Each file is preprocessed during collection.
-        result = collect_directory(source, stats, respect_gitignore=respect_gitignore, embed=embed)
+        combined = collect_directory(
+            source, stats, respect_gitignore=respect_gitignore, embed=embed
+        )
+        print_stats(stats)
+        document = MarkdownDocument(combined).ast
     else:
         text = source.read_text(encoding="utf-8")
-        result = preprocess(
+        document = preprocess(
             text, source_path=str(source), stats=stats, single_file=True, embed=embed
         )
-    print_stats(stats)
-    return PreparedMarkdown(result, frozenset(embed.unembedded), dict(embed.images))
+        print_stats(stats)
+    return PreparedDocument(document, frozenset(embed.unembedded), dict(embed.images))

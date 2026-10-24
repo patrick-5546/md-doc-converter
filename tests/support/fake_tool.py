@@ -6,8 +6,8 @@ Each fake answers ``--version`` with its configured version, records every other
 writes the files that the real tool would:
 
 - pandoc answers the preprocessor's ``--to=json`` parses with headings only, so test inputs
-  should be plain Markdown without links or reference definitions, and otherwise writes its
-  input wrapped in the inlined styles as the HTML;
+  should be plain Markdown without links or reference definitions, and otherwise writes the
+  headings of the document it reads, as Markdown, wrapped in the inlined styles as the HTML;
 - node writes a placeholder PDF;
 - npm installs the package files that rendering reads, an mmdc and a Puppeteer command line;
 - mmdc writes each diagram's text as its SVG, and fails on a diagram that contains ``FAIL``;
@@ -57,6 +57,17 @@ def _headings(markdown: str) -> dict[str, object]:
             }
         )
     return {"blocks": blocks}
+
+
+def _heading_lines(document: object) -> str:
+    """The headings of a document that `_headings` made, as Markdown."""
+    lines: list[str] = []
+    blocks = document.get("blocks", []) if isinstance(document, dict) else []
+    for block in blocks if isinstance(blocks, list) else []:
+        if isinstance(block, dict) and block.get("t") == "Header":
+            level, _attributes, inlines = block["c"]
+            lines.append("#" * level + " " + "".join(inline["c"] for inline in inlines))
+    return "".join(f"{line}\n" for line in lines)
 
 
 def _option(arguments: list[str], name: str) -> str:
@@ -117,11 +128,11 @@ def main(config: Config) -> int:
     }
     if tool == "pandoc":
         styles = Path(_option(arguments, "--include-in-header")).read_text(encoding="utf-8")
-        markdown = Path(arguments[-1]).read_text(encoding="utf-8")
-        record["input"] = markdown
+        document = Path(arguments[-1]).read_text(encoding="utf-8")
+        record["input"] = document
         record["styles"] = styles
         Path(_option(arguments, "-o")).write_text(
-            f"<html>{styles}{markdown}</html>", encoding="utf-8"
+            f"<html>{styles}{_heading_lines(json.loads(document))}</html>", encoding="utf-8"
         )
     elif tool == "node":
         Path(_option(arguments, "-o")).write_bytes(b"%PDF-fake")

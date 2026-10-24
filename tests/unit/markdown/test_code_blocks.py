@@ -11,6 +11,7 @@ import pytest
 
 from md_doc_converter.markdown import preprocess
 from md_doc_converter.markdown.document import READER, MarkdownError
+from tests.support import documents
 
 FENCES = (
     'Text.\n\n```python title="x.py"\nprint(1)\n```\n\n'
@@ -43,15 +44,19 @@ def test_a_fence_keeps_only_its_language_when_pandoc_cannot_read_the_rest(ending
     assert stats == Counter({"fence info strings trimmed": 5})
 
 
-def code_blocks(markdown: str, reader: str, pandoc: str) -> list[tuple[str, str]]:
-    """The language, or "", and the code of each code block that *reader* reads."""
-    result = subprocess.run(
-        [pandoc, f"--from={reader}", "--to=json"],
-        input=markdown,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
+def code_blocks(source: documents.Source, reader: str, pandoc: str) -> list[tuple[str, str]]:
+    """The language, or "", and the code of each code block that *reader* reads in Markdown
+    *source*, or in a prepared document."""
+    if isinstance(source, str):
+        result = subprocess.run(
+            [pandoc, f"--from={reader}", "--to=json"],
+            input=source,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    else:
+        result = documents.convert(pandoc, source, "json")
     found: list[tuple[str, str]] = []
 
     def walk(node: object) -> None:
@@ -65,7 +70,7 @@ def code_blocks(markdown: str, reader: str, pandoc: str) -> list[tuple[str, str]
             for child in node.values():
                 walk(child)
 
-    walk(json.loads(result.stdout))
+    walk(json.loads(result))
     return found
 
 

@@ -8,17 +8,18 @@ import sys
 from pathlib import Path
 
 from md_doc_converter.markdown.preprocess import prepare_markdown
+from tests.support import documents
 
 
-def test_bit_range_definitions_in_fenced_code_are_unchanged(tmp_path: Path) -> None:
+def test_bit_range_definitions_in_fenced_code_are_unchanged(tmp_path: Path, pandoc: str) -> None:
     source = tmp_path / "input.md"
     source.write_text(
         "* [1:0]: prose definition\n\n```text\n[3:0]: fenced code\n```\n",
         encoding="utf-8",
     )
 
-    result = prepare_markdown(source).text
-    assert r"* \[1:0\]: prose definition" in result
+    result = documents.markdown(pandoc, prepare_markdown(source).document)
+    assert r"- \[1:0\]: prose definition" in result
     assert "[3:0]: fenced code" in result
 
 
@@ -26,7 +27,22 @@ PNG = b"\x89PNG\r\n\x1a\n"
 EMBEDDED = "data:image/png;base64," + base64.b64encode(PNG).decode("ascii")
 
 
-def test_a_page_shows_an_image_from_a_shared_folder_of_its_repository(tmp_path: Path) -> None:
+def test_words_quotes_reach_the_html_as_the_author_typed_them(tmp_path: Path, pandoc: str) -> None:
+    # Pandoc reads the prepared document as it parsed it. Written back to Markdown, a curly
+    # quote became a straight one, which read back as an apostrophe: the left quote of
+    # "Set to \u20181\u20191:" became a right one.
+    text = "Set to \u20181\u20191: on."
+    source = tmp_path / "input.md"
+    source.write_text(f"# Bits\n\n{text} See [bits](#bits).\n", encoding="utf-8")
+
+    html = documents.convert(pandoc, prepare_markdown(source).document, "html5")
+
+    assert text in html
+
+
+def test_a_page_shows_an_image_from_a_shared_folder_of_its_repository(
+    tmp_path: Path, pandoc: str
+) -> None:
     (tmp_path / "assets").mkdir()
     (tmp_path / "assets" / "logo.png").write_bytes(PNG)
     (tmp_path / "docs").mkdir()
@@ -35,13 +51,14 @@ def test_a_page_shows_an_image_from_a_shared_folder_of_its_repository(tmp_path: 
     subprocess.run(["git", "init", "--quiet", str(tmp_path)], check=True)
 
     prepared = prepare_markdown(page)
+    written = documents.markdown(pandoc, prepared.document)
 
-    assert EMBEDDED not in prepared.text
-    assert f"![Logo]({EMBEDDED})" in prepared.embed_images(prepared.text)
+    assert EMBEDDED not in written
+    assert f"![Logo]({EMBEDDED})" in prepared.embed_images(written)
     assert prepared.unembedded == frozenset()
 
 
-def test_a_split_word_document_outside_git_shows_its_images(tmp_path: Path) -> None:
+def test_a_split_word_document_outside_git_shows_its_images(tmp_path: Path, pandoc: str) -> None:
     # docx-to-md's layout: the title page and the images beside the folder of pages.
     (tmp_path / ".images" / "guide").mkdir(parents=True)
     (tmp_path / ".images" / "guide" / "chart.png").write_bytes(PNG)
@@ -55,13 +72,14 @@ def test_a_split_word_document_outside_git_shows_its_images(tmp_path: Path) -> N
 
     prepared = prepare_markdown(tmp_path / "guide")
 
-    assert prepared.embed_images(prepared.text).count(EMBEDDED) == 2
+    written = documents.markdown(pandoc, prepared.document)
+    assert prepared.embed_images(written).count(EMBEDDED) == 2
     # Both pages show one image, whose data the HTML holds for each.
     assert len(prepared.images) == 1
     assert prepared.unembedded == frozenset()
 
 
-def test_gitignored_sibling_title_files_are_not_collected(tmp_path: Path) -> None:
+def test_gitignored_sibling_title_files_are_not_collected(tmp_path: Path, pandoc: str) -> None:
     docs = tmp_path / "docs"
     topic = docs / "topic"
     topic.mkdir(parents=True)
@@ -80,7 +98,8 @@ def test_gitignored_sibling_title_files_are_not_collected(tmp_path: Path) -> Non
         text=True,
     )
 
-    assert prepare_markdown(docs, respect_gitignore=True).text == "# Included page\n"
+    prepared = prepare_markdown(docs, respect_gitignore=True)
+    assert documents.markdown(pandoc, prepared.document) == "# Included page\n"
 
 
 def test_recursive_csv_output_preserves_relative_directories(tmp_path: Path) -> None:

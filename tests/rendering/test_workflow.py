@@ -194,7 +194,7 @@ def test_reference_folder_renders_linked_html_and_pdf_with_images(tmp_path: Path
     pdf = (docs / f"{docs.name}.pdf").read_bytes()
     assert pdf.startswith(b"%PDF-")
     assert re.search(rb"/Subtype\s*/Image\b", pdf)
-    assert (kept / "markdown" / f"{docs.name}.md").is_file()
+    assert (kept / "document" / f"{docs.name}.json").is_file()
     assert "Package layout validation" in (kept / "render" / f"{docs.name}.html").read_text(
         encoding="utf-8"
     )

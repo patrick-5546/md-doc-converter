@@ -143,7 +143,7 @@ md-doc-converter md-to-html docs/spec.md --extra-css branding.css
 
 A folder input is combined into one document in name order, or in the order an
 Azure DevOps Wiki `.order` file gives. Rendering writes only the requested file
-and replaces an existing one only after it succeeds. Prepared Markdown and
+and replaces an existing one only after it succeeds. The prepared document and
 other intermediates stay private unless `--keep-intermediates DIR` asks to keep
 them. See [Rendering](docs/rendering.md) for output naming, folder input,
 Mermaid diagrams, math, the page header and footer, extra stylesheets, the PDF

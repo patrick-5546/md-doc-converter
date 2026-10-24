@@ -19,8 +19,9 @@ from urllib.parse import unquote, urlsplit
 import pytest
 
 from md_doc_converter.markdown import preprocess
-from md_doc_converter.markdown.document import MarkdownError
+from md_doc_converter.markdown.document import READER, MarkdownError
 from md_doc_converter.markdown.headings import HeadingError
+from md_doc_converter.pandoc import JSONValue
 from md_doc_converter.rendering import pipeline as render
 from md_doc_converter.resources import asset_path
 from md_doc_converter.toolchain.environment import Toolchain
@@ -29,6 +30,11 @@ from tests.support.web_server import WebServer
 
 FORMAT = render.OutputFormat
 Options = render.RenderOptions
+
+
+def document(*blocks: JSONValue) -> dict[str, JSONValue]:
+    """A prepared document, as Pandoc JSON, of *blocks*."""
+    return {"pandoc-api-version": [1, 23, 1, 2], "meta": {}, "blocks": list(blocks)}
 
 
 @dataclass
@@ -42,8 +48,12 @@ class FakeRenderer:
 
     git_work_tree: bool = False
     pandoc_fails: bool = False
-    markdown: preprocess.PreparedMarkdown = field(
-        default_factory=lambda: preprocess.PreparedMarkdown("# Prepared Markdown\n")
+    preparation: preprocess.PreparedDocument = field(
+        default_factory=lambda: preprocess.PreparedDocument(
+            document(
+                {"t": "Header", "c": [1, ["prepared", [], []], [{"t": "Str", "c": "Prepared"}]]}
+            )
+        )
     )
     html: str = "<html>rendered</html>"
     prepare_calls: list[tuple[Path, bool, bool]] = field(default_factory=list)
@@ -56,9 +66,9 @@ class FakeRenderer:
 
     def prepare(
         self, source: Path, *, respect_gitignore: bool, download_images: bool
-    ) -> preprocess.PreparedMarkdown:
+    ) -> preprocess.PreparedDocument:
         self.prepare_calls.append((source, respect_gitignore, download_images))
-        return self.markdown
+        return self.preparation
 
     def run(self, command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         if command[0] == "git":
@@ -68,7 +78,8 @@ class FakeRenderer:
             self.prepared.append(Path(command[-1]))
             if self.pandoc_fails:
                 raise subprocess.CalledProcessError(7, command)
-            assert self.prepared[-1].read_text(encoding="utf-8") == self.markdown.text
+            prepared = json.loads(self.prepared[-1].read_text(encoding="utf-8"))
+            assert prepared == self.preparation.document
             styles = Path(command[command.index("--include-in-header") + 1])
             self.styles.append(styles.read_text(encoding="utf-8"))
             environment = kwargs["env"]
@@ -285,8 +296,14 @@ def test_embedded_image_data_goes_into_the_html_after_pandoc(
     # Pandoc reads a short placeholder for each image's data; the HTML, and so the PDF, get it,
     # and nothing else in the HTML changes.
     placeholder = "MdcImage0123456789abcdef00000000"
-    fake.markdown = preprocess.PreparedMarkdown(
-        f"![chart](data:image/png;base64,{placeholder}#top)\n", images={placeholder: "Y2hhcnQ="}
+    image: JSONValue = [
+        ["", [], []],
+        [{"t": "Str", "c": "chart"}],
+        [f"data:image/png;base64,{placeholder}#top", ""],
+    ]
+    fake.preparation = preprocess.PreparedDocument(
+        document({"t": "Para", "c": [{"t": "Image", "c": image}]}),
+        images={placeholder: "Y2hhcnQ="},
     )
     fake.html = f'<p>\r\n<img src="data:image/png;base64,{placeholder}#top"></p>'
     embedded = '<p>\r\n<img src="data:image/png;base64,Y2hhcnQ=#top"></p>'
@@ -485,8 +502,8 @@ def test_intermediates_are_kept_on_request_even_when_rendering_fails(
     )
     messages = capsys.readouterr().err
     assert sorted(str(path.relative_to(kept)) for path in kept.rglob("*") if path.is_file()) == [
+        "document/cache.v2 spec.json",
         "katex.css",
-        "markdown/cache.v2 spec.md",
         "page-styles.html",
         "render/cache.v2 spec.html",
         "render/cache.v2 spec.pdf",
@@ -499,7 +516,7 @@ def test_intermediates_are_kept_on_request_even_when_rendering_fails(
         render.render_markdown(
             source, FORMAT.HTML, options=Options(keep_intermediates=failed), tools=tools
         )
-    assert (failed / "markdown/cache.v2 spec.md").is_file()
+    assert (failed / "document/cache.v2 spec.json").is_file()
     assert (failed / "page-styles.html").is_file()
 
 
@@ -647,11 +664,12 @@ def test_katex_stylesheet_without_woff2_fonts_is_rejected(tmp_path: Path) -> Non
 
 
 def pandoc_defaults() -> tuple[str, str]:
-    """The renderer's Pandoc defaults file, and the Markdown reader it names."""
+    """The renderer's Pandoc defaults file, and the Markdown reader that prepared the document
+    that the file has Pandoc read."""
     defaults = asset_path("pandoc-defaults.yaml").read_text(encoding="utf-8")
-    reader = re.search(r"^from: (\S+)$", defaults, re.MULTILINE)
-    assert reader is not None
-    return defaults, reader.group(1)
+    assert re.search(r"^from: json$", defaults, re.MULTILINE)
+    assert READER in defaults
+    return defaults, READER
 
 
 def test_an_escaped_pipe_in_table_code_renders_as_gfm_shows_it(pandoc: str) -> None:

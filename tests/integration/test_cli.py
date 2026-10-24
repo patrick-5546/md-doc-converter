@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -225,7 +226,8 @@ def test_failed_render_keeps_the_previous_file_and_requested_intermediates(
     assert "node failed with exit status 3" in result.stderr
     assert previous.read_bytes() == b"previous"
     assert sorted(path.name for path in docs.iterdir()) == ["input.md", "input.pdf"]
-    assert (kept / "markdown" / "input.md").read_text(encoding="utf-8") == "# Example\n"
+    kept_document = json.loads((kept / "document" / "input.json").read_text(encoding="utf-8"))
+    assert kept_document["blocks"][0]["c"][2] == [{"t": "Str", "c": "Example"}]
     assert (kept / "page-styles.html").is_file()
     assert (kept / "render" / "input.html").is_file()
 

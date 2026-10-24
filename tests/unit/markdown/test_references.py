@@ -20,7 +20,8 @@ import pytest
 from typing_extensions import override
 
 from md_doc_converter.markdown import preprocess
-from md_doc_converter.markdown.document import READER, MarkdownDocument, MarkdownError
+from md_doc_converter.markdown.document import MarkdownDocument, MarkdownError
+from tests.support import documents
 
 
 class RenderedTargets(HTMLParser):
@@ -53,28 +54,17 @@ class RenderedTargets(HTMLParser):
             self.current = None
 
 
-Convert = Callable[[str, str], str]
-Render = Callable[[str], RenderedTargets]
+Convert = Callable[[documents.Source, str], str]
+Render = Callable[[documents.Source], RenderedTargets]
 
 
 @pytest.fixture
 def convert(pandoc: str) -> Convert:
-    """Convert Markdown, read as the renderer reads it, to a Pandoc output format."""
+    """Convert Markdown, read as the renderer reads it, or a prepared document, to a Pandoc
+    output format."""
 
-    def run(markdown: str, target: str) -> str:
-        return subprocess.run(
-            [
-                pandoc,
-                f"--from={READER}",
-                f"--to={target}",
-                "--wrap=none",
-                "--syntax-highlighting=none",
-            ],
-            input=markdown,
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout
+    def run(source: documents.Source, target: str) -> str:
+        return documents.convert(pandoc, source, target)
 
     return run
 
@@ -83,9 +73,9 @@ def convert(pandoc: str) -> Convert:
 def rendered(convert: Convert) -> Render:
     """The links, images and text of Markdown rendered to HTML."""
 
-    def parse(markdown: str) -> RenderedTargets:
+    def parse(source: documents.Source) -> RenderedTargets:
         result = RenderedTargets()
-        result.feed(convert(markdown, "html5"))
+        result.feed(convert(source, "html5"))
         return result
 
     return parse
@@ -308,7 +298,9 @@ def test_directory_normalization_keeps_distinct_footnote_bodies(
     assert "Duplicate" not in stderr
 
 
-def test_structural_html_targets_are_rewritten_but_literal_code_is_not(rendered: Render) -> None:
+def test_structural_html_targets_are_rewritten_but_literal_code_is_not(
+    rendered: Render, pandoc: str
+) -> None:
     source = """# Page
 
 <table><tr><td>
@@ -328,8 +320,9 @@ def test_structural_html_targets_are_rewritten_but_literal_code_is_not(rendered:
     output = rendered(result)
     assert output.links == [("/docs/real.md", "", "HTML link")]
     assert output.images == [("/docs/pic.png", "Title")]
-    assert "href='leave.md'" in result
-    assert '`<a href="literal.md">literal</a>`' in result
+    written = documents.markdown(pandoc, result)
+    assert "href='leave.md'" in written
+    assert '`<a href="literal.md">literal</a>`' in written
     assert '<a href="literal.md">literal</a>' in "".join(output.text)
 
 
