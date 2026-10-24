@@ -14,7 +14,6 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from unittest import mock
-from urllib.parse import unquote, urlsplit
 
 import pytest
 
@@ -84,7 +83,7 @@ class FakeRenderer:
             self.styles.append(styles.read_text(encoding="utf-8"))
             environment = kwargs["env"]
             assert isinstance(environment, dict)
-            katex = Path(unquote(urlsplit(environment[render.KATEX_STYLESHEET_VARIABLE]).path))
+            katex = Path(environment[render.KATEX_STYLESHEET_VARIABLE])
             self.katex_stylesheets.append(katex.read_text(encoding="utf-8"))
             self.pandoc_calls.append((command, kwargs))
             Path(command[command.index("-o") + 1]).write_text(self.html, encoding="utf-8")
@@ -216,9 +215,9 @@ def test_render_publishes_only_the_deliverable_and_keeps_scratch_private(
         assert environment["PUPPETEER_CACHE_DIR"] == str(tools.puppeteer_cache)
         # Pandoc reads no file or URL that the document names.
         assert "--sandbox" in command
-        # No stylesheet is linked: katex.js adds KaTeX's as a data URI, the others are inlined.
+        # No stylesheet is linked: katex.lua adds KaTeX's as a data URI, the others are inlined.
         assert "--css" not in command
-        katex = Path(unquote(urlsplit(environment[render.KATEX_STYLESHEET_VARIABLE]).path))
+        katex = Path(environment[render.KATEX_STYLESHEET_VARIABLE])
         assert katex.parent == scratch
     # A content security policy that allows no script, then the GitHub Markdown stylesheet,
     # so the shared styles override it.
@@ -716,7 +715,7 @@ GITHUB_MATH = (
 
 def test_githubs_math_syntax_reads_as_pandocs_gfm_reader_reads_it(pandoc: str) -> None:
     defaults, reader = pandoc_defaults()
-    assert defaults.index("gfm-math.lua") < defaults.index("katex.js")
+    assert defaults.index("gfm-math.lua") < defaults.index("katex.lua")
 
     def read(*options: str) -> object:
         result = subprocess.run(

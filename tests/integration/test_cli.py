@@ -136,12 +136,12 @@ def test_render_defaults_next_to_files_and_inside_folders(
     assert str(environment["PATH"]).startswith(str(tools.node_bin))
     arguments = pandoc[0]["arguments"]
     assert isinstance(arguments, list)
-    # Pandoc embeds the stylesheets: KaTeX's from the work directory, which katex.js adds
+    # Pandoc embeds the stylesheets: KaTeX's from the work directory, which katex.lua adds
     # to a document with math, and the inlined GitHub Markdown and shared styles.
     assert "--css" not in arguments
-    katex = str(environment["MD_DOC_CONVERTER_KATEX_CSS"])
-    assert katex.startswith("file:///")
-    assert katex.endswith("/katex.css")
+    katex = Path(str(environment["MD_DOC_CONVERTER_KATEX_CSS"]))
+    assert katex.is_absolute()
+    assert katex.name == "katex.css"
     styles = pandoc[0]["styles"]
     assert isinstance(styles, str)
     assert styles.index(".markdown-body { color: #1f2328; }") < styles.index(".table-cols")

@@ -9,7 +9,8 @@ writes the files that the real tool would:
   should be plain Markdown without links or reference definitions; answers a folder's
   heading-identifier run by reading its pages' headings as one document; and otherwise writes
   the headings of the document it reads, as Markdown, wrapped in the inlined styles as the HTML;
-- node writes a placeholder PDF;
+- node writes a placeholder PDF, and renders each formula that katex-render.mjs reads as its
+  TeX in a katex tag, marked if displayed;
 - npm installs the package files that rendering reads, an mmdc and a Puppeteer command line;
 - mmdc writes each diagram's text as its SVG, and fails on a diagram that contains ``FAIL``;
 - puppeteer installs a browser executable.
@@ -101,6 +102,12 @@ def _mmdc(arguments: list[str], record: dict[str, object]) -> int:
     return 0
 
 
+def _katex(record: dict[str, object]) -> None:
+    formulas = json.loads(sys.stdin.read())
+    record["formulas"] = formulas
+    print(json.dumps([f"<katex{' display' * display}>{tex}</katex>" for tex, display in formulas]))
+
+
 def _npm(config: Config) -> None:
     modules = Path.cwd() / "node_modules"
     executable = modules / ".bin" / "mmdc"
@@ -143,6 +150,8 @@ def main(config: Config) -> int:
         Path(_option(arguments, "-o")).write_text(
             f"<html>{styles}{_heading_lines(json.loads(document))}</html>", encoding="utf-8"
         )
+    elif tool == "node" and arguments[0].endswith("katex-render.mjs"):
+        _katex(record)
     elif tool == "node":
         Path(_option(arguments, "-o")).write_bytes(b"%PDF-fake")
     elif tool == "mmdc":

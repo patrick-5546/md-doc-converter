@@ -32,7 +32,7 @@ PDF_PRINTER = Path(__file__).with_name("print-pdf.mjs")
 # Stylesheets in the installed npm packages.
 GITHUB_STYLESHEET = Path("github-markdown-css", "github-markdown-light.css")
 KATEX_DIST = Path("katex", "dist")
-# Where katex.js finds the stylesheet it adds to a document with math.
+# The file of the stylesheet that katex.lua adds to a document with math.
 KATEX_STYLESHEET_VARIABLE = "MD_DOC_CONVERTER_KATEX_CSS"
 # Each KaTeX font lists its WOFF2 file first, then WOFF and TrueType ones.
 KATEX_FONT_SOURCES = re.compile(
@@ -410,7 +410,7 @@ def render_markdown(
             converted = subprocess.run(
                 command,
                 cwd=work,
-                env={**environment, KATEX_STYLESHEET_VARIABLE: katex_file.as_uri()},
+                env={**environment, KATEX_STYLESHEET_VARIABLE: str(katex_file)},
                 stderr=subprocess.PIPE,
                 text=True,
                 check=False,

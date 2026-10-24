@@ -90,7 +90,7 @@ def pdf(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 @pytest.fixture(scope="module")
 def pdf_without_math(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """The document without math, for which katex.js links no stylesheet."""
+    """The document without math, for which katex.lua links no stylesheet."""
     directory = tmp_path_factory.mktemp("pdf-without-math")
     source = directory / "spec.md"
     source.write_text(DOCUMENT.replace(", with math: $E = mc^2$", ""), encoding="utf-8")

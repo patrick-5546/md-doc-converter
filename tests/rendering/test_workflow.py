@@ -173,8 +173,10 @@ def test_reference_folder_renders_linked_html_and_pdf_with_images(tmp_path: Path
     assert 'class="katex-error"' in html
     # KaTeX's stylesheet is embedded, as a data URI, with its WOFF2 fonts only; nothing else
     # is linked.
-    [katex] = re.findall(r'<link href="data:text/css;base64,([^"]+)" rel="stylesheet" />', html)
-    katex_css = base64.b64decode(katex).decode("utf-8")
+    [katex] = re.findall(
+        r'<link href="data:text/css;charset=utf-8,([^"]+)" rel="stylesheet" />', html
+    )
+    katex_css = unquote(katex)
     assert re.search(r"font-family:KaTeX_Main;[^}]*src:url\(data:font/woff2;base64,", katex_css)
     assert 'format("woff")' not in katex_css
     assert html.count("<link") == 1

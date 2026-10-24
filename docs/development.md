@@ -47,7 +47,8 @@ are parsed one by one and joined as document trees; one more Pandoc run, with
 them read as one document.
 `rendering/pipeline.py` then runs Pandoc in its sandbox with
 `assets/pandoc-defaults.yaml`, whose filters read GitHub's math, draw Mermaid
-diagrams and KaTeX math, and adjust tables; puts the images' data in the HTML,
+diagrams and KaTeX math (each with one Node.js run, only for a document that
+has any), and adjust tables; puts the images' data in the HTML,
 which Pandoc would read slowly and in gigabytes of memory; and for a PDF, prints
 the HTML in headless Chrome with `rendering/print-pdf.mjs`.
 

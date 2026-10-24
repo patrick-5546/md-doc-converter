@@ -124,7 +124,7 @@ def render_environment(tools: Toolchain, base: Mapping[str, str] | None = None) 
         search.append(environment["PATH"])
     environment["PATH"] = os.pathsep.join(search)
     environment["PUPPETEER_CACHE_DIR"] = str(tools.puppeteer_cache)
-    # For assets/mermaid.lua and assets/katex.js.
+    # For assets/mermaid.lua and assets/katex-render.mjs.
     environment["MD_DOC_CONVERTER_MMDC"] = str(tools.node_executable("mmdc"))
     environment["MD_DOC_CONVERTER_NODE_MODULES"] = str(tools.node_modules)
     environment["MD_DOC_CONVERTER_MERMAID_CONFIG"] = str(asset_path("mermaid-config.json"))

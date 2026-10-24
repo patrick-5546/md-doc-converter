@@ -1,5 +1,5 @@
 -- Read GitHub's math syntax as Pandoc's GFM reader does (its tex_math_gfm extension, which
--- Pandoc's Markdown reader lacks), before katex.js draws the math: a code block whose only
+-- Pandoc's Markdown reader lacks), before katex.lua draws the math: a code block whose only
 -- attribute is the math class is display math, and inline math between equal runs of
 -- backticks, $`...`$, loses them. As on GitHub, \\{ and \\} in inline math are braces.
 

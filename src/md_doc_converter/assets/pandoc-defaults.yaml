@@ -6,16 +6,16 @@ toc-depth: 6
 filters:
   - "${.}/gfm-math.lua"  # read GitHub's $`...`$ and math code blocks as math
   - "${.}/mermaid.lua"  # render Mermaid diagrams with mermaid-cli
-  - "${.}/katex.js"  # render math with KaTeX (Pandoc runs .js filters with node)
+  - "${.}/katex.lua"  # render math with KaTeX, running node only for a document with math
   - "${.}/strip-colwidths.lua"  # auto-size table columns instead of equal-width
   - "${.}/table-code-pipes.lua"  # read `a\|b` in a table cell as GFM does
 # Embed images, stylesheets and fonts, so the HTML works anywhere and printing it needs no
-# network. katex.js adds KaTeX's stylesheet to a document with math. The renderer inlines the
+# network. katex.lua adds KaTeX's stylesheet to a document with math. The renderer inlines the
 # GitHub Markdown stylesheet, then style-overrides.css, the page header/footer and any extra
 # stylesheet, with --include-in-header, which follows KaTeX's.
 embed-resources: true
 # Pandoc's own document styles, a narrow padded body, would otherwise apply to every document
-# without math, for which katex.js links no stylesheet.
+# without math, for which katex.lua links no stylesheet.
 metadata:
   document-css: false
 # Wrap body content in .markdown-body so the GitHub Markdown stylesheet's selectors apply
