@@ -23,7 +23,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "-o",
         "--output",
         type=Path,
-        help="Markdown file to write (default: the input's name with .md, beside it)",
+        help=(
+            "Markdown file to write, with the images in .images/<name>/ beside it (default: the "
+            "input's name with .md, beside it)"
+        ),
     )
     parser.add_argument(
         "--split-depth",
@@ -33,13 +36,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         metavar="0..6",
         help=(
             "Write a page for each heading of levels 1 to this, in a folder named like the "
-            "output (default: 0, one file)"
+            "output, which lists them (default: 0, one file)"
         ),
     )
     parser.add_argument(
         "--qualify-duplicate-headings",
         action="store_true",
-        help="Distinguish repeated headings by their context, keeping their levels",
+        help=(
+            "Distinguish repeated headings by the headings of the sections that hold them, "
+            "keeping their levels"
+        ),
     )
     parser.add_argument(
         "--dry-run",
@@ -61,7 +67,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=(
             "How to write equations: github, as $`x`$ and ```math blocks, which GitHub, GitLab "
             "and VS Code show; or dollars, as $x$ and $$x$$, for renderers that read only "
-            "those (default: github)"
+            "those, such as Azure DevOps Wiki (default: github)"
         ),
     )
     parser.add_argument(
@@ -69,8 +75,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=Path,
         metavar="DIR",
         help=(
-            "Keep the intermediate files and a diagnostic report in a new or empty directory "
-            "apart from the input and outputs, also with --dry-run"
+            "Keep the intermediate files, such as the copy that Pandoc reads, and a "
+            "diagnostics.json report in a new or empty directory apart from the input and "
+            "outputs, also with --dry-run"
         ),
     )
     add_verbosity_options(parser)

@@ -78,6 +78,40 @@ accepted.
   arrows as characters that few fonts have, which PDFs and browsers show as
   boxes.
 
+For example, a short document with a Title paragraph, a cross-reference to a
+bookmarked paragraph, text in a monospace font, a captioned figure, and a table
+with a numbered list in a cell becomes:
+
+```markdown
+# Cache Controller
+
+## Overview
+
+The controller starts after [the reset step](#reset).
+
+## Setup
+
+### Reset
+
+Hold the reset for two cycles.
+
+Then set `ctrl_reg[3:0]` to idle.
+
+![Block diagram](.images/Example/image1.png)
+
+Figure 1: Block diagram
+
+| Field | Values |
+| --- | --- |
+| MODE | 1. Off<br>2. On<br>Takes effect after a reset. |
+```
+
+The Title paragraph is the only `#` heading, and the other headings moved down
+a level; `Overview.` lost its final period, and `Reset`, a level 3 heading in a
+level 1 section, closes the skipped level. The cross-reference leads to the
+section that holds its bookmark, and the figure's alt text is its caption's
+title.
+
 ## What is left out
 
 - Comments, tracked-change history, hidden text, headers and footers, and the
@@ -85,9 +119,37 @@ accepted.
 - Images linked from outside the document, and drawings without a picture, such
   as charts, SmartArt and shapes; the report names each.
 
-## Transforms
+## The report
 
-These transforms apply, in this order:
+Each item that could not be carried over as Word shows it gets a
+`docx-to-md: warning:` line, which names it and where it is; see
+[Messages](../README.md#messages) for which are shown. A summary then counts
+every kind of warning in two parts: what to check in Word, which the
+document's author can fix, and what is expected in Markdown, which shows it
+differently. An excerpt:
+
+```text
+docx-to-md: converting spec.docx
+docx-to-md: warning: images: SmartArt at paragraph 87: no embedded image; omitted
+docx-to-md: warning: links: link to missing Word bookmark '_Ref1234'; kept as plain text
+docx-to-md: warning: Table 4 remains HTML: merged cells
+docx-to-md: warning: Table 9 remains HTML: merged cells
+docx-to-md: warning: Table 12 remains HTML: merged cells
+docx-to-md: to check in Word:
+  1  SmartArt: no embedded image; omitted
+  1  link to a missing Word bookmark; kept as plain text
+docx-to-md: expected in Markdown:
+  5  table kept as HTML: merged cells
+docx-to-md: --verbose shows every warning
+converted spec.docx -> spec.md: 1 page, 25 tables, 16 image references, 40 Word bookmarks
+```
+
+The summary quotes nothing from the document: to report a problem without
+sharing the document, share the summary, not the warnings, which can quote it.
+
+`--verbose` also shows the details that worked out, such as a drawing converted
+through PDF, and each transform's status: `applied`, `partial`, `not applied`,
+`not needed` or `not requested`. The transforms, in the order they apply:
 
 | Transform | What it does |
 | --- | --- |
@@ -110,138 +172,23 @@ These transforms apply, in this order:
 | `title` | Makes the Title paragraph the only `#` heading. |
 | `checks` | Checks the links, images and bookmarks of the result, changing nothing. |
 
-### Examples
-
-Each example shows Pandoc's own conversion of the document, then
-`docx-to-md`'s.
-
-```text
-fields: a caption number held in a simple field
-  Before: Figure : Block diagram
-  After:  Figure 3: Block diagram
-
-hidden-text: a word formatted as Hidden
-  Before: Shown draft text.
-  After:  Shown text.
-
-symbols: an arrow in the Wingdings font
-  Before: Request 🡪 response
-  After:  Request → response
-
-images: published beside the Markdown, with its caption's title as alt text
-  Before: <img src="media/image1.png" style="width:2.1in" alt="A diagram of a computer" />
-  After:  ![Block diagram](.images/Example/image1.png)
-
-bookmarks: a link to a bookmark in a section's text
-  Before: <span id="_Ref200" class="anchor"></span>Set the clock divider.
-          [clock divider step](#_Ref200)
-  After:  Set the clock divider.
-          [clock divider step](#setup)
-
-headings: trailing punctuation and a skipped level
-  Before: # Overview.         After: # Overview
-          ### Details                ## Details
-
-code: text in a monospace font
-  Before: Set ctrl_reg\[3:0\] to idle.
-  After:  Set `ctrl_reg[3:0]` to idle.
-
-cleanup: escapes that nothing needs; text that would be a link keeps them
-  Before: Bits \[3:0\] of CTRL\[7\]; the text \[a\](b) is not a link.
-  After:  Bits [3:0] of CTRL[7]; the text \[a\](b) is not a link.
-
-duplicate-headings: with --qualify-duplicate-headings
-  Before: # Block A           After: # Block A
-          ## Overview                ## Block A - Overview
-          # Block B                  # Block B
-          ## Overview                ## Block B - Overview
-
-title: a first paragraph in Word's Title style
-  Before: Cache Controller    After: # Cache Controller
-          # Overview                 ## Overview
-```
-
-Bold that ends in punctuation right before a letter, which Markdown would show
-with its asterisks, becomes HTML:
-
-```text
-Before: **Note:**the reset clears it.
-After:  <strong>Note:</strong>the reset clears it.
-```
-
-A list that Word numbers from 7, with a nested list also numbered from 7,
-keeps Word's numbers. The blank lines let the nested list start at 7:
-
-```markdown
-7. Alpha
-
-8. Beta
-
-   7. Beta one
-
-9. Gamma
-```
-
-A table with merged cells becomes HTML, and the report says why
-(`Table 1 remains HTML: merged cells`). A one-level list in a cell becomes
-lines:
-
-```markdown
-| Field | Values |
-| --- | --- |
-| MODE | 1. Off<br>2. On<br>Takes effect after a reset. |
-```
-
-## The report
-
-Each item that could not be carried over as Word shows it gets a
-`docx-to-md: warning:` line, which names it and where it is. The first three of
-each kind are shown. A summary then counts every kind, in two parts: what to
-check in Word, which the document's author can fix, and what is expected in
-Markdown, which shows it differently. An excerpt:
-
-```text
-docx-to-md: converting spec.docx
-docx-to-md: warning: images: SmartArt at paragraph 87: no embedded image; omitted
-docx-to-md: warning: links: link to missing Word bookmark '_Ref1234'; kept as plain text
-docx-to-md: warning: Table 4 remains HTML: merged cells
-docx-to-md: warning: Table 9 remains HTML: merged cells
-docx-to-md: warning: Table 12 remains HTML: merged cells
-docx-to-md: to check in Word:
-  1  SmartArt: no embedded image; omitted
-  1  link to a missing Word bookmark; kept as plain text
-docx-to-md: expected in Markdown:
-  5  table kept as HTML: merged cells
-docx-to-md: --verbose shows every warning
-converted spec.docx -> spec.md: 1 page, 25 tables, 16 image references, 40 Word bookmarks
-```
-
-The last line, the result, is on standard output; the others are on standard
-error. On a terminal, a status line names the running step, and warnings and
-errors are colored, unless `NO_COLOR` is set. `--verbose` shows every warning,
-the details that worked out, such as a drawing converted through PDF, and each
-transform's status: `applied`, `partial`, `not applied`, `not needed` or
-`not requested`. `--quiet` shows only errors. To keep the whole report, run with
-`--verbose 2> conversion.log`.
-
-`docx-to-md` exits with status 0 when it converts the document, and 1 when it
-refuses the document, Pandoc cannot read it, an option or path is invalid, an
-earlier output needs `--replace-generated`, or the output cannot be written.
-To share a problem without sharing the document, share the summary, which
-quotes nothing from the document, not the warnings before it, which can.
+`docx-to-md` exits with status 0 when it converts the document; 1 when it
+refuses the document, Pandoc cannot read it, a path is invalid, an earlier
+output needs `--replace-generated`, or the output cannot be written; and 2 when
+an option is invalid.
 
 ## Options
 
 | Option | Effect |
 | --- | --- |
-| `-o FILE.md` | Write the Markdown here, and the images to `.images/<name>/` beside it. |
-| `--split-depth 0..6` | Write a page for each heading of levels 1 to N, in a folder named like the output, which lists them. `0`, the default, writes one file. |
-| `--qualify-duplicate-headings` | Distinguish repeated headings by the heading above them, keeping their levels. |
+| `-o`, `--output FILE.md` | Markdown file to write, with the images in `.images/<name>/` beside it (default: the input's name with `.md`, beside it). |
+| `--split-depth 0..6` | Write a page for each heading of levels 1 to this, in a folder named like the output, which lists them (default: 0, one file). |
+| `--qualify-duplicate-headings` | Distinguish repeated headings by the headings of the sections that hold them, keeping their levels: an `## Overview` under `# Block B` becomes `## Block B - Overview`. |
 | `--dry-run` | Convert and check without writing the Markdown, images or pages. |
 | `--replace-generated` | Allow replacing an existing Markdown file at the default output, and nonempty images and pages folders. |
-| `--math github\|dollars` | Write equations as GitHub does, `` $`x`$ `` and ```` ```math ````, which GitHub, GitLab and VS Code show, the default; or as `$x$` and `$$x$$`, for renderers that read only those, such as Azure DevOps Wiki. |
-| `--keep-intermediates DIR` | Keep the intermediate files, such as the prepared copy that Pandoc reads, and a `diagnostics.json` report in a new or empty directory, also with `--dry-run`. |
-| `-v`, `--verbose` | Show every warning, the details that worked out, and each transform's status. |
+| `--math github\|dollars` | How to write equations: `github`, as `` $`x`$ `` and ```` ```math ```` blocks, which GitHub, GitLab and VS Code show; or `dollars`, as `$x$` and `$$x$$`, for renderers that read only those, such as Azure DevOps Wiki (default: `github`). |
+| `--keep-intermediates DIR` | Keep the intermediate files, such as the copy that Pandoc reads, and a `diagnostics.json` report in a new or empty directory apart from the input and outputs, also with `--dry-run`. |
+| `-v`, `--verbose` | Show every warning, and the details of each step. |
 | `-q`, `--quiet` | Show only errors. |
 
 With `--split-depth 1`, `Example.docx` becomes `Example.md`, which lists the
