@@ -10,6 +10,7 @@ import urllib.parse
 import zipfile
 from collections import Counter, defaultdict
 from collections.abc import Collection
+from concurrent.futures import Future, ThreadPoolExecutor, wait
 from pathlib import Path, PurePosixPath
 from xml.etree import ElementTree as ET
 
@@ -601,7 +602,11 @@ def media_name(part: str, folder: str) -> PurePosixPath:
 
 
 class ImageStager:
-    """Publish each distinct image once under a unique name, converting EMF/WMF to SVG."""
+    """Publish each distinct image once under a unique name, converting EMF/WMF to SVG.
+
+    LibreOffice starts converting the drawings that the document's body shows when the stager
+    is created, in the background, while the document is read; `close` waits for it.
+    """
 
     def __init__(self, work: Path, package: WordPackage) -> None:
         self.root = work / "final-images"
@@ -609,8 +614,11 @@ class ImageStager:
         self._runs = 0
         self._parts: dict[str, str] = {}
         self._media = package.media_folder
-        # The document's EMF/WMF drawings by digest, converted together when one is published.
+        # The document's EMF/WMF drawings by digest. Those that the body shows convert in the
+        # background; any other, such as one in a footnote, when it is published.
         self._vectors: dict[str, tuple[bytes, str]] = {}
+        shown = set(_ooxml.related_parts(package.relationships, package.document_part, "image"))
+        background: dict[str, tuple[bytes, str]] = {}
         for name, data in package.parts.items():
             suffix = PurePosixPath(name).suffix.casefold()
             if not data or suffix not in IMAGE_SUFFIXES:
@@ -624,12 +632,27 @@ class ImageStager:
                 self._parts[digest] = name
             if suffix in VECTOR_SUFFIXES:
                 self._vectors.setdefault(digest, (data, suffix))
+                if name in shown:
+                    background.setdefault(digest, (data, suffix))
         self._converted: dict[str, bytes | str] = {}
         self._findings: dict[str, list[str]] = {}
         self._published: dict[str, PurePosixPath] = {}
         self._names: set[str] = set()
         self._data = 0
         self.root.mkdir()
+        self._background: Future[dict[str, VectorResult]] | None = None
+        if background:
+            self._runs += 1
+            executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="libreoffice")
+            self._background = executor.submit(
+                _convert_vectors, background, self._cache / f"run-{self._runs}"
+            )
+            executor.shutdown(wait=False)
+
+    def close(self) -> None:
+        """Wait for the background conversion, which writes in the work folder, to end."""
+        if self._background is not None:
+            wait([self._background])
 
     @property
     def count(self) -> int:
@@ -696,17 +719,17 @@ class ImageStager:
         self, data: bytes, suffix: str, preferred: PurePosixPath, report: TransformReport
     ) -> bytes | None:
         digest = hashlib.sha256(data).hexdigest()
+        if self._background is not None:
+            self._store(self._background.result())
+            self._background = None
         if digest not in self._converted:
-            # Converting every drawing not yet converted starts LibreOffice once per document.
+            # Every drawing not yet converted converts in the same LibreOffice run.
             pending = {
                 key: value for key, value in self._vectors.items() if key not in self._converted
             }
             pending[digest] = (data, suffix)
             self._runs += 1
-            converted = _convert_vectors(pending, self._cache / f"run-{self._runs}")
-            for key, (result, findings) in converted.items():
-                self._converted[key] = result
-                self._findings[key] = findings
+            self._store(_convert_vectors(pending, self._cache / f"run-{self._runs}"))
         cached = self._converted[digest]
         label = suffix[1:].upper()
         for message in self._findings.pop(digest, []):
@@ -720,3 +743,8 @@ class ImageStager:
             return None
         report.applied("image-conversion", f"{label} to SVG")
         return cached
+
+    def _store(self, results: dict[str, VectorResult]) -> None:
+        for key, (result, findings) in results.items():
+            self._converted[key] = result
+            self._findings[key] = findings

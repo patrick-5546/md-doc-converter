@@ -6,7 +6,7 @@ import re
 import shutil
 import zipfile
 from collections.abc import Callable, Collection
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from xml.etree import ElementTree as ET
 
 import pytest
@@ -15,6 +15,7 @@ from md_doc_converter.converters.docx import media as _media
 from md_doc_converter.converters.docx import models as _models
 from md_doc_converter.converters.docx import ooxml as _ooxml
 from md_doc_converter.converters.docx import reference as _reference
+from md_doc_converter.converters.docx.diagnostics import TransformReport
 from tests.support.docx import (
     W,
     cell,
@@ -345,6 +346,74 @@ def test_pdftocairo_is_needed_only_by_the_fallback(convert: Convert) -> None:
     assert results["a"] == (CROPPED_PAGE, [])
     assert "this EMF requires pdftocairo for PDF-to-SVG" in results["b"][0]
     assert tools.kinds() == ["svg"]
+
+
+def _package(parts: dict[str, bytes], shown: Collection[str] = ()) -> _models.WordPackage:
+    """A Word package of *parts*, whose body shows the images *shown*, by part name."""
+    relationships = ET.Element(_ooxml.PACKAGE_REL + "Relationships")
+    for number, name in enumerate(shown, 1):
+        ET.SubElement(
+            relationships,
+            _ooxml.PACKAGE_REL + "Relationship",
+            {
+                "Id": f"rId{number}",
+                "Type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
+                "Target": name.removeprefix("word/"),
+            },
+        )
+    return _models.WordPackage(
+        entries=[],
+        parts=parts,
+        root=ET.Element(W + "document"),
+        relationships=relationships,
+        styles=ET.Element(W + "styles"),
+    )
+
+
+def test_a_drawing_that_the_body_does_not_show_converts_when_published(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[int] = []
+
+    def convert_vectors(
+        drawings: dict[str, tuple[bytes, str]], _work: Path
+    ) -> dict[str, _media.VectorResult]:
+        calls.append(len(drawings))
+        return {name: (b"<svg/>", []) for name in drawings}
+
+    monkeypatch.setattr(_media, "_convert_vectors", convert_vectors)
+    note = synthetic_emf()
+    stager = _media.ImageStager(tmp_path, _package({"word/media/note.emf": note}))
+    try:
+        assert calls == []
+        published = stager.publish(
+            "part:word/media/note.emf", note, PurePosixPath("note.emf"), TransformReport()
+        )
+    finally:
+        stager.close()
+    assert published == PurePosixPath("note.svg")
+    assert calls == [1]
+
+
+def test_a_failed_background_conversion_fails_the_drawings_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def convert_vectors(
+        _drawings: dict[str, tuple[bytes, str]], _work: Path
+    ) -> dict[str, _media.VectorResult]:
+        raise OSError("synthetic disk failure")
+
+    monkeypatch.setattr(_media, "_convert_vectors", convert_vectors)
+    shown = synthetic_emf()
+    package = _package({"word/media/shown.emf": shown}, shown=["word/media/shown.emf"])
+    stager = _media.ImageStager(tmp_path, package)
+    try:
+        with pytest.raises(OSError, match="synthetic disk failure"):
+            stager.publish(
+                "part:word/media/shown.emf", shown, PurePosixPath("shown.emf"), TransformReport()
+            )
+    finally:
+        stager.close()
 
 
 def test_svg_css_resource_fragments_must_exist(tmp_path: Path) -> None:

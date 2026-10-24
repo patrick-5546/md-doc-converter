@@ -32,10 +32,13 @@ understands. `tree.py` reads the copy into Pandoc's JSON document tree and
 writes GFM; `transforms.py`, `bookmarks.py` and `tables.py` rewrite the tree in
 between; `navigation.py` settles heading IDs, links and pages; `validation.py`
 checks the result; and `publication.py` and `diagnostics.py` write the outputs
-and the report. Where Pandoc's GFM writer would write something that reads back
-differently, a transform writes it instead: code fences, whose `text` label the
-writer drops (since Pandoc 3.10.1), emphasis that Markdown cannot close, and
-lines of `-` or `=`, which the writer leaves unescaped.
+and the report. `media.py` publishes the images: one LibreOffice run, started in
+the background as soon as the package is read, converts the EMF and WMF drawings
+that the body shows while Pandoc reads the document. Where Pandoc's GFM writer
+would write something that reads back differently, a transform writes it
+instead: code fences, whose `text` label the writer drops (since Pandoc 3.10.1),
+emphasis that Markdown cannot close, and lines of `-` or `=`, which the writer
+leaves unescaped.
 
 Rendering prepares the Markdown in `markdown/preprocess.py`: it collects a
 folder, adjusts what Pandoc's Markdown reader would read differently from

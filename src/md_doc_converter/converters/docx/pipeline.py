@@ -104,6 +104,7 @@ def _convert_in_work(
     changes: list[HeadingChange] = []
     published = False
     navigation: DocumentNavigation | None = None
+    stager: _media.ImageStager | None = None
     try:
         package = _package.read_package(paths)
         pandoc = shutil.which("pandoc")
@@ -217,6 +218,10 @@ def _convert_in_work(
         if isinstance(error, ConversionError) and not published:
             raise
         raise ConversionError(detail) from error
+    finally:
+        # LibreOffice may still be converting drawings in the work folder, which goes next.
+        if stager is not None:
+            stager.close()
 
 
 def _scratch_parent(paths: ConversionPaths) -> Path:

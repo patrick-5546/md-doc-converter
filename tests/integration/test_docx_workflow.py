@@ -12,6 +12,8 @@ import subprocess
 import sys
 import sysconfig
 import tempfile
+import threading
+import time
 import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -33,6 +35,7 @@ from md_doc_converter.converters.docx import prepare as _prepare
 from md_doc_converter.converters.docx import publication as _publication
 from md_doc_converter.converters.docx import reference as _reference
 from md_doc_converter.converters.docx import tables as _tables
+from md_doc_converter.converters.docx import tree as _tree
 from md_doc_converter.converters.docx import validation as _validation
 from tests.support.docx import (
     PNG,
@@ -2545,6 +2548,68 @@ def test_a_documents_drawings_convert_together_and_report_separately(
     }
     assert "third.wmf: synthetic note" in warnings
     assert warnings.count("synthetic note") == 1
+
+
+def test_libreoffice_converts_the_drawings_of_the_body_while_pandoc_reads_it(
+    convert: Converter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    started = threading.Event()
+    calls: list[list[str]] = []
+
+    def convert_vectors(
+        drawings: dict[str, tuple[bytes, str]], _work: Path
+    ) -> dict[str, _media.VectorResult]:
+        calls.append(sorted(suffix for _data, suffix in drawings.values()))
+        started.set()
+        return {name: (SVG, []) for name in drawings}
+
+    read_docx = _tree.read_docx
+
+    def read_once_libreoffice_started(path: Path, media: Path, pandoc: str) -> _tree.Element:
+        assert started.wait(timeout=10), "LibreOffice had not started when Pandoc read the docx"
+        return read_docx(path, media, pandoc)
+
+    monkeypatch.setattr(_media, "_convert_vectors", convert_vectors)
+    monkeypatch.setattr(_tree, "read_docx", read_once_libreoffice_started)
+    result, report, _warnings = convert.reported(
+        [image("shown")],
+        relations=(("shown", "image", "media/shown.emf", "Internal"),),
+        media={"shown.emf": synthetic_emf()},
+        # A drawing that the body does not show, such as a header's, is never converted.
+        extras={"word/media/logo.emf": synthetic_emf(1)},
+    )
+    assert calls == [[".emf"]]
+    assert "](.images/Synthetic%20Guide/shown.svg)" in result
+    assert dict(report.records["image-conversion"].applied) == {"EMF to SVG": 1}
+
+
+def test_a_failed_conversion_waits_for_libreoffice_before_removing_its_work(
+    convert: Converter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    failing, finished = threading.Event(), threading.Event()
+
+    def convert_vectors(
+        drawings: dict[str, tuple[bytes, str]], _work: Path
+    ) -> dict[str, _media.VectorResult]:
+        # Still converting when the conversion fails.
+        assert failing.wait(timeout=10)
+        time.sleep(0.3)
+        finished.set()
+        return {name: (SVG, []) for name in drawings}
+
+    def fail(_path: Path, _media: Path, _pandoc: str) -> _tree.Element:
+        failing.set()
+        raise _models.ConversionError("synthetic Pandoc failure")
+
+    monkeypatch.setattr(_media, "_convert_vectors", convert_vectors)
+    monkeypatch.setattr(_tree, "read_docx", fail)
+    with pytest.raises(_models.ConversionError, match="synthetic Pandoc failure"):
+        convert(
+            [image("shown")],
+            relations=(("shown", "image", "media/shown.emf", "Internal"),),
+            media={"shown.emf": synthetic_emf()},
+        )
+    assert finished.is_set()
 
 
 def test_picture_in_a_drawing_group_is_published(convert: Converter) -> None:
