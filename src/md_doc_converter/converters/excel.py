@@ -1,15 +1,9 @@
-"""
-Convert each worksheet of an Excel workbook to a Markdown page or a CSV file.
+"""Convert each worksheet of an Excel workbook to a Markdown page or a CSV file, as
+docs/excel-and-csv.md describes.
 
-``excel-to-md`` writes each worksheet as ``<sheet name>.md``, the page that ``csv-to-md``
-writes from ``excel-to-csv``'s ``<sheet name>.csv``. Formulas give the values Excel saved
-with them (``data_only=True``). Trailing empty rows and columns are left out, and empty
-worksheets and chart sheets are skipped.
-
-Usage:
-    md-doc-converter excel-to-md workbook.xlsx
-    md-doc-converter excel-to-md workbook.xlsx -o pages/ --dry-run
-    md-doc-converter excel-to-csv workbook.xlsx -o out_dir/
+openpyxl reads the workbook with data_only=True, so a formula's cell holds the value that Excel
+saved with it. A worksheet's cells become the rows that csv.writer writes, so that excel-to-md's
+page is the one that csv-to-md writes from excel-to-csv's file; markdown/tables.py writes it.
 """
 
 import argparse

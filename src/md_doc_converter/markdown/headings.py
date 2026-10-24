@@ -1,3 +1,11 @@
+"""Headings in Pandoc's document tree, and the identifiers that Pandoc gives them.
+
+`collect_headings` lists a document's headings, leaving out those in tables. A folder render
+prepares each page on its own; `header_blocks` finds each page's Header blocks, and
+`combined_identifiers` gives them the identifiers that Pandoc gives them when it reads the pages
+as one document, with assets/heading-ids.lua.
+"""
+
 from __future__ import annotations
 
 import json

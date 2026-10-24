@@ -1,24 +1,8 @@
-"""
-Convert CSV files to Markdown pages, each with a heading and one table.
+"""Convert CSV files to Markdown pages, as docs/excel-and-csv.md describes.
 
-Each CSV produces a ``.md`` file with:
-  - An H1 heading derived from the filename (hyphens become spaces).
-  - A Markdown table whose first row is the header.
-
-The input may be a single ``.csv`` file or a directory that is searched
-recursively. Output files are written next to the source CSVs. When
-``--output-dir`` is given for a directory, source subdirectories are preserved
-under the selected output directory.
-
-Files are read as UTF-8, with or without a byte-order mark. Each file's delimiter, a
-comma, semicolon or tab, is detected from its header line unless ``--delimiter``
-selects one.
-
-Usage:
-    md-doc-converter csv-to-md data.csv
-    md-doc-converter csv-to-md data.csv -o out/
-    md-doc-converter csv-to-md path/to/csvs/ -o out/ --dry-run
-    md-doc-converter csv-to-md data.csv --delimiter semicolon
+A folder's CSV files are those that Git lists, which leaves out Git-ignored ones, or every one
+outside a Git work tree. Each is read as UTF-8 without its byte-order mark, its delimiter is
+detected from its header line, and markdown/tables.py writes its page, keeping each cell literal.
 """
 
 import argparse
