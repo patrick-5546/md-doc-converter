@@ -219,10 +219,14 @@ commit SHA, checkouts keep no credentials, and each job has a time limit. The
 jobs:
 
 - `lint-and-core`: lint, then the core suite, with the pinned Pandoc cached;
+- `core-windows`: the core suite on Windows, run with uv, as make runs it;
 - `render`: installs Node.js, LibreOffice and Poppler, runs `setup` (cached)
   and the render suite;
-- `package`: builds the wheel and sdist, checks the wheel's contents, installs
-  it with `uv tool install` and runs the installed command.
+- `render-windows`: the same on Windows, with LibreOffice and Poppler from
+  Chocolatey;
+- `package`: on Linux and Windows, builds the wheel and sdist, checks the
+  wheel's contents, installs it with `uv tool install` and runs the installed
+  command.
 
 ## Building
 

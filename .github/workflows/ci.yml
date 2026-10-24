@@ -42,6 +42,32 @@ jobs:
         # Installs the pinned Pandoc first (setup --no-render), unless it is cached.
         run: make test
 
+  core-windows:
+    name: Core tests (Windows)
+    runs-on: windows-2025
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    env:
+      # The checkout's toolchain, as make selects it on Linux.
+      MD_DOC_CONVERTER_HOME: ${{ github.workspace }}/.toolchain
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - name: Cache Pandoc
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .toolchain/bin/pandoc.exe
+          key: pandoc-${{ runner.os }}-${{ hashFiles('src/md_doc_converter/toolchain/install.py') }}
+      - name: Core tests
+        # Installs the pinned Pandoc first, unless it is cached, as make test does on Linux.
+        run: |
+          uv run md-doc-converter setup --no-render
+          uv run pytest -n auto
+
   render:
     name: Rendering tests
     runs-on: ubuntu-24.04
@@ -101,10 +127,49 @@ jobs:
         # Runs setup first, which installs whatever the cache did not restore.
         run: make test-render
 
+  render-windows:
+    name: Rendering tests (Windows)
+    runs-on: windows-2025
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      MD_DOC_CONVERTER_HOME: ${{ github.workspace }}/.toolchain
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Chocolatey puts Poppler's commands on PATH; md-doc-converter finds LibreOffice where its
+      # installer puts it.
+      - name: Install LibreOffice and Poppler
+        run: choco install --yes --no-progress libreoffice-fresh poppler
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - name: Cache the toolchain
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .toolchain
+          key: toolchain-${{ runner.os }}-${{ hashFiles('src/md_doc_converter/toolchain/package.json', 'src/md_doc_converter/toolchain/package-lock.json', 'src/md_doc_converter/toolchain/environment.py', 'src/md_doc_converter/toolchain/install.py') }}
+      - name: Rendering tests
+        # Runs setup first, which installs whatever the cache did not restore.
+        run: |
+          uv run md-doc-converter setup
+          uv run pytest tests/rendering
+
   package:
-    name: Build and install check
-    runs-on: ubuntu-24.04
+    name: Build and install check (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -113,6 +178,8 @@ jobs:
       - name: Build
         run: uv build
       - name: Check the wheel contents
+        # The wheel is the same on every system.
+        if: runner.os == 'Linux'
         run: |
           python3 -m zipfile -l dist/*.whl > wheel-contents.txt
           for file in \
@@ -143,3 +210,8 @@ jobs:
           printf 'Name,Value\nalpha,1\n' > sample.csv
           "$UV_TOOL_BIN_DIR/md-doc-converter" csv-to-md sample.csv
           grep -q '| alpha | 1 |' sample.md
+          # The page has LF line endings on every system.
+          if grep -q $'\r' sample.md; then
+            echo "sample.md has CRLF line endings"
+            exit 1
+          fi
