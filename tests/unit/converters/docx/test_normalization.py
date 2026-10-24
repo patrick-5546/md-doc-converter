@@ -10,6 +10,7 @@ from md_doc_converter import pandoc as _pandoc
 from md_doc_converter.converters.docx import navigation as _navigation
 from md_doc_converter.converters.docx import normalization as _normalization
 from md_doc_converter.converters.docx import reference as _reference
+from md_doc_converter.markdown.document import READER as _RENDER_READER
 
 
 def test_signal_identifier_escapes_are_removed_only_from_prose(pandoc: str) -> None:
@@ -79,6 +80,28 @@ def test_an_items_other_lines_move_left_with_its_content() -> None:
         "> 2. Quoted\n>\n>    Quoted more.\n>\n> Quoted paragraph.\n"
     )
     assert _normalization.normalize_ordered_list_spacing(text) == (expected, 3)
+
+
+@pytest.mark.parametrize(
+    "reader",
+    [
+        pytest.param(_reference.DOCX_READER, id="docx-to-md"),
+        pytest.param(_RENDER_READER, id="md-to-html"),
+    ],
+)
+def test_an_items_other_paragraphs_stay_paragraphs_for_both_readers(
+    pandoc: str, reader: str
+) -> None:
+    # Pandoc's writer indents a nested item's later paragraph to the item's text, four columns
+    # past its marker. md-to-html's reader reads a paragraph indented past the text of an item
+    # whose marker has one space after it as code, and GitHub's reader as a paragraph.
+    written = "7.  Alpha\n\n    More about alpha.\n\n    7.  Nested\n\n        Nested more.\n"
+    normalized, _count = _normalization.normalize_ordered_list_spacing(written)
+
+    html = _pandoc.run(normalized, f"--from={reader}", "--to=html", pandoc=pandoc, description="")
+
+    assert "<pre>" not in html
+    assert "<p>Nested more.</p>" in html
 
 
 def test_ordered_list_spacing_leaves_literal_regions_and_code_items() -> None:
