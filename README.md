@@ -22,10 +22,9 @@ and PDF.
   (`pdftocairo`) to convert EMF and WMF drawings in Word documents to SVG, and
   Git to skip Git-ignored files when converting or rendering a folder.
 
-`md-doc-converter setup` installs the rest, including
-[Pandoc](https://pandoc.org/) 3.12.1 for Word conversion and rendering; see
-[Toolchain](#toolchain). Excel and CSV conversion need neither Pandoc nor
-Node.js.
+`md-doc-converter setup` installs the rest, including Pandoc for Word
+conversion and rendering; see [Toolchain](#toolchain). Excel and CSV conversion
+need neither Pandoc nor Node.js.
 
 ## Installation
 
@@ -46,10 +45,8 @@ md-doc-converter setup
 md-doc-converter doctor
 ```
 
-`setup` installs Pandoc and, for rendering, the pinned Mermaid, KaTeX and
-Puppeteer npm packages with the headless browser they share. For Word
-conversion only, `setup --no-render` installs just Pandoc and needs no Node.js.
-See [Toolchain](#toolchain).
+For Word conversion only, `setup --no-render` installs just Pandoc and needs no
+Node.js.
 
 ## Quick start
 
@@ -69,86 +66,40 @@ command's options.
 | Command | Purpose |
 | --- | --- |
 | `docx-to-md DOCX [-o FILE.md]` | Convert a Word document to Markdown with its images; see [Word conversion](docs/word-conversion.md) |
-| `excel-to-md WORKBOOK [-o DIR] [--dry-run]` | Convert each worksheet to a Markdown page, `<sheet name>.md` |
+| `excel-to-md WORKBOOK [-o DIR] [--dry-run]` | Convert each worksheet to a Markdown page, `<sheet name>.md`; see [Excel and CSV conversion](docs/excel-and-csv.md) |
 | `excel-to-csv WORKBOOK [-o DIR]` | Write each worksheet as `<sheet name>.csv` |
 | `csv-to-md PATH [-o DIR] [--dry-run] [--delimiter NAME]` | Convert a CSV file, or every CSV in a folder, to Markdown |
 | `md-to-html INPUT [-o FILE.html]` | Render a Markdown file or folder to standalone HTML; see [Rendering](docs/rendering.md) |
 | `md-to-pdf INPUT [-o FILE.pdf]` | Render a Markdown file or folder to a paged PDF |
-| `setup [--no-render] [--downloads DIR] [--force]` | Install the pinned toolchain; `--no-render` installs only Pandoc |
+| `setup [--no-render] [--downloads DIR] [--force]` | Install the pinned toolchain; see [Toolchain](#toolchain) |
 | `doctor` | Check the prerequisites and show how to fix what is missing |
 
-## Excel and CSV
+## Guides
 
-`excel-to-md` converts each worksheet to a Markdown page, `<sheet name>.md`,
-beside the workbook or in the `-o` folder. `excel-to-csv` writes
-`<sheet name>.csv` instead, from which `csv-to-md` writes the same page.
-Trailing empty rows and columns are left out, and empty worksheets and chart
-sheets are skipped. Like Word documents, a workbook that is encrypted, in the
-Excel 97-2003 format (`.xls`), or whose contents expand to more than 1,024 MiB
-is refused. Formulas are written as the values Excel saved with them;
-a workbook saved by a program that does not calculate formulas, such as a
-script, has none, and those cells come out empty. For clean output, each
-worksheet should:
+- [Word conversion](docs/word-conversion.md): what the Markdown holds, the
+  report, the options, and converting again.
+- [Excel and CSV conversion](docs/excel-and-csv.md): how worksheets and CSV
+  files become pages, and what makes clean output.
+- [Rendering](docs/rendering.md): output names, folder input, how Markdown is
+  read, images from elsewhere, Mermaid diagrams, math, the page header and
+  footer, extra stylesheets, the PDF time limit and table styling.
 
-- contain one table beginning in the first row and first column;
-- contain no populated cells outside the table;
-- be named for the page it becomes: a worksheet `Pin-Assignments` becomes
-  `Pin-Assignments.md`, titled "Pin Assignments".
+## Messages
 
-`csv-to-md` converts one CSV file, or every CSV in a folder and its subfolders
-(skipping Git-ignored files when the folder is in a Git work tree). Each page
-has a heading from the file name, with hyphens as spaces, a note that it is
-generated, and the table. Pages are written beside each CSV unless `-o` is set;
-for a folder, `-o` keeps the relative subfolders. Short rows are padded; rows
-wider than the header fail instead of silently dropping cells.
+`docx-to-md`, `md-to-html` and `md-to-pdf` warn about what they cannot carry
+over or show as written, naming the file and, when it is known, the line:
 
-CSV files are read as UTF-8, with or without the byte-order mark that Excel's
-"CSV UTF-8" format writes. Each file's delimiter is detected from its header
-line: a comma, or a semicolon or tab, as Excel writes in some languages and
-regions. `--delimiter comma`, `semicolon` or `tab` selects one for every file.
-
-Cell contents and page titles stay literal: backslashes, pipes, HTML-like text,
-entity names, code delimiters, and Markdown punctuation remain text, not
-formatting, and so do a citation-like `@name`, which Pandoc's Markdown reads as
-a citation, and an emoji code such as `:smile:`, which GitHub shows as an emoji.
-Identifiers such as `_ctl_s_ready` and e-mail addresses stay readable. Cell
-newlines become `<br>`, surrounding whitespace is trimmed, and tabs become
-spaces.
-
-After conversion, check empty rows and columns and the file names. It is usually
-easiest to correct problems in the workbook and convert again. Regenerate the
-Markdown whenever the workbook or a CSV changes, since readers see the
-Markdown, not the workbook.
-
-## Word documents
-
-```sh
-md-doc-converter docx-to-md docs/spec.docx
-md-doc-converter docx-to-md docs/spec.docx --split-depth 1   # one page per section
-md-doc-converter docx-to-md docs/spec.docx --dry-run    # check without writing
+```text
+md-to-html: warning: docs/setup.md: broken anchor '#instal' (no matching heading)
 ```
 
-Conversion warns about each item it could not carry over, showing the first
-three of each kind, and counts every kind in a summary that quotes nothing from
-the document; `--verbose` shows everything, and `--quiet` only errors. See
-[Word conversion](docs/word-conversion.md) for the transforms, the report,
-options, and the replacement rules for existing output.
-
-## Rendering
-
-```sh
-md-doc-converter md-to-pdf docs/spec.md -o "reviews/spec review.pdf"
-md-doc-converter md-to-pdf docs --header "Design review" --footer "Draft"
-md-doc-converter md-to-html docs/spec.md --extra-css branding.css
-```
-
-A folder input is combined into one document in name order, or in the order an
-Azure DevOps Wiki `.order` file gives. Rendering writes only the requested file
-and replaces an existing one only after it succeeds. The prepared document and
-other intermediates stay private unless `--keep-intermediates DIR` asks to keep
-them. See [Rendering](docs/rendering.md) for output naming, folder input,
-Mermaid diagrams, math, the page header and footer, extra stylesheets, the PDF
-time limit and table styling.
+They show the first three warnings of each kind and count the rest. `-v`,
+`--verbose` shows every warning and the details of each step; `-q`, `--quiet`
+shows only errors. The result, the last line, goes to standard output and the
+rest to standard error, so `--verbose 2> conversion.log` keeps the whole
+report. On a terminal, a status line names the running step, and warnings and
+errors are colored unless `NO_COLOR` is set. The Excel and CSV commands list
+each file they write.
 
 ## Settings
 
@@ -168,13 +119,12 @@ Command-line options override these environment variables.
 
 - `bin/pandoc`: Pandoc 3.12.1, the version md-doc-converter is tested with,
   from its GitHub release, verified against a pinned SHA-256 checksum;
-- `node/`: the npm packages from the lockfile bundled with md-doc-converter,
-  installed without their install scripts or optional packages, which none
-  needs;
-- `puppeteer/`: chrome-headless-shell, the build of headless Chrome that the
-  locked Puppeteer pins, which Mermaid and the PDF printer share.
-
-`setup --no-render` installs only Pandoc.
+- `node/`, for rendering: the Mermaid, KaTeX and Puppeteer npm packages from
+  the lockfile bundled with md-doc-converter, installed without their install
+  scripts or optional packages, which none needs;
+- `puppeteer/`, for rendering: chrome-headless-shell, the build of headless
+  Chrome that the locked Puppeteer pins, which Mermaid and the PDF printer
+  share.
 
 md-doc-converter looks in the toolchain's `bin/` first, so it uses this Pandoc
 even when another one is installed. Without it, md-doc-converter uses the

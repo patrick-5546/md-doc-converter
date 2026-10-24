@@ -55,8 +55,7 @@ rendered them.
 ## Messages
 
 Rendering warns about what it cannot show as written, such as a missing image
-or a link to a heading that does not exist, naming the file and, when it is
-known, the line:
+or a link to a heading that does not exist:
 
 ```text
 md-to-html: rendering docs
@@ -65,12 +64,9 @@ md-to-html: warning: docs/notes.md:12: Duplicate note reference '1'
 rendered docs -> docs/docs.html
 ```
 
-It shows the first three warnings of each kind and counts the rest. `-v`,
-`--verbose` shows every warning, the files that a folder render reads and what
-preparation changed; `-q`, `--quiet` shows only errors. The last line, the
-result, is on standard output; the others are on standard error. On a terminal,
-a status line names the running step, and warnings and errors are colored,
-unless `NO_COLOR` is set.
+`--verbose` also lists the files that a folder render reads, and what
+preparing them changed, such as the wiki macro lines it dropped. See
+[Messages](../README.md#messages) for the options that choose what is shown.
 
 ## Folder input
 
