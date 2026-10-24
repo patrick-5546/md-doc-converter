@@ -135,8 +135,9 @@ mode, and a warning fails the test that raises it.
 
 The core suite needs Git and the pinned Pandoc, which `make test` installs
 first, because some converter tests compare exact Pandoc output. It needs
-nothing else: command-line and pipeline tests use fake `pandoc`, `node`, `npm`
-and `mmdc` executables and a fake toolchain, and EMF conversion is tested with
+nothing else: command-line and pipeline tests use fake `pandoc`, `node` and
+`npm` executables, fake scripts for the `mmdc` and `puppeteer` commands that the
+fake `node` runs, and a fake toolchain, and EMF conversion is tested with
 LibreOffice and Poppler mocked. The render suite runs the real tools: the
 installed toolchain, Node.js, LibreOffice (`libreoffice` or `soffice`) and
 Poppler's `pdftocairo`, `pdfinfo`, `pdftotext`, `pdftohtml` and `pdffonts`.

@@ -55,18 +55,23 @@ def mmdc_calls(fake_tools: FakeTools) -> list[list[str]]:
 
 
 @pytest.fixture
-def mmdc(fake_tools: FakeTools) -> Path:
-    """A fake mermaid-cli, whose runs fake_tools records."""
-    return fake_tools.write("mmdc") / "mmdc"
+def mmdc(tmp_path: Path) -> Path:
+    """A fake mermaid-cli script, which the fake node runs as mmdc, recorded by fake_tools."""
+    script = tmp_path / "mmdc.js"
+    script.write_text("fake:mmdc", encoding="utf-8")
+    return script
 
 
 @pytest.fixture
-def convert(pandoc: str) -> Convert:
-    """Convert Markdown to Pandoc JSON through the filter, which runs the given mmdc."""
+def convert(pandoc: str, fake_tools: FakeTools) -> Convert:
+    """Convert Markdown to Pandoc JSON through the filter, which runs the given mmdc script with
+    the fake node."""
+    fake_tools.write("node")
 
     def run(markdown: str, mmdc: Path) -> subprocess.CompletedProcess[str]:
         environment = {
             **os.environ,
+            "MD_DOC_CONVERTER_NODE": str(fake_tools.path("node")),
             "MD_DOC_CONVERTER_MMDC": str(mmdc),
             "MD_DOC_CONVERTER_MERMAID_CONFIG": "/config/mermaid.json",
         }
@@ -120,6 +125,20 @@ def test_missing_mmdc_names_setup(convert: Convert, tmp_path: Path) -> None:
     assert result.returncode != 0
     assert "mermaid-cli (mmdc) is not installed" in result.stderr
     assert "md-doc-converter setup" in result.stderr
+
+
+def test_missing_node_is_named(pandoc: str, mmdc: Path) -> None:
+    environment = {**os.environ, "MD_DOC_CONVERTER_NODE": "", "MD_DOC_CONVERTER_MMDC": str(mmdc)}
+    result = subprocess.run(
+        [pandoc, "--from=markdown", "--to=json", f"--lua-filter={asset_path('mermaid.lua')}"],
+        input="```mermaid\nflowchart LR\n```\n",
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "Node.js, which runs mermaid-cli, was not found on PATH" in result.stderr
 
 
 def test_a_failing_diagram_is_named_with_the_mermaid_message(

@@ -14,6 +14,7 @@ from md_doc_converter import executables
 from md_doc_converter.resources import package_version
 from md_doc_converter.toolchain.environment import (
     BROWSER,
+    MERMAID_CLI,
     NODE_MINIMUM,
     PANDOC_VERSION,
     PLATFORMS,
@@ -33,8 +34,8 @@ NODE_FIX = (
 )
 SETUP_FIX = "Run `md-doc-converter setup`"
 REINSTALL_FIX = "Run `md-doc-converter setup --force`"
-# Executables that the Pandoc filters run.
-FILTER_EXECUTABLES = ("mmdc",)
+# The npm commands that the Pandoc filters run with Node.js, by package.
+FILTER_COMMANDS = ((MERMAID_CLI, "mmdc"),)
 # Packages that every render reads: KaTeX for math, and the GitHub Markdown stylesheet.
 RENDER_PACKAGES = ("katex", "github-markdown-css")
 # The PDF printer's package.
@@ -136,7 +137,11 @@ def check_packages(tools: Toolchain, *, pdf: bool = True) -> Check:
         return Check(
             "npm packages", "error", f"not installed or out of date in {tools.node_dir}", SETUP_FIX
         )
-    missing = [name for name in FILTER_EXECUTABLES if not _executable(tools.node_executable(name))]
+    missing = [
+        command
+        for package, command in FILTER_COMMANDS
+        if tools.node_script(package, command) is None
+    ]
     packages = [*RENDER_PACKAGES, *([PDF_PACKAGE] if pdf else [])]
     missing += [
         name for name in packages if not (tools.node_modules / name / "package.json").is_file()

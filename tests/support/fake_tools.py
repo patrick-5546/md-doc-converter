@@ -13,6 +13,7 @@ from pathlib import Path
 
 from md_doc_converter.toolchain.environment import (
     BROWSER,
+    MERMAID_CLI,
     Platform,
     Toolchain,
     host_platform,
@@ -26,9 +27,13 @@ VERSIONS = {
     "node": "v24.0.0",
     "npm": "11.0.0",
 }
-# The files that rendering reads from the installed npm packages, by path in node_modules.
+# The files that rendering reads from the installed npm packages, by path in node_modules, with
+# the scripts of the npm commands that md-doc-converter runs, which the fake node runs.
 PACKAGE_FILES = {
-    "puppeteer/package.json": "{}",
+    f"{MERMAID_CLI}/package.json": json.dumps({"bin": {"mmdc": "src/cli.js"}}),
+    f"{MERMAID_CLI}/src/cli.js": "fake:mmdc",
+    "puppeteer/package.json": json.dumps({"bin": {"puppeteer": "lib/puppeteer/node/cli.js"}}),
+    "puppeteer/lib/puppeteer/node/cli.js": "fake:puppeteer",
     "katex/package.json": "{}",
     "katex/dist/katex.min.css": (
         "@font-face{font-family:KaTeX_Main;src:url(fonts/KaTeX_Main-Regular.woff2) "
@@ -52,6 +57,7 @@ BROWSER_PATH = browser_path(host_platform())
 RECORDED_VARIABLES = (
     "PATH",
     "PUPPETEER_CACHE_DIR",
+    "MD_DOC_CONVERTER_NODE",
     "MD_DOC_CONVERTER_MMDC",
     "MD_DOC_CONVERTER_MERMAID_CONFIG",
     "MD_DOC_CONVERTER_NODE_MODULES",
@@ -92,10 +98,6 @@ def write_fake_tools(
 def install_fake_toolchain(root: Path, log: Path) -> Toolchain:
     """Create a complete, current toolchain, with the pinned Pandoc, whose executables are fakes."""
     tools = Toolchain(root)
-    executable = tools.node_executable("mmdc")
-    executable.parent.mkdir(parents=True)
-    executable.write_text("#!/bin/sh\n", encoding="utf-8")
-    executable.chmod(0o755)
     write_packages(tools)
     browser = tools.puppeteer_cache / BROWSER_PATH
     browser.parent.mkdir(parents=True)
@@ -130,6 +132,10 @@ class FakeTools:
     def write(self, *names: str, versions: dict[str, str] | None = None) -> Path:
         """Write the named fakes, by default pandoc, node and npm; return their directory."""
         return write_fake_tools(self.bin, self.log, names or ("pandoc", "node", "npm"), versions)
+
+    def path(self, name: str) -> Path:
+        """The fake executable *name*, which `write` writes."""
+        return self.bin / host_platform().executable(name)
 
     def toolchain(self, root: Path) -> Toolchain:
         """Install a complete, current fake toolchain at root, logging to the same log."""

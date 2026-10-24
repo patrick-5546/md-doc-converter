@@ -24,7 +24,7 @@ STYLESHEET_URI = "data:text/css;charset=utf-8,"
 
 class Convert(Protocol):
     def __call__(
-        self, markdown: str, *arguments: str, tools: Path
+        self, markdown: str, *arguments: str, node: str
     ) -> subprocess.CompletedProcess[str]: ...
 
 
@@ -41,15 +41,22 @@ def raw_html(node: object) -> list[str]:
 
 
 @pytest.fixture
+def node(fake_tools: FakeTools) -> str:
+    """The fake node, whose runs fake_tools records."""
+    fake_tools.write("node")
+    return str(fake_tools.path("node"))
+
+
+@pytest.fixture
 def convert(pandoc: str, tmp_path: Path) -> Convert:
-    """Convert Markdown to Pandoc JSON through the filter, with only *tools* on the PATH."""
+    """Convert Markdown to Pandoc JSON through the filter, which runs *node* as Node.js."""
     stylesheet = tmp_path / "katex.css"
     stylesheet.write_text(STYLESHEET, encoding="utf-8")
 
-    def run(markdown: str, *arguments: str, tools: Path) -> subprocess.CompletedProcess[str]:
+    def run(markdown: str, *arguments: str, node: str) -> subprocess.CompletedProcess[str]:
         environment = {
             **os.environ,
-            "PATH": str(tools),
+            "MD_DOC_CONVERTER_NODE": node,
             "MD_DOC_CONVERTER_KATEX_CSS": str(stylesheet),
         }
         return subprocess.run(
@@ -71,14 +78,14 @@ def convert(pandoc: str, tmp_path: Path) -> Convert:
 
 
 def test_all_math_renders_in_one_node_run_in_its_place(
-    convert: Convert, fake_tools: FakeTools
+    convert: Convert, fake_tools: FakeTools, node: str
 ) -> None:
     result = convert(
         "% Title $t$\n\n"
         "Inline $a^2$, displayed:\n\n$$\\frac{1}{2}$$\n\n"
         "| Cell |\n|------|\n| $x$  |\n\n"
         "A note.[^1]\n\n[^1]: With $n$.\n",
-        tools=fake_tools.write("node"),
+        node=node,
     )
 
     assert result.returncode == 0, result.stderr
@@ -106,17 +113,17 @@ def test_all_math_renders_in_one_node_run_in_its_place(
     assert unquote(stylesheet["c"].removeprefix(STYLESHEET_URI)) == STYLESHEET
 
 
-def test_a_document_without_math_runs_no_node(convert: Convert, tmp_path: Path) -> None:
-    # Nothing is on the PATH: running node would fail the conversion.
-    result = convert("# Prices\n\nFrom $5 to $6.\n", tools=tmp_path / "empty")
+def test_a_document_without_math_runs_no_node(convert: Convert) -> None:
+    # There is no Node.js: running it would fail the conversion.
+    result = convert("# Prices\n\nFrom $5 to $6.\n", node="")
 
     assert result.returncode == 0, result.stderr
     assert raw_html(json.loads(result.stdout)) == []
     assert "css" not in json.loads(result.stdout)["meta"]
 
 
-def test_the_stylesheet_follows_the_documents_own(convert: Convert, fake_tools: FakeTools) -> None:
-    result = convert("$x$\n", "--metadata=css:page.css", tools=fake_tools.write("node"))
+def test_the_stylesheet_follows_the_documents_own(convert: Convert, node: str) -> None:
+    result = convert("$x$\n", "--metadata=css:page.css", node=node)
 
     assert result.returncode == 0, result.stderr
     first, second = json.loads(result.stdout)["meta"]["css"]["c"]
@@ -128,19 +135,21 @@ def test_the_stylesheet_follows_the_documents_own(convert: Convert, fake_tools: 
 def test_a_failed_render_names_setup(
     convert: Convert,
     fake_tools: FakeTools,
-    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     failure: str,
 ) -> None:
-    tools = tmp_path / "empty"
+    node = ""
     if failure == "node fails":
         monkeypatch.setenv("FAKE_TOOL_FAIL", "node")
-        tools = fake_tools.write("node")
+        fake_tools.write("node")
+        node = str(fake_tools.path("node"))
 
-    result = convert("$x$\n", tools=tools)
+    result = convert("$x$\n", node=node)
 
     assert result.returncode != 0
     assert "katex.lua: cannot render math (" in result.stderr
     if failure == "node fails":
         assert "(node exited with status 3)" in result.stderr
+    else:
+        assert "(Node.js was not found on PATH)" in result.stderr
     assert "run `md-doc-converter setup`" in result.stderr

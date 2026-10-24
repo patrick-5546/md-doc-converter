@@ -135,7 +135,7 @@ def test_render_defaults_next_to_files_and_inside_folders(
     environment = pandoc[0]["environment"]
     assert isinstance(environment, dict)
     assert environment["PUPPETEER_CACHE_DIR"] == str(tools.puppeteer_cache)
-    assert str(environment["PATH"]).startswith(str(tools.node_bin))
+    assert str(environment["PATH"]).startswith(str(tools.bin_dir))
     arguments = pandoc[0]["arguments"]
     assert isinstance(arguments, list)
     # Pandoc embeds the stylesheets: KaTeX's from the work directory, which katex.lua adds

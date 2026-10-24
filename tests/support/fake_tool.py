@@ -1,4 +1,4 @@
-"""A stand-in for pandoc, node, npm, mmdc and Puppeteer's command line.
+"""A stand-in for pandoc, node, npm, and the mermaid-cli and Puppeteer command lines.
 
 `fake_tools.write_fake_tools` writes executables that call `main` with their configuration.
 Each fake answers ``--version`` with its configured version, records every other call
@@ -6,12 +6,15 @@ Each fake answers ``--version`` with its configured version, records every other
 writes the files that the real tool would:
 
 - pandoc answers the preprocessor's ``--to=json`` parses with headings only, so test inputs
+- pandoc answers the preprocessor's ``--to=json`` parses with headings only, so test inputs
   should be plain Markdown without links or reference definitions; answers a folder's
   heading-identifier run by reading its pages' headings as one document; and otherwise writes
   the headings of the document it reads, as Markdown, wrapped in the inlined styles as the HTML;
-- node writes a placeholder PDF, and renders each formula that katex-render.mjs reads as its
-  TeX in a katex tag, marked if displayed;
-- npm installs the package files that rendering reads, an mmdc and a Puppeteer command line;
+- node runs a script that holds ``fake:<command>`` as that command, recorded under its name;
+  renders each formula that katex-render.mjs reads as its TeX in a katex tag, marked if
+  displayed; and otherwise writes a placeholder PDF, as the PDF printer would;
+- npm installs the package files that rendering reads, with the scripts of mermaid-cli's mmdc
+  and Puppeteer's command line;
 - mmdc writes each diagram's text as its SVG, and fails on a diagram that contains ``FAIL``;
 - puppeteer installs a browser executable.
 
@@ -23,7 +26,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
 import sys
 from pathlib import Path
 from typing import TypedDict
@@ -110,15 +112,18 @@ def _katex(record: dict[str, object]) -> None:
 
 def _npm(config: Config) -> None:
     modules = Path.cwd() / "node_modules"
-    executable = modules / ".bin" / "mmdc"
-    executable.parent.mkdir(parents=True, exist_ok=True)
-    executable.write_text("#!/bin/sh\n", encoding="utf-8")
-    executable.chmod(0o755)
-    # The fake Puppeteer command line is this executable under another name.
-    shutil.copy(sys.argv[0], modules / ".bin" / "puppeteer")
     for name, text in config["packages"].items():
         (modules / name).parent.mkdir(parents=True, exist_ok=True)
         (modules / name).write_text(text, encoding="utf-8")
+
+
+def _script_command(arguments: list[str]) -> str | None:
+    """The command that node's script, its first argument, stands in for, if it is a fake."""
+    script = Path(arguments[0]) if arguments else None
+    if script is None or not script.is_file():
+        return None
+    text = script.read_text(encoding="utf-8")
+    return text.removeprefix("fake:") if text.startswith("fake:") else None
 
 
 def main(config: Config) -> int:
@@ -127,6 +132,8 @@ def main(config: Config) -> int:
     if arguments[:1] == ["--version"]:
         print(config["versions"][tool])
         return 0
+    if tool == "node" and (command := _script_command(arguments)) is not None:
+        tool, arguments = command, arguments[1:]
     if tool == "pandoc" and "--to=json" in arguments:
         source = sys.stdin.read()
         document = _identified(json.loads(source)) if "--from=json" in arguments else None

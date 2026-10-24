@@ -225,7 +225,7 @@ def test_render_publishes_only_the_deliverable_and_keeps_scratch_private(
         assert Path(command[-1]).is_relative_to(scratch)
         environment = options["env"]
         assert isinstance(environment, dict)
-        assert environment["PATH"].startswith(str(tools.node_bin) + os.pathsep)
+        assert environment["PATH"].startswith(str(tools.bin_dir) + os.pathsep)
         assert environment["PUPPETEER_CACHE_DIR"] == str(tools.puppeteer_cache)
         # Pandoc reads no file or URL that the document names.
         assert "--sandbox" in command

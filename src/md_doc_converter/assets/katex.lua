@@ -1,10 +1,10 @@
 -- Render math with KaTeX: replace each Math element with the HTML that KaTeX renders for it.
 --
--- katex-render.mjs renders all of a document's math in one Node.js run, and a document without
--- math runs none. Invalid TeX is shown in KaTeX's error color instead of failing the render. A
--- document with math gets the stylesheet that MD_DOC_CONVERTER_KATEX_CSS names, with its
--- fonts, as a data URI: Pandoc renders in its sandbox, which reads no file that the document
--- names.
+-- katex-render.mjs renders all of a document's math in one run of MD_DOC_CONVERTER_NODE,
+-- Node.js, and a document without math runs none. Invalid TeX is shown in KaTeX's error color
+-- instead of failing the render. A document with math gets the stylesheet that
+-- MD_DOC_CONVERTER_KATEX_CSS names, with its fonts, as a data URI: Pandoc renders in its
+-- sandbox, which reads no file that the document names.
 
 local RENDERER = pandoc.path.join({ pandoc.path.directory(PANDOC_SCRIPT_FILE), "katex-render.mjs" })
 
@@ -14,7 +14,11 @@ end
 
 -- The HTML of each formula, a { tex, display } pair, in order.
 local function render(formulas)
-  local succeeded, output = pcall(pandoc.pipe, "node", { RENDERER }, pandoc.json.encode(formulas))
+  local node = os.getenv("MD_DOC_CONVERTER_NODE") or ""
+  local succeeded, output = false, "Node.js was not found on PATH"
+  if node ~= "" then
+    succeeded, output = pcall(pandoc.pipe, node, { RENDERER }, pandoc.json.encode(formulas))
+  end
   if not succeeded then
     -- pandoc.pipe raises a table with node's exit status, or a message if node cannot run.
     local reason = tostring(output)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -36,7 +37,7 @@ from md_doc_converter.toolchain.environment import (
     render_environment,
     write_stamp,
 )
-from tests.support.fake_tools import BROWSER_PATH, FakeTools, browser_path
+from tests.support.fake_tools import BROWSER_PATH, FakeTools, browser_path, write_packages
 
 # The root of the file system that holds the current folder: / or a drive such as C:\.
 ROOT = Path(Path.cwd().anchor)
@@ -200,20 +201,53 @@ def test_the_browser_is_found_in_the_build_for_the_platform(
     assert tools.pandoc == tools.bin_dir / system.executable("pandoc")
 
 
-def test_render_environment_puts_the_toolchain_first() -> None:
-    base = {"PATH": "/usr/bin", "OTHER": "kept"}
-    environment = render_environment(Toolchain(Path("/renderer")), base)
-    assert environment["PATH"].split(os.pathsep) == [
-        "/renderer/node/node_modules/.bin",
-        "/renderer/bin",
-        "/usr/bin",
-    ]
-    assert environment["PUPPETEER_CACHE_DIR"] == "/renderer/puppeteer"
-    assert environment["MD_DOC_CONVERTER_MMDC"] == "/renderer/node/node_modules/.bin/mmdc"
+def test_render_environment_puts_the_toolchain_first(fake_tools: FakeTools, tmp_path: Path) -> None:
+    fake_tools.write("node")
+    tools = Toolchain(tmp_path / "renderer")
+    write_packages(tools)
+    base = {"PATH": str(fake_tools.bin), "OTHER": "kept"}
+    environment = render_environment(tools, base)
+    assert environment["PATH"].split(os.pathsep) == [str(tools.bin_dir), str(fake_tools.bin)]
+    assert environment["PUPPETEER_CACHE_DIR"] == str(tools.puppeteer_cache)
+    # mermaid.lua runs mermaid-cli's script with Node.js, found on that PATH.
+    assert environment["MD_DOC_CONVERTER_NODE"] == str(fake_tools.path("node"))
+    mmdc = tools.node_modules / "@mermaid-js" / "mermaid-cli" / "src" / "cli.js"
+    assert environment["MD_DOC_CONVERTER_MMDC"] == str(mmdc)
     assert environment["MD_DOC_CONVERTER_MERMAID_CONFIG"] == str(asset_path("mermaid-config.json"))
-    assert environment["MD_DOC_CONVERTER_NODE_MODULES"] == "/renderer/node/node_modules"
+    assert environment["MD_DOC_CONVERTER_NODE_MODULES"] == str(tools.node_modules)
     assert environment["OTHER"] == "kept"
-    assert base["PATH"] == "/usr/bin"
+    assert base["PATH"] == str(fake_tools.bin)
+
+
+@pytest.mark.parametrize(
+    ("manifest", "script"),
+    [
+        pytest.param({"bin": {"tool": "cli.js"}}, "cli.js", id="by-command"),
+        pytest.param({"bin": "cli.js"}, "cli.js", id="named-after-the-package"),
+        pytest.param({"bin": {"other": "cli.js"}}, None, id="another-command"),
+        pytest.param({"bin": {"tool": "missing.js"}}, None, id="missing-script"),
+        pytest.param({}, None, id="no-commands"),
+    ],
+)
+def test_an_npm_command_is_the_script_its_package_names(
+    manifest: dict[str, object], script: str | None, tmp_path: Path
+) -> None:
+    tools = Toolchain(tmp_path / "home")
+    package = tools.node_modules / "@scope" / "tool"
+    package.mkdir(parents=True)
+    (package / "package.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (package / "cli.js").write_text("", encoding="utf-8")
+    expected = None if script is None else package / script
+    assert tools.node_script("@scope/tool", "tool") == expected
+    assert tools.node_script("@scope/absent", "tool") is None
+
+
+def test_rendering_needs_mermaid_cli_command(fakes: FakeTools, tmp_path: Path) -> None:
+    fakes.write()
+    tools = fakes.toolchain(tmp_path / "home")
+    (tools.node_modules / "@mermaid-js" / "mermaid-cli" / "src" / "cli.js").unlink()
+    problems = checks.render_problems(tools, pdf=False)
+    assert problems == [f"npm packages: missing mmdc. {checks.REINSTALL_FIX}"]
 
 
 def test_stamp_tracks_the_bundled_manifests(tmp_path: Path) -> None:

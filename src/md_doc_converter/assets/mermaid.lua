@@ -6,8 +6,8 @@
 -- including its theme and layout for each diagram type; a diagram can choose others in its
 -- front matter.
 --
--- MD_DOC_CONVERTER_MMDC names the mmdc executable, and MD_DOC_CONVERTER_MERMAID_CONFIG an
--- optional Mermaid configuration file.
+-- MD_DOC_CONVERTER_MMDC names mermaid-cli's script, which MD_DOC_CONVERTER_NODE, Node.js, runs,
+-- and MD_DOC_CONVERTER_MERMAID_CONFIG an optional Mermaid configuration file.
 
 local IMAGE_CLASS = "mermaid-diagram"
 -- In Markdown input, mmdc ends a diagram at a line of three backticks or colons.
@@ -21,17 +21,22 @@ local function fail(message)
   error("mermaid.lua: " .. message, 0)
 end
 
-local function mmdc_executable()
+-- The command that runs mermaid-cli: Node.js and mermaid-cli's script.
+local function mmdc_command()
   local mmdc = os.getenv("MD_DOC_CONVERTER_MMDC") or ""
   if mmdc == "" or not pandoc.path.exists(mmdc) then
     fail("mermaid-cli (mmdc) is not installed; run `md-doc-converter setup`")
   end
-  return mmdc
+  local node = os.getenv("MD_DOC_CONVERTER_NODE") or ""
+  if node == "" then
+    fail("Node.js, which runs mermaid-cli, was not found on PATH")
+  end
+  return { node = node, script = mmdc }
 end
 
 -- Run mmdc; return whether it succeeded and what it wrote to stderr.
 local function run(mmdc, input, output, extra)
-  local arguments = { "--input", input, "--output", output, "--quiet" }
+  local arguments = { mmdc.script, "--input", input, "--output", output, "--quiet" }
   local config = os.getenv("MD_DOC_CONVERTER_MERMAID_CONFIG") or ""
   if config ~= "" then
     arguments[#arguments + 1] = "--configFile"
@@ -40,7 +45,7 @@ local function run(mmdc, input, output, extra)
   for _, value in ipairs(extra or {}) do
     arguments[#arguments + 1] = value
   end
-  local status, _, errors = pandoc.system.command(mmdc, arguments)
+  local status, _, errors = pandoc.system.command(mmdc.node, arguments)
   return not status, errors
 end
 
@@ -143,7 +148,7 @@ function Pandoc(document)
   if #diagrams == 0 then
     return nil
   end
-  local mmdc = mmdc_executable()
+  local mmdc = mmdc_command()
   local svgs = pandoc.system.with_temporary_directory("md-doc-converter-mermaid", function(directory)
     return render(mmdc, directory, diagrams)
   end)

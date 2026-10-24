@@ -125,8 +125,13 @@ def install_browser(tools: Toolchain, environment: dict[str, str]) -> None:
     """
     shutil.rmtree(tools.puppeteer_cache, ignore_errors=True)
     print(f"browser: installing {BROWSER} into {tools.puppeteer_cache}", flush=True)
-    command = [str(tools.node_executable("puppeteer")), "browsers", "install", BROWSER]
+    script = tools.node_script("puppeteer", "puppeteer")
+    if script is None:
+        raise SetupError(
+            f"browser install failed: npm installed no Puppeteer in {tools.node_modules}"
+        )
     try:
+        command = [executables.resolve("node"), str(script), "browsers", "install", BROWSER]
         subprocess.run(command, cwd=tools.node_dir, env=environment, check=True)
     except (OSError, subprocess.CalledProcessError) as error:
         raise SetupError(f"browser install failed: {error}") from error

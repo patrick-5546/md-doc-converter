@@ -9,6 +9,7 @@ chrome-headless-shell build that their Puppeteer pins under one directory: by de
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import platform
 import sys
@@ -16,6 +17,7 @@ from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from md_doc_converter import executables
 from md_doc_converter.resources import asset_path
 
 HOME_VARIABLE = "MD_DOC_CONVERTER_HOME"
@@ -28,6 +30,8 @@ NODE_MINIMUM = (22, 13, 0)
 PANDOC_VERSION = "3.12.1"
 # The one browser that setup installs, shared by Mermaid and the PDF printer.
 BROWSER = "chrome-headless-shell"
+# The npm package of Mermaid's command line, mmdc.
+MERMAID_CLI = "@mermaid-js/mermaid-cli"
 
 
 @dataclass(frozen=True)
@@ -95,10 +99,6 @@ class Toolchain:
         return self.node_dir / "node_modules"
 
     @property
-    def node_bin(self) -> Path:
-        return self.node_modules / ".bin"
-
-    @property
     def bin_dir(self) -> Path:
         return self.root / "bin"
 
@@ -114,8 +114,25 @@ class Toolchain:
     def pandoc(self) -> Path:
         return self.bin_dir / self.system.executable("pandoc")
 
-    def node_executable(self, name: str) -> Path:
-        return self.node_bin / name
+    def node_script(self, package: str, command: str) -> Path | None:
+        """The script of the command *command* of the installed npm package *package*.
+
+        Node.js runs it, as npm's wrappers in node_modules/.bin would; Windows cannot run
+        the shell scripts among them. The package's package.json names the script.
+        """
+        folder = self.node_modules / package
+        try:
+            manifest = json.loads((folder / "package.json").read_text(encoding="utf-8"))
+        except OSError, ValueError:
+            return None
+        commands = manifest.get("bin") if isinstance(manifest, dict) else None
+        # npm's "bin" is a script by command name, or one script named after the package.
+        if isinstance(commands, str) and command == package.rpartition("/")[2]:
+            commands = {command: commands}
+        script = commands.get(command) if isinstance(commands, dict) else None
+        if not isinstance(script, str) or not (folder / script).is_file():
+            return None
+        return folder / script
 
     def browser_builds(self) -> list[Path]:
         """The installed chrome-headless-shell executables, in Puppeteer's cache layout."""
@@ -169,13 +186,16 @@ def write_stamp(tools: Toolchain) -> None:
 def render_environment(tools: Toolchain, base: Mapping[str, str] | None = None) -> dict[str, str]:
     """Return the environment for Pandoc, its filters and the PDF printer."""
     environment = dict(os.environ if base is None else base)
-    search = [str(tools.node_bin), str(tools.bin_dir)]
+    search = [str(tools.bin_dir)]
     if environment.get("PATH"):
         search.append(environment["PATH"])
     environment["PATH"] = os.pathsep.join(search)
     environment["PUPPETEER_CACHE_DIR"] = str(tools.puppeteer_cache)
-    # For assets/mermaid.lua and assets/katex-render.mjs.
-    environment["MD_DOC_CONVERTER_MMDC"] = str(tools.node_executable("mmdc"))
+    # For assets/mermaid.lua, which runs mermaid-cli's script with Node.js, and assets/katex.lua,
+    # which runs assets/katex-render.mjs with it.
+    environment["MD_DOC_CONVERTER_NODE"] = executables.which("node", environment["PATH"]) or ""
+    mmdc = tools.node_script(MERMAID_CLI, "mmdc")
+    environment["MD_DOC_CONVERTER_MMDC"] = "" if mmdc is None else str(mmdc)
     environment["MD_DOC_CONVERTER_NODE_MODULES"] = str(tools.node_modules)
     environment["MD_DOC_CONVERTER_MERMAID_CONFIG"] = str(asset_path("mermaid-config.json"))
     return environment
