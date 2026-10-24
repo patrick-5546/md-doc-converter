@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 import pytest
 
 from md_doc_converter.converters.docx import models as _models
 from md_doc_converter.converters.docx import publication as _publication
+from tests.support.links import FOLDER_LINKS, link_folder
 
 
 @pytest.fixture
@@ -92,8 +94,11 @@ def test_dangling_output_symlink_is_rejected(source: Path, tmp_path: Path) -> No
         _publication.validate_paths(source, output)
 
 
-def test_image_parent_symlink_cannot_escape_containment(source: Path, tmp_path: Path) -> None:
-    (tmp_path / ".images").symlink_to(tmp_path, target_is_directory=True)
+@pytest.mark.parametrize("kind", FOLDER_LINKS)
+def test_image_parent_symlink_cannot_escape_containment(
+    kind: str, source: Path, tmp_path: Path
+) -> None:
+    link_folder(kind, tmp_path / ".images", tmp_path)
     with pytest.raises(_models.ConversionError, match="must not be a symbolic link"):
         _publication.validate_paths(source, None, replace_generated=True)
 
@@ -174,10 +179,13 @@ def test_hardlink_alias_inside_generated_tree_is_rejected(source: Path, tmp_path
         _publication.validate_paths(source, tmp_path / "output.md", replace_generated=True)
 
 
-def test_child_symlink_inside_generated_tree_is_rejected(source: Path, tmp_path: Path) -> None:
+@pytest.mark.parametrize("kind", FOLDER_LINKS)
+def test_child_symlink_inside_generated_tree_is_rejected(
+    kind: str, source: Path, tmp_path: Path
+) -> None:
     directory = tmp_path / ".images" / "output"
     directory.mkdir(parents=True)
-    (directory / "link").symlink_to(tmp_path)
+    link_folder(kind, directory / "link", tmp_path)
     with pytest.raises(_models.ConversionError, match="Unsafe symlink"):
         _publication.validate_paths(source, tmp_path / "output.md", replace_generated=True)
 
@@ -193,6 +201,24 @@ def test_repository_root_is_protected_as_page_tree(source: Path, tmp_path: Path)
         )
 
 
+def test_a_system_folder_is_protected_as_page_tree(
+    source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    system = tmp_path / "system"
+    system.mkdir()
+    # Windows names its folders, such as ProgramData, in the environment.
+    if sys.platform == "win32":
+        monkeypatch.setenv("ProgramData", str(system))
+    else:
+        monkeypatch.setattr(_publication, "_SYSTEM_FOLDERS", (str(system),))
+    with pytest.raises(
+        _models.ConversionError, match="protected filesystem, home, or repository root"
+    ):
+        _publication.validate_paths(
+            source, tmp_path / "system.md", split_depth=1, replace_generated=True
+        )
+
+
 def test_repository_nested_inside_generated_directory_is_protected(
     source: Path, tmp_path: Path
 ) -> None:
@@ -201,16 +227,17 @@ def test_repository_nested_inside_generated_directory_is_protected(
         _publication.validate_paths(source, tmp_path / "output.md", replace_generated=True)
 
 
+@pytest.mark.parametrize("kind", FOLDER_LINKS)
 @pytest.mark.parametrize(
     ("leaf", "split_depth"),
     [pytest.param(".images/output", 0, id="images"), pytest.param("output", 1, id="pages")],
 )
 def test_image_leaf_and_page_leaf_symlinks_are_rejected(
-    leaf: str, split_depth: int, source: Path, tmp_path: Path
+    leaf: str, split_depth: int, kind: str, source: Path, tmp_path: Path
 ) -> None:
     link = tmp_path / leaf
     link.parent.mkdir(exist_ok=True)
-    link.symlink_to(tmp_path / "elsewhere", target_is_directory=True)
+    link_folder(kind, link, tmp_path / "elsewhere")
     with pytest.raises(_models.ConversionError, match="destination symlink"):
         _publication.validate_paths(
             source, tmp_path / "output.md", split_depth=split_depth, replace_generated=True
@@ -258,10 +285,11 @@ def test_diagnostic_directory_must_be_new_or_empty(source: Path, tmp_path: Path)
         _publication.validate_paths(source, None, keep_intermediates=directory)
 
 
-def test_diagnostic_symlink_is_rejected(source: Path, tmp_path: Path) -> None:
+@pytest.mark.parametrize("kind", FOLDER_LINKS)
+def test_diagnostic_symlink_is_rejected(kind: str, source: Path, tmp_path: Path) -> None:
     target = tmp_path / "empty"
     target.mkdir()
     link = tmp_path / "debug"
-    link.symlink_to(target, target_is_directory=True)
+    link_folder(kind, link, target)
     with pytest.raises(_models.ConversionError, match="destination symlink"):
         _publication.validate_paths(source, None, keep_intermediates=link)

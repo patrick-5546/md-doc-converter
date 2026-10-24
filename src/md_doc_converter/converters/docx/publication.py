@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import stat
+import sys
 import tempfile
 from pathlib import Path
 
@@ -13,9 +15,46 @@ from md_doc_converter.converters.docx.models import (
     PreparedArtifact,
 )
 
+# The system's folders, which a destination must neither be nor hold.
+_SYSTEM_FOLDERS = (
+    "/bin",
+    "/boot",
+    "/dev",
+    "/etc",
+    "/home",
+    "/lib",
+    "/lib64",
+    "/media",
+    "/mnt",
+    "/opt",
+    "/proc",
+    "/root",
+    "/run",
+    "/sbin",
+    "/srv",
+    "/sys",
+    "/tmp",
+    "/usr",
+    "/var",
+    "/var/tmp",
+)
+# On Windows, the environment variables that name them.
+_WINDOWS_SYSTEM_FOLDERS = (
+    "SystemRoot",
+    "ProgramFiles",
+    "ProgramFiles(x86)",
+    "ProgramW6432",
+    "ProgramData",
+)
+
 
 def requested_output(input_path: Path, output_path: Path | None) -> Path:
     return output_path if output_path is not None else input_path.with_suffix(".md")
+
+
+def is_link(path: Path) -> bool:
+    """Whether *path* is a symbolic link, or on Windows a junction, which also links a folder."""
+    return path.is_symlink() or path.is_junction()
 
 
 def _entry_path(path: Path) -> Path:
@@ -34,34 +73,16 @@ def same_file(first: Path, second: Path) -> bool:
     return first.exists() and second.exists() and first.samefile(second)
 
 
+def _system_folders() -> set[Path]:
+    if sys.platform == "win32":
+        variables = (os.environ.get(name, "") for name in _WINDOWS_SYSTEM_FOLDERS)
+        return {Path(folder).resolve() for folder in variables if folder}
+    return {Path(name) for name in _SYSTEM_FOLDERS}
+
+
 def _protected(path: Path, related: tuple[Path, ...]) -> bool:
     home = Path.home().resolve()
-    roots = {Path(path.anchor), home, *home.parents}
-    roots.update(
-        Path(name)
-        for name in (
-            "/bin",
-            "/boot",
-            "/dev",
-            "/etc",
-            "/home",
-            "/lib",
-            "/lib64",
-            "/media",
-            "/mnt",
-            "/opt",
-            "/proc",
-            "/root",
-            "/run",
-            "/sbin",
-            "/srv",
-            "/sys",
-            "/tmp",
-            "/usr",
-            "/var",
-            "/var/tmp",
-        )
-    )
+    roots = {Path(path.anchor), home, *home.parents, *_system_folders()}
     for candidate in (path, *related):
         for parent in (candidate, *candidate.parents):
             if (parent / ".git").exists():
@@ -76,7 +97,7 @@ def _check_parent_types(path: Path) -> None:
 
 
 def _check_tree(path: Path, source: Path) -> None:
-    """Inspect only a selected destination, never follow directory symlinks."""
+    """Inspect only a selected destination, never follow directory symlinks or junctions."""
     if not path.exists():
         return
     pending = [path]
@@ -88,7 +109,8 @@ def _check_tree(path: Path, source: Path) -> None:
             )
         for entry in directory.iterdir():
             mode = entry.lstat().st_mode
-            if stat.S_ISLNK(mode):
+            # lstat reports a Windows junction as the folder it links.
+            if stat.S_ISLNK(mode) or entry.is_junction():
                 raise ConversionError(f"Unsafe symlink in selected destination: {entry}")
             if stat.S_ISDIR(mode):
                 if entry.is_mount():
@@ -121,10 +143,10 @@ def validate_paths(
         raise ConversionError(
             f"Output must have a nonempty Markdown filename ending in .md: {output_entry}"
         )
-    if output_entry.is_symlink():
+    if is_link(output_entry):
         raise ConversionError(f"Unsafe destination symlink: {output_entry}")
     image_parent = output_entry.parent / ".images"
-    if image_parent.is_symlink():
+    if is_link(image_parent):
         raise ConversionError(f"The .images folder must not be a symbolic link: {image_parent}")
     images = _entry_path(image_parent / output_entry.stem)
     pages = _entry_path(output_entry.with_suffix(""))
@@ -149,7 +171,7 @@ def _validate_destinations(paths: ConversionPaths, *, diagnostics_empty: bool) -
     if images != output.parent / ".images" / output.stem or pages != output.with_suffix(""):
         raise ConversionError("Image and page destinations must derive from the Markdown output")
     related = (paths.source, paths.source_entry, output, images, pages)
-    if (output.parent / ".images").is_symlink() or _entry_path(images) != images:
+    if is_link(output.parent / ".images") or _entry_path(images) != images:
         raise ConversionError(f"The .images folder must not be a symbolic link: {images.parent}")
     if any(_entry_path(path) != path for path in (output, pages)):
         raise ConversionError("Destination parent changed through a symlink")
@@ -175,7 +197,7 @@ def _validate_destinations(paths: ConversionPaths, *, diagnostics_empty: bool) -
         directories.append(diagnostic)
     for path in (output, *directories):
         _check_parent_types(path)
-        if path.is_symlink():
+        if is_link(path):
             raise ConversionError(f"Unsafe destination symlink: {path}")
         if _protected(path, related):
             raise ConversionError(
@@ -246,7 +268,7 @@ def publish_outputs(
     if (staged_pages is not None) != bool(paths.split_depth):
         raise ConversionError("Staged pages must match the selected split depth")
     _validate_destinations(paths, diagnostics_empty=False)
-    if staged_images.is_symlink() or not staged_images.is_dir():
+    if is_link(staged_images) or not staged_images.is_dir():
         raise ConversionError(f"Invalid staged artifact: {staged_images}")
     images = staged_images if any(staged_images.iterdir()) else None
     removing_images = images is None and paths.images.exists()
@@ -261,7 +283,7 @@ def publish_outputs(
     try:
         for staged, destination, directory in artifacts:
             if staged is not None and (
-                staged.is_symlink() or (not staged.is_dir() if directory else not staged.is_file())
+                is_link(staged) or (not staged.is_dir() if directory else not staged.is_file())
             ):
                 raise ConversionError(f"Invalid staged artifact: {staged}")
             _mkdir_parents(destination.parent, created)
@@ -285,8 +307,8 @@ def publish_outputs(
     try:
         for artifact in prepared:
             step = f"backing up {artifact.destination}"
-            if artifact.destination.exists() or artifact.destination.is_symlink():
-                if artifact.destination.is_symlink():
+            if artifact.destination.exists() or is_link(artifact.destination):
+                if is_link(artifact.destination):
                     raise ConversionError(f"Destination became a symlink: {artifact.destination}")
                 artifact.destination.replace(artifact.backup)
                 artifact.backed_up = True
@@ -302,7 +324,7 @@ def publish_outputs(
             if not artifact.backed_up and not artifact.published:
                 continue
             try:
-                if artifact.destination.exists() or artifact.destination.is_symlink():
+                if artifact.destination.exists() or is_link(artifact.destination):
                     artifact.destination.replace(artifact.root / "recovery-new")
                 if artifact.backed_up:
                     if not artifact.backup.exists():

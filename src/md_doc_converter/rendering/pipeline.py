@@ -140,7 +140,8 @@ def _overlaps(first: Path, second: Path) -> bool:
 
 def prepare_intermediates(directory: Path, source: Path, destination: Path) -> Path:
     selected = absolute_path(directory)
-    if selected.is_symlink():
+    # A Windows junction links a folder, as a symlink does.
+    if selected.is_symlink() or selected.is_junction():
         raise RenderError(f"--keep-intermediates must not be a symlink: {selected}")
     if selected.exists() and (not selected.is_dir() or any(selected.iterdir())):
         raise RenderError(f"--keep-intermediates must be a new or empty directory: {selected}")

@@ -26,6 +26,7 @@ from md_doc_converter.rendering import pipeline as render
 from md_doc_converter.resources import asset_path
 from md_doc_converter.toolchain.environment import Toolchain
 from tests.support.fake_tools import write_packages
+from tests.support.links import FOLDER_LINKS, link_folder
 from tests.support.web_server import WebServer
 
 FORMAT = render.OutputFormat
@@ -575,6 +576,22 @@ def test_intermediate_directory_must_be_new_or_empty_and_separate(
             )
     assert (nonempty / "keep.txt").read_text(encoding="utf-8") == "keep"
     assert not (folder / "debug").exists()
+
+
+@pytest.mark.parametrize("kind", FOLDER_LINKS)
+def test_intermediates_are_never_kept_through_a_link(
+    kind: str, fake: FakeRenderer, tmp_path: Path, source: Path, tools: Toolchain
+) -> None:
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    link = tmp_path / "debug"
+    link_folder(kind, link, elsewhere)
+    with pytest.raises(render.RenderError, match="must not be a symlink"):
+        render.render_markdown(
+            source, FORMAT.HTML, options=Options(keep_intermediates=link), tools=tools
+        )
+    assert not any(elsewhere.iterdir())
+    assert not fake.prepare_calls
 
 
 def test_missing_prerequisites_fail_before_any_rendering(

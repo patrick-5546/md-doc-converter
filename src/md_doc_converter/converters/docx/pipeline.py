@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
 from pathlib import Path
 
@@ -235,8 +236,17 @@ def _convert_in_work(
             stager.close()
 
 
+def _scratch_candidates() -> tuple[Path, ...]:
+    """The temporary folder, then the others that the system keeps temporary files in."""
+    if sys.platform == "win32":
+        others = [Path(os.environ[name]) for name in ("TEMP", "TMP") if os.environ.get(name)]
+    else:
+        others = [Path("/tmp"), Path("/var/tmp")]
+    return (Path(tempfile.gettempdir()), *others)
+
+
 def _scratch_parent(paths: ConversionPaths) -> Path:
-    for candidate in dict.fromkeys((Path(tempfile.gettempdir()), Path("/tmp"), Path("/var/tmp"))):
+    for candidate in dict.fromkeys(_scratch_candidates()):
         parent = candidate.resolve()
         if not parent.is_dir() or not os.access(parent, os.W_OK | os.X_OK):
             continue
