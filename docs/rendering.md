@@ -201,7 +201,7 @@ The shared styles provide:
 - US Letter pages with one-inch margins;
 - page numbering and the optional header and footer text;
 - headings kept on the page of the text they introduce;
-- Linux-compatible text and monospace font stacks;
+- text and monospace font stacks of fonts that Linux and Windows have;
 - image, table, code-block, and page-width overflow protection;
 - Mermaid diagram scaling;
 - reusable compact and fixed-width table classes.
