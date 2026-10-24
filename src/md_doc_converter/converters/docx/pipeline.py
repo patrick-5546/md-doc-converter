@@ -7,6 +7,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
+from md_doc_converter.console import plural
 from md_doc_converter.converters.docx import bookmarks as _bookmarks
 from md_doc_converter.converters.docx import diagnostics as _diagnostics
 from md_doc_converter.converters.docx import media as _media
@@ -41,6 +42,7 @@ def _tree_markdown(
     math: _tree.MathSyntax,
 ) -> tuple[str, DocumentNavigation, str | None, dict[str, int]]:
     """The Markdown of the prepared document as Pandoc reads it, with each transform applied."""
+    report.console.status("reading the Word document")
     prepared = _prepare.prepare_document(package, paths, work, report)
     tree = _tree.read_docx(prepared.path, work / "pandoc-media", pandoc)
     blocks, api = _tree.items(tree["blocks"]), tree["pandoc-api-version"]
@@ -55,10 +57,14 @@ def _tree_markdown(
     _transforms.short_rules(blocks)
     _transforms.merge_code(blocks)
     images = _transforms.ImageCounts()
+    report.console.status(
+        f"converting {plural(stager.drawings, 'drawing')}" if stager.drawings else "placing images"
+    )
     with _diagnostics.transform(report, "images"):
         images = _transforms.publish_images(
             blocks, prepared, stager, paths, package.media_folder, report
         )
+    report.console.status("converting the document")
     _transforms.tidy_links(blocks)
     navigation = DocumentNavigation()
     with _diagnostics.transform(report, "bookmarks"):
@@ -75,9 +81,11 @@ def _tree_markdown(
     _transforms.verify_emphasis(blocks, pandoc, api)
     notes = _transforms.extract_notes(blocks, report)
     tables = _tables.TableCounts()
+    report.console.status("converting tables")
     with _diagnostics.transform(report, "tables"):
         tables = _tables.render_tables([blocks, *notes.contents], pandoc, api, math, report)
     _transforms.define_notes(blocks, notes, pandoc, api, math)
+    report.console.status("writing Markdown")
     markdown = _tree.write(tree, pandoc, _tree.gfm_writer(math), "Writing Markdown")
     markdown = tables.restore(notes.references(markdown))
     stats = {
@@ -129,6 +137,7 @@ def _convert_in_work(
             report.not_requested("duplicate-headings", "--qualify-duplicate-headings")
         markdown = _normalization.normalize_final_newline(markdown)
         pages = {Path(paths.output.name): markdown}
+        report.console.status("checking links and pages")
         with _diagnostics.transform(report, "pages"):
             pages = _navigation.split_markdown_pages(
                 markdown,
@@ -144,6 +153,7 @@ def _convert_in_work(
             for page, content in list(pages.items()):
                 pages[page], removed = _normalization.drop_unneeded_escapes(content, pandoc)
                 report.applied("cleanup", "unneeded escape(s) removed", removed)
+        report.console.status("checking the Markdown")
         with _diagnostics.transform(report, "checks"):
             issues = _validation.validate_outputs(
                 pages,
@@ -179,6 +189,7 @@ def _convert_in_work(
             work, paths, findings, stats, changes, "validated", source=navigation, report=report
         )
         if not dry_run:
+            report.console.status("writing the files")
             _publication.publish_outputs(staged_markdown, stager.root, paths, staged_pages)
             published = True
         _diagnostics.write_diagnostics(

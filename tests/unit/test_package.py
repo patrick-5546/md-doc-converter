@@ -20,6 +20,7 @@ from md_doc_converter.toolchain.environment import MANIFEST_DIR, MANIFESTS
 from tests.support.project import PROJECT_ROOT, SOURCE_ROOT
 
 SHARED_LAYERS = (
+    "md_doc_converter.console",
     "md_doc_converter.markdown",
     "md_doc_converter.pandoc",
     "md_doc_converter.resources",

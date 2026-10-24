@@ -493,16 +493,19 @@ def _map_bookmarks(
                 "the Word heading of a linked bookmark was not converted; "
                 "links go to the nearest earlier section",
                 message,
+                section="markdown",
             )
         elif report is not None:
-            report.warn(message)
+            report.warn(message, kind=_SECTION_LINK, section="markdown")
         else:
-            _diagnostics.warning(message, [])
+            _diagnostics.warning(message, [], kind=_SECTION_LINK)
     if report is not None:
         report.applied("bookmarks", count=mapped)
 
 
 _TITLE_NOT_FOUND = "the Word title is not a paragraph before the first heading; kept as written"
+# A linked bookmark inside a section, which Markdown can link only as a whole.
+_SECTION_LINK = "Word bookmark now links to its containing section, not its exact position"
 _TITLE_TOO_DEEP = (
     "a heading is at level 6, the deepest Markdown level, so headings cannot move down; "
     "the title stays a paragraph"
@@ -550,10 +553,17 @@ def _title_heading(markdown: str, title: str, pandoc: str, report: TransformRepo
     headings = _normalization.markdown_heading_lines(markdown)
     line = _title_line(lines, 0, min(headings, default=len(lines)), title, pandoc)
     if line is None:
-        report.skipped("title", _TITLE_NOT_FOUND, f"Word title {title!r}: {_TITLE_NOT_FOUND}")
+        report.skipped(
+            "title",
+            _TITLE_NOT_FOUND,
+            f"Word title {title!r}: {_TITLE_NOT_FOUND}",
+            section="markdown",
+        )
         return markdown
     if any(level == 6 for level, _text in headings.values()):
-        report.skipped("title", _TITLE_TOO_DEEP, f"Word title {title!r}: {_TITLE_TOO_DEEP}")
+        report.skipped(
+            "title", _TITLE_TOO_DEEP, f"Word title {title!r}: {_TITLE_TOO_DEEP}", section="markdown"
+        )
         return markdown
     shown = lines[line].strip()
     trailing_hashes = re.search(r"(?<!\\)(#+)$", shown)
@@ -571,7 +581,12 @@ def _title_heading(markdown: str, title: str, pandoc: str, report: TransformRepo
     before, after = run_all([partial(outline, markdown), partial(outline, result)])
     moved = [(level + 1, identifier) for level, identifier in before]
     if not after or after[0][0] != 1 or after[1:] != moved:
-        report.skipped("title", _TITLE_CHANGES_IDS, f"Word title {title!r}: {_TITLE_CHANGES_IDS}")
+        report.skipped(
+            "title",
+            _TITLE_CHANGES_IDS,
+            f"Word title {title!r}: {_TITLE_CHANGES_IDS}",
+            section="markdown",
+        )
         return markdown
     if headings:
         report.applied("title", "heading(s) moved down one level", len(headings))

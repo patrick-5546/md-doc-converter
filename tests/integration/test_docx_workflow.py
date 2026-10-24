@@ -2258,7 +2258,7 @@ def test_a_word_svg_with_script_takes_its_raster_fallback(convert: Converter) ->
     )
     ET.SubElement(extension, _ooxml.SVG_DRAWING + "svgBlip", {R + "embed": "svg"})
     scripted = SVG.replace(b"<path", b"<script>alert(1)</script><path")
-    result, _report, warnings = convert.reported(
+    result, report, warnings = convert.reported(
         [content],
         relations=(
             ("png", "image", "media/fallback.png", "Internal"),
@@ -2268,7 +2268,9 @@ def test_a_word_svg_with_script_takes_its_raster_fallback(convert: Converter) ->
     )
     assert "fallback.png" in result
     assert "vector.svg" not in result
-    assert "SVG contains script" in warnings
+    # The fallback worked out: a detail, which only --verbose shows.
+    assert any("SVG contains script" in finding for finding in report.findings)
+    assert "SVG contains script" not in warnings
 
 
 @pytest.mark.parametrize("kind", ["pict", "object"])
@@ -2375,7 +2377,9 @@ def test_emf_svg_publication_collision_gets_a_distinct_name(
     )
     assert "](.images/Synthetic%20Guide/image.svg)" in result
     assert "](.images/Synthetic%20Guide/image-2.svg)" in result
-    assert "Image name image.svg is already used; published as image-2.svg" in warnings
+    # A detail, which only --verbose shows.
+    assert "Image name image.svg is already used; published as image-2.svg" in report.findings
+    assert "Image name image.svg" not in warnings
     assert report.status("images") == "applied"
     assert report.status("checks") == "applied"
 

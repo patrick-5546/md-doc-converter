@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import subprocess
-import sys
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -17,6 +17,31 @@ Result = TypeVar("Result")
 
 class PandocError(RuntimeError):
     pass
+
+
+# Where Pandoc's message about Markdown that it read places the problem.
+LOCATION = re.compile(r" (?:at|on) line (\d+)(?: column \d+)?")
+_LEVEL = re.compile(r"^\[(?:WARNING|INFO|ERROR)\] ")
+# The specifics of a message: quoted text and words with digits, dots or slashes.
+_SPECIFICS = re.compile(r"'[^']*'|\"[^\"]*\"|\S*[\d./\\]\S*")
+
+
+def messages(stderr: str) -> list[str]:
+    """Pandoc's messages in *stderr*, each on one line, without their [WARNING] tags."""
+    found: list[str] = []
+    for line in stderr.splitlines():
+        if not line.strip():
+            continue
+        if line[:1].isspace() and found:
+            found[-1] += " " + line.strip()
+        else:
+            found.append(_LEVEL.sub("", line).strip())
+    return found
+
+
+def message_kind(message: str) -> str:
+    """*message* without its specifics, which messages of one kind share."""
+    return re.sub(r"\s+", " ", _SPECIFICS.sub("...", message)).strip()
 
 
 def run_all(calls: Sequence[Callable[[], Result]]) -> list[Result]:
@@ -34,7 +59,7 @@ def run(
     *arguments: str,
     pandoc: str = "pandoc",
     description: str,
-    emit_warnings: bool = False,
+    warnings: Callable[[str], None] | None = None,
 ) -> str:
     try:
         result = subprocess.run(
@@ -45,8 +70,8 @@ def run(
     if result.returncode:
         detail = result.stderr.strip() or result.stdout.strip() or f"exit code {result.returncode}"
         raise PandocError(f"{pandoc!r} failed while {description}: {detail}")
-    if emit_warnings and result.stderr:
-        sys.stderr.write(result.stderr)
+    if warnings is not None and result.stderr:
+        warnings(result.stderr)
     return result.stdout
 
 
@@ -85,7 +110,7 @@ def parse_markdown(
     reader: str,
     pandoc: str = "pandoc",
     description: str = "parsing Markdown",
-    emit_warnings: bool = False,
+    warnings: Callable[[str], None] | None = None,
 ) -> ParsedMarkdown:
     payload = run(
         markdown,
@@ -93,6 +118,6 @@ def parse_markdown(
         "--to=json",
         pandoc=pandoc,
         description=description,
-        emit_warnings=emit_warnings,
+        warnings=warnings,
     )
     return ParsedMarkdown(markdown, reader, decode_document(payload, pandoc=pandoc))

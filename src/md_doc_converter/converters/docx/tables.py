@@ -731,6 +731,10 @@ def render_tables(
             report.applied("tables", "Markdown")
         else:
             counts.html_tables += 1
-            report.warn(f"Table {number} remains HTML: {rendered.reason}")
+            report.warn(
+                f"Table {number} remains HTML: {rendered.reason}",
+                kind=f"table kept as HTML: {rendered.reason}",
+                section="markdown",
+            )
             report.applied("tables", "HTML")
     return counts

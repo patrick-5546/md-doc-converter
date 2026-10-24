@@ -194,29 +194,41 @@ lines:
 
 ## The report
 
-Each item that a transform could not handle gets a `docx-to-md: warning:` line,
-which names it and where it is. Then a summary, which quotes nothing from the
-document, gives each transform's status: `applied`, `partial`, `not applied`,
-`not needed` or `not requested`. An excerpt:
+Each item that could not be carried over as Word shows it gets a
+`docx-to-md: warning:` line, which names it and where it is. The first three of
+each kind are shown. A summary then counts every kind, in two parts: what to
+check in Word, which the document's author can fix, and what is expected in
+Markdown, which shows it differently. An excerpt:
 
 ```text
-docx-to-md: transforms
-  fields: applied (1 field(s) unwrapped, 6 simple field(s) kept)
-  images: partial (14 applied, 2 not applied)
-    not applied (2): DrawingML text box: no embedded image; its text is kept after its paragraph
-  links: partial (30 applied, 1 not applied)
-    not applied (1): link to a missing Word bookmark; kept as plain text
-  tables: applied (3 HTML, 25 Markdown)
-  duplicate-headings: not requested (--qualify-duplicate-headings)
-  checks: passed
+docx-to-md: converting spec.docx
+docx-to-md: warning: images: SmartArt at paragraph 87: no embedded image; omitted
+docx-to-md: warning: links: link to missing Word bookmark '_Ref1234'; kept as plain text
+docx-to-md: warning: Table 4 remains HTML: merged cells
+docx-to-md: warning: Table 9 remains HTML: merged cells
+docx-to-md: warning: Table 12 remains HTML: merged cells
+docx-to-md: to check in Word:
+  1  SmartArt: no embedded image; omitted
+  1  link to a missing Word bookmark; kept as plain text
+docx-to-md: expected in Markdown:
+  5  table kept as HTML: merged cells
+docx-to-md: --verbose shows every warning
+converted spec.docx -> spec.md: 1 page, 25 tables, 16 image references, 40 Word bookmarks
 ```
+
+The last line, the result, is on standard output; the others are on standard
+error. On a terminal, a status line names the running step, and warnings and
+errors are colored, unless `NO_COLOR` is set. `--verbose` shows every warning,
+the details that worked out, such as a drawing converted through PDF, and each
+transform's status: `applied`, `partial`, `not applied`, `not needed` or
+`not requested`. `--quiet` shows only errors. To keep the whole report, run with
+`--verbose 2> conversion.log`.
 
 `docx-to-md` exits with status 0 when it converts the document, and 1 when it
 refuses the document, Pandoc cannot read it, an option or path is invalid, an
 earlier output needs `--replace-generated`, or the output cannot be written.
-To share a problem without sharing the document, share the summary, from
-`docx-to-md: transforms` on, not the warnings before it, which can quote the
-document.
+To share a problem without sharing the document, share the summary, which
+quotes nothing from the document, not the warnings before it, which can.
 
 ## Options
 
@@ -229,6 +241,8 @@ document.
 | `--replace-generated` | Allow replacing an existing Markdown file at the default output, and nonempty images and pages folders. |
 | `--math github\|dollars` | Write equations as GitHub does, `` $`x`$ `` and ```` ```math ````, which GitHub, GitLab and VS Code show, the default; or as `$x$` and `$$x$$`, for renderers that read only those, such as Azure DevOps Wiki. |
 | `--keep-intermediates DIR` | Keep the intermediate files, such as the prepared copy that Pandoc reads, and a `diagnostics.json` report in a new or empty directory, also with `--dry-run`. |
+| `-v`, `--verbose` | Show every warning, the details that worked out, and each transform's status. |
+| `-q`, `--quiet` | Show only errors. |
 
 With `--split-depth 1`, `Example.docx` becomes `Example.md`, which lists the
 pages, and a page per section in `Example/`:

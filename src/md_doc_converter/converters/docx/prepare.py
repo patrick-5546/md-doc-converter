@@ -289,7 +289,10 @@ def _text_boxes_after_paragraphs(root: ET.Element, report: TransformReport) -> N
         reason = f"{kind}: no embedded image; {_TEXT_BOX_CONSEQUENCE}"
         where = f"paragraph {numbers[paragraph] + 1}" if paragraph in numbers else "the document"
         report.skipped(
-            "images", reason, f"{kind} at {where}: no embedded image; {_TEXT_BOX_CONSEQUENCE}"
+            "images",
+            reason,
+            f"{kind} at {where}: no embedded image; {_TEXT_BOX_CONSEQUENCE}",
+            section="markdown",
         )
         position = list(holder).index(paragraph) + 1 + moved.get(paragraph, 0)
         holder[position:position] = content
@@ -385,6 +388,7 @@ def _prepare_headings(
                 "headings",
                 reason + "; kept as a paragraph",
                 f"paragraph {index + 1}: {error}; kept as a paragraph",
+                section="markdown" if "no Markdown equivalent" in reason else "word",
             )
             _make_plain_paragraph(paragraph)
             continue
@@ -727,6 +731,7 @@ def _select_image(
                 "checks",
                 "Word SVG version is unusable; its fallback image is used",
                 f"{where}: {describe(error)}; its fallback image is used",
+                section="detail",
             )
         else:
             node.set(REL + "embed", svg.get(REL + "embed", ""))
@@ -946,7 +951,11 @@ def _prepare_tables(root: ET.Element, report: TransformReport) -> None:
     """Give Pandoc tables it reads whole: a row without cells, which shows nothing, breaks
     the whole table, and a table without rows goes; a narrow first body row would narrow it."""
     for problem in _tables.canonicalize_horizontal_merges(root, strict=False):
-        report.warn(f"Legacy horizontal table merge kept as written: {problem}")
+        report.warn(
+            f"Legacy horizontal table merge kept as written: {problem}",
+            kind="legacy horizontal table merge kept as written",
+            section="markdown",
+        )
     _tables.complete_table_grids(root)
     with transform(report, "tables"):
         report.applied("tables", "empty row(s) omitted", _tables.drop_empty_rows(root))

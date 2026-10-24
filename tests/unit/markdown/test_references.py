@@ -319,7 +319,7 @@ def test_undefined_reference_check_takes_escapes_as_escapes(
     assert time.monotonic() - started < 5
     assert result == source
     stderr = capsys.readouterr().err
-    assert stderr.count("WARNING: undefined reference") == 1
+    assert stderr.count("warning: page.md: undefined reference") == 1
     assert "'[d]'" in stderr
 
 
@@ -360,8 +360,8 @@ def test_block_html_in_a_pipe_table_cell_is_reported_with_its_line(
     assert result == source
     warnings = capsys.readouterr().err.splitlines()
     assert len(warnings) == 2
-    assert "HTML <ul>, <li>, <p> in a Markdown table cell in page.md (line 9;" in warnings[0]
-    assert "HTML <blockquote> in a Markdown table cell in page.md (line 21;" in warnings[1]
+    assert "page.md:9: HTML <ul>, <li>, <p> in a Markdown table cell;" in warnings[0]
+    assert "page.md:21: HTML <blockquote> in a Markdown table cell;" in warnings[1]
 
 
 def test_md_to_html_reports_the_cell_whose_rest_it_drops(
@@ -369,10 +369,21 @@ def test_md_to_html_reports_the_cell_whose_rest_it_drops(
 ) -> None:
     source = "[[_TOC_]]\n\n\n\n| Name |\n| --- |\n| kept <ul><li>dropped</li></ul> |\n"
     prepared = preprocess.preprocess(source, "page.md")
-    assert "in page.md (line 7;" in capsys.readouterr().err
+    assert "page.md:7: HTML <ul>, <li> in a Markdown table cell" in capsys.readouterr().err
     html = convert(prepared, "html5")
     assert "kept" in html
     assert "dropped" not in html
+
+
+def test_pandocs_warnings_name_the_file_and_the_line(capsys: pytest.CaptureFixture[str]) -> None:
+    # A macro line, removed, keeps the lines after it where they were.
+    source = "[[_TOC_]]\n\n# A\n\nText[^1].\n\n[^1]: one\n[^1]: two\n"
+
+    preprocess.preprocess(source, "page.md")
+
+    assert capsys.readouterr().err == (
+        "md-doc-converter: warning: page.md:8: Duplicate note reference '1'\n"
+    )
 
 
 def test_wiki_macros_go_without_moving_lines_or_blank_lines_in_code(convert: Convert) -> None:

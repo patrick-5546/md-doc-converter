@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
+from md_doc_converter.console import Console, activated, add_verbosity_options, plural, shown
 from md_doc_converter.converters.docx import publication as _publication
 from md_doc_converter.converters.docx.models import ConversionError
 
@@ -73,6 +73,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "apart from the input and outputs, also with --dry-run"
         ),
     )
+    add_verbosity_options(parser)
     return parser.parse_args(argv)
 
 
@@ -81,28 +82,39 @@ def main(argv: list[str] | None = None) -> int:
     from md_doc_converter.converters.docx import pipeline as _pipeline
     from md_doc_converter.converters.docx.diagnostics import TransformReport
 
-    report = TransformReport()
-    try:
-        stats = _pipeline.convert_docx(
-            args.input,
-            args.output,
-            split_depth=args.split_depth,
-            qualify_duplicate_headings=args.qualify_duplicate_headings,
-            dry_run=args.dry_run,
-            replace_generated=args.replace_generated,
-            keep_intermediates=args.keep_intermediates,
-            report=report,
-            math=args.math,
-        )
-    except (ConversionError, OSError) as error:
-        print(f"docx-to-md: error: {error}", file=sys.stderr)
-        return 1
-    for line in report.summary():
-        print(line, file=sys.stderr)
-    print(
-        f"{'validated' if args.dry_run else 'converted'} {args.input} -> "
-        f"{_publication.requested_output(args.input, args.output)}: {stats['pages']} page(s), "
-        f"{stats['tables']} table(s), {stats['image_occurrences']} image reference(s), "
-        f"{stats['bookmarks']} Word bookmark(s)"
+    console = Console("docx-to-md", args.verbosity)
+    report = TransformReport(console=console)
+    console.note(f"converting {shown(args.input)}")
+    with activated(console):
+        try:
+            stats = _pipeline.convert_docx(
+                args.input,
+                args.output,
+                split_depth=args.split_depth,
+                qualify_duplicate_headings=args.qualify_duplicate_headings,
+                dry_run=args.dry_run,
+                replace_generated=args.replace_generated,
+                keep_intermediates=args.keep_intermediates,
+                report=report,
+                math=args.math,
+            )
+        except (ConversionError, OSError) as error:
+            console.finish()
+            console.error(str(error))
+            return 1
+    if console.verbosity == "verbose":
+        console.block(report.summary())
+    console.block(report.issues())
+    console.finish(counted=True)
+    output = _publication.requested_output(args.input, args.output)
+    counts = (
+        plural(stats["pages"], "page"),
+        plural(stats["tables"], "table"),
+        plural(stats["image_occurrences"], "image reference"),
+        plural(stats["bookmarks"], "Word bookmark"),
+    )
+    console.result(
+        f"{'validated' if args.dry_run else 'converted'} {shown(args.input)} -> "
+        f"{shown(output)}: {', '.join(counts)}"
     )
     return 0

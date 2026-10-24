@@ -1,17 +1,23 @@
-"""Conversion warnings, the transform report, and retained diagnostic reports."""
+"""Conversion warnings, the transform report, and retained diagnostic reports.
+
+Each warning has a kind, generic text that the summary counts, and a part of the summary: "to
+check in Word" for what the document's author can fix, "expected in Markdown" for what
+Markdown shows differently; a detail, which only --verbose shows, is something that worked out.
+"""
 
 from __future__ import annotations
 
 import json
 import re
-import sys
 import tempfile
 from collections import Counter
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
+from md_doc_converter.console import Console, active
 from md_doc_converter.converters.docx.models import (
     ConversionError,
     ConversionPaths,
@@ -50,10 +56,14 @@ _REASON_LINES = 8
 
 _DETAIL_LIMIT = 300
 
+# Where a warning belongs in the summary; a detail is shown only with --verbose.
+Section = Literal["word", "markdown", "detail"]
+_SECTIONS = {"word": "to check in Word", "markdown": "expected in Markdown"}
 
-def warning(message: str, findings: list[str]) -> None:
+
+def warning(message: str, findings: list[str], *, kind: str = "") -> None:
     findings.append(message)
-    print(f"docx-to-md: warning: {message}", file=sys.stderr)
+    active().warning(message, kind=kind)
 
 
 def describe(error: BaseException) -> str:
@@ -100,9 +110,21 @@ class TransformReport:
     records: dict[str, TransformRecord] = field(
         default_factory=lambda: {name: TransformRecord() for name in TRANSFORMS}
     )
+    console: Console = field(default_factory=lambda: Console("docx-to-md"))
+    # The warnings of each kind, and the part of the summary that each kind belongs to.
+    kinds: Counter[str] = field(default_factory=Counter[str])
+    sections: dict[str, Section] = field(default_factory=dict[str, Section])
 
-    def warn(self, message: str) -> None:
-        warning(message, self.findings)
+    def warn(self, message: str, *, kind: str = "", section: Section = "word") -> None:
+        """Report *message*; the summary counts it under *kind*, in its *section*."""
+        self.findings.append(message)
+        if section == "detail":
+            self.console.detail(message)
+            return
+        if kind:
+            self.kinds[kind] += 1
+            self.sections.setdefault(kind, section)
+        self.console.warning(message, kind=kind)
 
     def applied(self, name: str, detail: str = "", count: int = 1) -> None:
         if count:
@@ -111,10 +133,12 @@ class TransformReport:
     def complete(self, name: str) -> None:
         self.records[name].complete = True
 
-    def skipped(self, name: str, reason: str, detail: str | None = None) -> None:
-        """Count a skipped item under a generic reason; the warning names the item."""
+    def skipped(
+        self, name: str, reason: str, detail: str | None = None, *, section: Section = "word"
+    ) -> None:
+        """Count a skipped item under a generic reason, its kind; the warning names the item."""
         self.records[name].skipped[reason] += 1
-        self.warn(f"{name}: {detail or reason}")
+        self.warn(f"{name}: {detail or reason}", kind=reason, section=section)
 
     def skipped_error(
         self, name: str, error: BaseException, where: str, consequence: str = ""
@@ -127,7 +151,10 @@ class TransformReport:
         text = describe(error)
         record = self.records[name]
         record.failure = record.failure or text
-        self.warn(f"{name}: failed and was not applied: {text}")
+        self.warn(
+            f"{name}: failed and was not applied: {text}",
+            kind=f"{name}: failed and was not applied",
+        )
 
     def not_requested(self, name: str, hint: str) -> None:
         record = self.records[name]
@@ -137,8 +164,29 @@ class TransformReport:
     def status(self, name: str) -> str:
         return self.records[name].status()
 
+    def issues(self) -> list[str]:
+        """The summary of the warnings: how many of each kind, in two parts.
+
+        Like `summary`, it quotes nothing from the document, so that it can be shared.
+        """
+        lines: list[str] = []
+        width = len(str(max(self.kinds.values(), default=0)))
+        for section, title in _SECTIONS.items():
+            counts = sorted(
+                (
+                    (count, kind)
+                    for kind, count in self.kinds.items()
+                    if self.sections[kind] == section
+                ),
+                key=lambda item: (-item[0], item[1]),
+            )
+            if counts:
+                lines.append(f"docx-to-md: {title}:")
+                lines.extend(f"  {count:>{width}}  {kind}" for count, kind in counts)
+        return lines
+
     def summary(self) -> list[str]:
-        """Counts and generic reasons only; the warnings name individual items."""
+        """Each transform's status: counts and generic reasons only; the warnings name items."""
         lines = ["docx-to-md: transforms"]
         for name in TRANSFORMS:
             record = self.records[name]

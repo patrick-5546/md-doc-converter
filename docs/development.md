@@ -55,8 +55,12 @@ has any), and adjust tables; puts the images' data in the HTML,
 which Pandoc would read slowly and in gigabytes of memory; and for a PDF, prints
 the HTML in headless Chrome with `rendering/print-pdf.mjs`.
 
-Shared Markdown/Pandoc modules do not import converters, rendering or the
-toolchain, and the toolchain does not import converters, rendering or the
+Every command prints through `console.py`: warnings, the first three of each
+kind unless `--verbose`; errors; a status line on a terminal; and the result, on
+standard output. Shared code reports through the running command's console.
+
+Shared console, Markdown and Pandoc modules do not import converters, rendering
+or the toolchain, and the toolchain does not import converters, rendering or the
 Markdown layer; `tests/unit/test_package.py` enforces these layers and an
 acyclic import graph.
 

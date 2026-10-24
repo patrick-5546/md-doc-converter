@@ -57,21 +57,19 @@ def test_only_image_files_inside_the_root_are_embedded(
     assert "[link](https://example.test/page)" in result
     assert embed.unembedded == set(kept)
     # Each is reported once, except a missing image, which warn_broken_images reports.
+    image = "md-doc-converter: warning: image"
     assert capsys.readouterr().err.splitlines() == [
-        f"WARNING: image {secret} is not embedded: it is outside {folder}",
-        f"WARNING: image {secret.as_uri()} is not embedded: it is outside {folder}",
+        f"{image} {secret} is not embedded: it is outside {folder}",
+        f"{image} {secret.as_uri()} is not embedded: it is outside {folder}",
+        f"{image} {folder / 'pictures' / 'escape.png'} is not embedded: it is outside {folder}",
+        f"{image} {folder / 'pictures'} is not embedded: it is not a file",
+        f"{image} {folder / 'notes.txt'} is not embedded: it is not an image",
         (
-            f"WARNING: image {folder / 'pictures' / 'escape.png'} is not embedded: "
-            f"it is outside {folder}"
-        ),
-        f"WARNING: image {folder / 'pictures'} is not embedded: it is not a file",
-        f"WARNING: image {folder / 'notes.txt'} is not embedded: it is not an image",
-        (
-            "WARNING: image https://example.test/remote.png is not embedded: "
+            f"{image} https://example.test/remote.png is not embedded: "
             "rendering downloads images only with --download-images"
         ),
         (
-            "WARNING: image ftp://example.test/remote.png is not embedded: "
+            f"{image} ftp://example.test/remote.png is not embedded: "
             "it is neither a local file nor an http(s) URL"
         ),
     ]
@@ -172,6 +170,12 @@ def test_images_shown_by_url_are_downloaded_once_each(
     assert [path for path, _ in web.requests] == ["/logo.svg", "/page.html", "/missing.png"]
     assert embed.unembedded == {page, missing}
     assert capsys.readouterr().err.splitlines() == [
-        f"WARNING: image {page} is not embedded: the server sent text/html, not an image",
-        f"WARNING: image {missing} is not embedded: the server answered 404 Not Found",
+        (
+            f"md-doc-converter: warning: image {page} is not embedded: "
+            "the server sent text/html, not an image"
+        ),
+        (
+            f"md-doc-converter: warning: image {missing} is not embedded: "
+            "the server answered 404 Not Found"
+        ),
     ]

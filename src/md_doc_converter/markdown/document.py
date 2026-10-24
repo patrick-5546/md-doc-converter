@@ -10,6 +10,7 @@ from html.parser import HTMLParser
 from typing_extensions import override
 
 from md_doc_converter import pandoc as _pandoc
+from md_doc_converter.console import active, shown
 from md_doc_converter.markdown.headings import Heading, collect_headings
 
 READER = "markdown-implicit_figures-yaml_metadata_block+gfm_auto_identifiers"
@@ -121,17 +122,32 @@ def _transform_targets(value: object, transform: TargetTransform) -> None:
             _transform_targets(child, transform)
 
 
-class MarkdownDocument:
-    """Markdown parsed once by the renderer's reader; transforms edit its typed targets."""
+def _report(stderr: str, source: str | None) -> None:
+    """Report Pandoc's messages about the Markdown of *source*, at the lines that they name."""
+    console = active()
+    for message in _pandoc.messages(stderr):
+        where = "" if source is None else shown(source)
+        location = _pandoc.LOCATION.search(message)
+        if where and location:
+            where += f":{location[1]}"
+            message = message[: location.start()] + message[location.end() :]
+        console.warning(message, kind=_pandoc.message_kind(message), where=where)
 
-    def __init__(self, markdown: str, *, pandoc: str = "pandoc") -> None:
+
+class MarkdownDocument:
+    """Markdown parsed once by the renderer's reader; transforms edit its typed targets.
+
+    Pandoc's warnings about the Markdown name *source*, the file it is from, when given.
+    """
+
+    def __init__(self, markdown: str, *, pandoc: str = "pandoc", source: str | None = None) -> None:
         try:
             parsed = _pandoc.parse_markdown(
                 markdown,
                 reader=READER,
                 pandoc=pandoc,
                 description="preparing Markdown",
-                emit_warnings=True,
+                warnings=lambda stderr: _report(stderr, source),
             )
         except _pandoc.PandocError as error:
             raise MarkdownError(str(error)) from error

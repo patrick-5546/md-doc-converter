@@ -468,6 +468,10 @@ def _size_in_points(path: Path) -> None:
 
 # A converted drawing's SVG, or why it could not be converted, and notes on the conversion.
 VectorResult = tuple[bytes | str, list[str]]
+# The notes: LibreOffice's SVG export failed, and the PDF route is tried; or it worked, but the
+# drawing could not be cut from LibreOffice's page.
+_FALLBACK = "trying the PDF/pdftocairo vector fallback"
+_WHOLE_PAGE = "kept LibreOffice's whole page around the drawing"
 
 
 def _convert_vectors(drawings: dict[str, tuple[bytes, str]], work: Path) -> dict[str, VectorResult]:
@@ -526,7 +530,7 @@ def _convert_vectors(drawings: dict[str, tuple[bytes, str]], work: Path) -> dict
             validate_svg(svg)
         except ConversionError as error:
             fallback[name] = error
-            findings[name].append(f"{error}; trying the PDF/pdftocairo vector fallback")
+            findings[name].append(f"{error}; {_FALLBACK}")
             continue
         svgs[name] = svg
         frames[name] = _svg_frame(ET.parse(svg).getroot())
@@ -586,9 +590,7 @@ def _convert_vectors(drawings: dict[str, tuple[bytes, str]], work: Path) -> dict
             if problem is None:
                 validate_svg(svg)
             else:
-                findings[name].append(
-                    f"kept LibreOffice's whole page around the drawing: {problem}"
-                )
+                findings[name].append(f"{_WHOLE_PAGE}: {problem}")
             results[name] = (svg.read_bytes(), findings[name])
         except (ConversionError, OSError) as error:
             results[name] = (str(error), findings[name])
@@ -640,6 +642,8 @@ class ImageStager:
         self._names: set[str] = set()
         self._data = 0
         self.root.mkdir()
+        # How many drawings LibreOffice converts in the background.
+        self.drawings = len(background)
         self._background: Future[dict[str, VectorResult]] | None = None
         if background:
             self._runs += 1
@@ -711,7 +715,10 @@ class ImageStager:
             ordinal += 1
             name = preferred.with_name(f"{preferred.stem}-{ordinal}{preferred.suffix}")
         if name != preferred:
-            report.warn(f"Image name {preferred.as_posix()} is already used; published as {name}")
+            report.warn(
+                f"Image name {preferred.as_posix()} is already used; published as {name}",
+                section="detail",
+            )
         self._names.add(name.as_posix().casefold())
         return name
 
@@ -733,7 +740,13 @@ class ImageStager:
         cached = self._converted[digest]
         label = suffix[1:].upper()
         for message in self._findings.pop(digest, []):
-            report.warn(f"{preferred.as_posix()}: {message}")
+            if message.endswith(_FALLBACK):
+                # How the conversion turns out is reported next.
+                report.warn(f"{preferred.as_posix()}: {message}", section="detail")
+            else:
+                report.warn(
+                    f"{preferred.as_posix()}: {message}", kind=_WHOLE_PAGE, section="markdown"
+                )
         if isinstance(cached, str):
             report.skipped(
                 "image-conversion",

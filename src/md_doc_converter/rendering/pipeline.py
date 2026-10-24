@@ -10,7 +10,6 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 import tempfile
 from dataclasses import dataclass
 from enum import StrEnum
@@ -18,6 +17,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 from urllib.parse import unquote, urlsplit
 
+from md_doc_converter import pandoc as _pandoc
+from md_doc_converter.console import Console, activated, active, add_verbosity_options, shown
 from md_doc_converter.download import DownloadError, download
 from md_doc_converter.media_types import FONT_TYPES, IMAGE_TYPES
 from md_doc_converter.rendering.header import page_css
@@ -192,7 +193,10 @@ def embed_stylesheet_files(css: str, folder: Path) -> str:
         else:
             fragment = f"#{url.fragment}" if url.fragment else ""
             return f'url("data:{kind};base64,{base64.b64encode(data).decode("ascii")}{fragment}")'
-        print(f"WARNING: extra stylesheet: {target} is not embedded: {problem}", file=sys.stderr)
+        active().warning(
+            f"extra stylesheet: {target} is not embedded: {problem}",
+            kind="extra stylesheet resource not embedded",
+        )
         return match[0]
 
     return _CSS_URL.sub(embed, css)
@@ -295,30 +299,29 @@ def _prepare_markdown(
 
 
 # How Pandoc reports a resource that it cannot embed, such as an image outside its sandbox.
-_NOT_FETCHED = "[WARNING] Could not fetch resource "
+_NOT_FETCHED = "Could not fetch resource "
 
 
-def pandoc_messages(stderr: str, reported: frozenset[str]) -> str:
+def pandoc_messages(stderr: str, reported: frozenset[str]) -> list[str]:
     """Pandoc's messages, without its warnings for the images that preparation reported."""
     known = {unquote(target) for target in reported}
-    return "".join(
-        line
-        for line in stderr.splitlines(keepends=True)
+    return [
+        message
+        for message in _pandoc.messages(stderr)
         if not (
-            line.startswith(_NOT_FETCHED) and unquote(line[len(_NOT_FETCHED) :].strip()) in known
+            message.startswith(_NOT_FETCHED)
+            and unquote(message[len(_NOT_FETCHED) :].strip()) in known
         )
-    )
+    ]
 
 
 def _keep(work: Path, directory: Path) -> None:
     try:
         shutil.copytree(work, directory, dirs_exist_ok=True)
     except OSError as error:
-        print(
-            f"md-doc-converter: cannot keep intermediates in {directory}: {error}", file=sys.stderr
-        )
+        active().warning(f"cannot keep intermediates in {shown(directory)}: {error}")
     else:
-        print(f"md-doc-converter: intermediates kept in {directory}", file=sys.stderr)
+        active().note(f"intermediates kept in {shown(directory)}")
 
 
 def render_markdown(
@@ -376,6 +379,7 @@ def render_markdown(
             # title, without a heading to take it from, is the name of this file.
             document = work / "document" / f"{name}.json"
             document.parent.mkdir()
+            active().status("preparing the Markdown")
             prepared = _prepare_markdown(
                 source,
                 respect_gitignore=filter_gitignored,
@@ -407,6 +411,7 @@ def render_markdown(
                 str(html),
                 str(document),
             ]
+            active().status("rendering")
             converted = subprocess.run(
                 command,
                 cwd=work,
@@ -415,15 +420,19 @@ def render_markdown(
                 text=True,
                 check=False,
             )
-            sys.stderr.write(pandoc_messages(converted.stderr or "", prepared.unembedded))
+            # Pandoc read the prepared document, not the Markdown, so its messages name no line.
+            for message in pandoc_messages(converted.stderr or "", prepared.unembedded):
+                active().warning(message, kind=_pandoc.message_kind(message), where=shown(source))
             if converted.returncode:
                 raise subprocess.CalledProcessError(converted.returncode, command)
             if prepared.images:
+                active().status("embedding images")
                 # Pandoc read a short placeholder for each embedded image's data.
                 written = html.read_bytes().decode("utf-8")
                 html.write_bytes(prepared.embed_images(written).encode("utf-8"))
             staged = html
             if pdf:
+                active().status("printing the PDF")
                 staged = staged_dir / f"{name}.pdf"
                 subprocess.run(
                     [
@@ -516,6 +525,7 @@ def main(argv: list[str] | None = None, *, action: Literal["html", "pdf"]) -> in
                 f"{PDF_TIMEOUT_DEFAULT}; 0 = no limit)"
             ),
         )
+    add_verbosity_options(parser)
     arguments = parser.parse_args(argv)
     pdf_timeout = getattr(arguments, "pdf_timeout", None)
     options = RenderOptions(
@@ -531,13 +541,19 @@ def main(argv: list[str] | None = None, *, action: Literal["html", "pdf"]) -> in
         keep_intermediates=arguments.keep_intermediates,
         download_images=arguments.download_images,
     )
-    try:
-        destination = render_markdown(arguments.input, output_format, arguments.output, options)
-    except subprocess.CalledProcessError as error:
-        print(f"md-doc-converter: {_failed_step(error)}", file=sys.stderr)
-        return 1
-    except (RenderError, OSError) as error:
-        print(f"md-doc-converter: {error}", file=sys.stderr)
-        return 1
-    print(f"Rendered {arguments.input} -> {destination}")
+    console = Console(f"md-to-{action}", arguments.verbosity)
+    console.note(f"rendering {shown(arguments.input)}")
+    with activated(console):
+        try:
+            destination = render_markdown(arguments.input, output_format, arguments.output, options)
+        except subprocess.CalledProcessError as error:
+            console.finish()
+            console.error(_failed_step(error))
+            return 1
+        except (RenderError, OSError) as error:
+            console.finish()
+            console.error(str(error))
+            return 1
+    console.finish()
+    console.result(f"rendered {shown(arguments.input)} -> {shown(destination)}")
     return 0

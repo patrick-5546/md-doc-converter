@@ -113,7 +113,9 @@ def test_render_defaults_next_to_files_and_inside_folders(
 ) -> None:
     result = run_cli("md-to-html", "docs/input.md")
     html = docs / "input.html"
-    assert f"-> {html}" in result.stdout
+    # Paths inside the working directory are shown relative to it.
+    assert result.stdout == "rendered docs/input.md -> docs/input.html\n"
+    assert result.stderr == "md-to-html: rendering docs/input.md\n"
     assert "# Example" in html.read_text(encoding="utf-8")
     run_cli("md-to-pdf", "docs")
     assert (docs / "docs.pdf").read_bytes() == b"%PDF-fake"

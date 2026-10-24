@@ -375,7 +375,7 @@ def test_command_line_flags_override_environment_defaults(
     messages, errors = capsys.readouterr()
     assert f"-> {tmp_path / 'cache.v2 spec.pdf'}" in messages
     assert (
-        "md-doc-converter: --pdf-timeout (MD_DOC_CONVERTER_PDF_TIMEOUT) must be whole seconds "
+        "md-to-pdf: error: --pdf-timeout (MD_DOC_CONVERTER_PDF_TIMEOUT) must be whole seconds "
         f"from 0 (no limit) to {render.PDF_TIMEOUT_MAX}: '-5'\n"
     ) in errors
 
@@ -426,11 +426,12 @@ def test_files_that_the_extra_stylesheet_names_are_embedded(
     assert [path for path, _ in web.requests] == ["/mark.svg", "/gone.svg"]
     errors = capsys.readouterr().err.splitlines()
     assert errors[0].startswith(
-        "WARNING: extra stylesheet: missing.png is not embedded: it could not be read ([Errno 2]"
+        "md-doc-converter: warning: extra stylesheet: missing.png is not embedded: "
+        "it could not be read ([Errno 2]"
     )
     assert errors[1:] == [
         (
-            f"WARNING: extra stylesheet: {web.url}/gone.svg is not embedded: "
+            f"md-doc-converter: warning: extra stylesheet: {web.url}/gone.svg is not embedded: "
             "the server answered 404 Not Found"
         )
     ]
@@ -645,7 +646,7 @@ def test_render_command_reports_preprocessing_errors(
     source.write_bytes(b"# Caf\xe9\n")
     assert render.main([str(source)], action="html") == 1
     error = capsys.readouterr().err
-    assert f"md-doc-converter: cannot prepare {source}: 'utf-8' codec can't decode" in error
+    assert f"md-to-html: error: cannot prepare {source}: 'utf-8' codec can't decode" in error
     assert not (tmp_path / "latin-1.html").exists()
 
 
@@ -746,7 +747,7 @@ def test_pandoc_does_not_repeat_the_warnings_for_images_left_as_references() -> 
         "[WARNING] Could not fetch resource clip.mp4\n"
         "[WARNING] Duplicate identifier 'a' at line 3\n"
     )
-    assert render.pandoc_messages(stderr, reported) == (
-        "[WARNING] Could not fetch resource clip.mp4\n"
-        "[WARNING] Duplicate identifier 'a' at line 3\n"
-    )
+    assert render.pandoc_messages(stderr, reported) == [
+        "Could not fetch resource clip.mp4",
+        "Duplicate identifier 'a' at line 3",
+    ]

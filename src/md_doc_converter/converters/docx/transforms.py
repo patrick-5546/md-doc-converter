@@ -150,7 +150,9 @@ def single_lines(blocks: list[JSONValue], report: TransformReport) -> None:
             found["t"] == "LineBreak" for found in _tree.walk(inlines)
         ):
             report.skipped(
-                "headings", "Word line break in a heading; a Markdown heading is one line"
+                "headings",
+                "Word line break in a heading; a Markdown heading is one line",
+                section="markdown",
             )
         _one_line(inlines)
 
@@ -612,7 +614,8 @@ def publish_images(
                 counts.unresolved_alt_text += 1
                 report.warn(
                     f"Unresolved alt text: {image.part} at source paragraph "
-                    f"{image.paragraph_index + 1}; leaving alt text empty"
+                    f"{image.paragraph_index + 1}; leaving alt text empty",
+                    kind="image without alt text; alt text left empty",
                 )
         report.applied("images")
         counts.occurrences += 1
@@ -733,7 +736,10 @@ def extract_notes(blocks: list[JSONValue], report: TransformReport) -> Notes:
 
         _tree.rewrite(blocks, inline=inline)
     if empty:
-        report.warn(f"{empty} Word footnote(s) or endnote(s) without text omitted")
+        report.warn(
+            f"{empty} Word footnote(s) or endnote(s) without text omitted",
+            kind="Word footnotes or endnotes without text omitted",
+        )
     return notes
 
 

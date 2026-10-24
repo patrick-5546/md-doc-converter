@@ -96,11 +96,19 @@ def test_cli_converts_and_summarizes_what_was_not_applied(tmp_path: Path) -> Non
     result = docx_to_md("in.docx", cwd=tmp_path)
     assert result.returncode == 0, result.stderr
     assert (tmp_path / "in.md").read_text(encoding="utf-8") == "Missing\n"
-    assert (
+    assert result.stderr == (
+        "docx-to-md: converting in.docx\n"
         "docx-to-md: warning: links: link to missing Word bookmark '_Missing'; "
-        "kept as plain text" in result.stderr
+        "kept as plain text\n"
+        "docx-to-md: to check in Word:\n"
+        "  1  link to a missing Word bookmark; kept as plain text\n"
     )
-    assert "docx-to-md: transforms\n" in result.stderr
-    assert "  links: not applied (1)" in result.stderr
-    assert "  checks: passed" in result.stderr
-    assert result.stdout.startswith("converted in.docx -> in.md: 1 page(s)")
+    assert result.stdout.startswith("converted in.docx -> in.md: 1 page, 0 tables, ")
+    # --verbose adds each transform's status; --quiet shows only errors.
+    verbose = docx_to_md("in.docx", "--replace-generated", "--verbose", cwd=tmp_path)
+    assert "docx-to-md: transforms\n" in verbose.stderr
+    assert "  links: not applied (1)" in verbose.stderr
+    assert "  checks: passed" in verbose.stderr
+    assert verbose.stderr.endswith("  1  link to a missing Word bookmark; kept as plain text\n")
+    quiet = docx_to_md("in.docx", "--replace-generated", "--quiet", cwd=tmp_path)
+    assert (quiet.returncode, quiet.stdout, quiet.stderr) == (0, "", "")

@@ -52,6 +52,26 @@ opens anywhere without a network, and printing it to PDF needs none either.
 Links to other local files point to their absolute paths on the machine that
 rendered them.
 
+## Messages
+
+Rendering warns about what it cannot show as written, such as a missing image
+or a link to a heading that does not exist, naming the file and, when it is
+known, the line:
+
+```text
+md-to-html: rendering docs
+md-to-html: warning: docs/setup.md: broken anchor '#instal' (no matching heading)
+md-to-html: warning: docs/notes.md:12: Duplicate note reference '1'
+rendered docs -> docs/docs.html
+```
+
+It shows the first three warnings of each kind and counts the rest. `-v`,
+`--verbose` shows every warning, the files that a folder render reads and what
+preparation changed; `-q`, `--quiet` shows only errors. The last line, the
+result, is on standard output; the others are on standard error. On a terminal,
+a status line names the running step, and warnings and errors are colored,
+unless `NO_COLOR` is set.
+
 ## Folder input
 
 A folder is collected recursively into one document. A folder laid out as an

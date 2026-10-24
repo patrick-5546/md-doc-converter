@@ -128,8 +128,9 @@ md-doc-converter docx-to-md docs/spec.docx --split-depth 1   # one page per sect
 md-doc-converter docx-to-md docs/spec.docx --dry-run    # check without writing
 ```
 
-Conversion reports each transform it applied and each item it could not carry
-over, without quoting the document in the summary. See
+Conversion warns about each item it could not carry over, showing the first
+three of each kind, and counts every kind in a summary that quotes nothing from
+the document; `--verbose` shows everything, and `--quiet` only errors. See
 [Word conversion](docs/word-conversion.md) for the transforms, the report,
 options, and the replacement rules for existing output.
 

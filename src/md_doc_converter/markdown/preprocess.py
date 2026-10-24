@@ -38,7 +38,6 @@ import re
 import secrets
 import shutil
 import subprocess
-import sys
 from collections import Counter, defaultdict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -46,6 +45,7 @@ from pathlib import Path
 from urllib.parse import quote, unquote, urldefrag, urlsplit, urlunsplit
 
 from md_doc_converter import pandoc as _pandoc
+from md_doc_converter.console import active, shown
 from md_doc_converter.download import DownloadError, download
 from md_doc_converter.markdown.document import READER as _RENDERER_READER
 from md_doc_converter.markdown.document import MarkdownDocument, MarkdownError
@@ -152,11 +152,12 @@ def warn_block_html_in_table_cells(text: str, source_path: str | None, stats: Co
                 if match.group(1).casefold() not in tags:
                     tags.append(match.group(1).casefold())
         if first is not None:
-            print(
-                f"WARNING: HTML {', '.join(f'<{tag}>' for tag in tags)} in a Markdown table "
-                f"cell in {source_path} (line {first + 1}; md-to-html drops the rest of such "
-                "a cell -- write the cell's lines with <br>, or make the table HTML)",
-                file=sys.stderr,
+            active().warning(
+                f"HTML {', '.join(f'<{tag}>' for tag in tags)} in a Markdown table cell; "
+                "rendering drops the rest of such a cell -- write the cell's lines with <br>, "
+                "or make the table HTML",
+                kind="HTML block tag in a Markdown table cell",
+                where=_where(source_path, first + 1),
             )
         index = end
     return text
@@ -327,9 +328,8 @@ def warn_broken_images(
         resolved = os.path.normpath(source_dir / path)
         if resolved not in warned_files and not Path(resolved).is_file():
             warned_files.add(resolved)
-            print(
-                f"WARNING: missing image '{path}' referenced in {source_path}",
-                file=sys.stderr,
+            active().warning(
+                f"missing image '{path}'", kind="missing image", where=_where(source_path)
             )
 
     def _check_placeholder(uri: str) -> None:
@@ -341,10 +341,10 @@ def warn_broken_images(
         if uri in warned_placeholders:
             return
         warned_placeholders.add(uri)
-        print(
-            f"WARNING: placeholder image with no data in {source_path}: "
-            f"empty/truncated 'image/{fmt}' data URI",
-            file=sys.stderr,
+        active().warning(
+            f"placeholder image with no data: empty or truncated 'image/{fmt}' data URI",
+            kind="placeholder image with no data",
+            where=_where(source_path),
         )
 
     def _check(target: str, image: bool) -> str:
@@ -375,9 +375,10 @@ def warn_missing_anchors(
             decoded = unquote(target[1:])
             if decoded and decoded not in anchors and decoded not in warned:
                 warned.add(decoded)
-                print(
-                    f"WARNING: broken anchor '{target}' in {source_path} (no matching heading)",
-                    file=sys.stderr,
+                active().warning(
+                    f"broken anchor '{target}' (no matching heading)",
+                    kind="broken anchor (no matching heading)",
+                    where=_where(source_path),
                 )
         return target
 
@@ -436,12 +437,12 @@ def warn_undefined_references(text: str, source_path: str | None, stats: Counter
             if norm in defined_labels or norm in warned:
                 continue
             warned.add(norm)
-            kind = "image" if match.group(1) else "link"
-            print(
-                f"WARNING: undefined reference {kind} '[{label}]' in {source_path} "
-                f"(no matching '[{label}]:' definition; renders as literal text -- "
-                f"use an inline link [text](url))",
-                file=sys.stderr,
+            noun = "image" if match.group(1) else "link"
+            active().warning(
+                f"undefined reference {noun} '[{label}]' (no matching '[{label}]:' "
+                "definition; renders as literal text -- use an inline link [text](url))",
+                kind="undefined reference link (renders as literal text)",
+                where=_where(source_path),
             )
         return prose
 
@@ -484,15 +485,17 @@ def warn_crossfile_md_links(
             return target
         warned.add(target)
         if (source_dir / unquote(url.path)).is_file():
-            print(
-                f"WARNING: cross-file link to '{target}' will not resolve in "
-                "single-file output; build the containing directory instead",
-                file=sys.stderr,
+            active().warning(
+                f"cross-file link to '{target}' will not resolve in single-file output; "
+                "render the containing folder instead",
+                kind="cross-file link in single-file output",
+                where=_where(source_path),
             )
         else:
-            print(
-                f"WARNING: broken cross-file link to '{target}' (target file not found)",
-                file=sys.stderr,
+            active().warning(
+                f"broken cross-file link to '{target}' (target file not found)",
+                kind="broken cross-file link (target file not found)",
+                where=_where(source_path),
             )
         return target
 
@@ -507,6 +510,15 @@ class _CollectedMarkdown:
 
 # Ordered list of transforms applied to the markdown text.
 # Append new transform functions here to extend the pipeline.
+def _where(source_path: str | None, line: int | None = None) -> str:
+    """Where a message points: the file *source_path*, at *line* when it is known."""
+    if source_path is None:
+        return ""
+    return f"{shown(source_path)}:{line}" if line else shown(source_path)
+
+
+_UNRESOLVED = "unresolved cross-file link"
+
 TEXT_TRANSFORMS = [
     warn_block_html_in_table_cells,
     trim_fence_info_strings,
@@ -535,7 +547,7 @@ def _prepare_document(
         stats = defaultdict(Counter)
     for transform in TEXT_TRANSFORMS:
         text = transform(text, source_path, stats[transform.__name__])
-    document = MarkdownDocument(text)
+    document = MarkdownDocument(text, source=source_path)
     if single_file:
         warn_crossfile_md_links(document, source_path, stats["warn_crossfile_md_links"])
     for target_transform in TARGET_TRANSFORMS:
@@ -558,21 +570,14 @@ def preprocess(
 
 
 def print_stats(stats: dict[str, Counter[str]]) -> None:
-    """Print an aggregate summary of transform changes to stderr.
-
-    Only transforms that changed something are listed, in pipeline order.
-    """
-    lines: list[str] = []
-    for transform in (*TEXT_TRANSFORMS, *TARGET_TRANSFORMS):
-        counter = stats.get(transform.__name__)
-        if not counter:
-            continue
-        detail = ", ".join(f"{key}: {count}" for key, count in counter.items())
-        lines.append(f"  {transform.__name__}: {detail}")
-    if lines:
-        print("Transform stats:", file=sys.stderr)
-        for line in lines:
-            print(line, file=sys.stderr)
+    """Report, with --verbose, what the transforms changed, in pipeline order."""
+    changes = [
+        f"{count} {change}"
+        for transform in (*TEXT_TRANSFORMS, *TARGET_TRANSFORMS)
+        for change, count in (stats.get(transform.__name__) or Counter[str]()).items()
+    ]
+    if changes:
+        active().detail("prepared the Markdown: " + ", ".join(changes))
 
 
 def in_git_work_tree(directory: Path) -> bool:
@@ -641,10 +646,9 @@ def collect_directory(
     resolved to them when the target file is part of the collection.
     """
     if respect_gitignore and not in_git_work_tree(root):
-        print(
-            f"WARNING: --respect-gitignore had no effect: '{root}' is not "
-            "inside a git working tree (or git is unavailable)",
-            file=sys.stderr,
+        active().warning(
+            f"--respect-gitignore had no effect: '{shown(root)}' is not "
+            "inside a git working tree (or git is unavailable)"
         )
         respect_gitignore = False
 
@@ -693,7 +697,8 @@ def collect_directory(
 
     def _read_md(file_path: Path) -> _CollectedMarkdown:
         """Read a markdown file and run all transforms."""
-        print(f"  {file_path}", file=sys.stderr)
+        active().status(f"preparing {shown(file_path)}")
+        active().detail(f"reading {shown(file_path)}")
         content = file_path.read_text(encoding="utf-8")
         document = _prepare_document(content, source_path=str(file_path), stats=stats, embed=embed)
         return _CollectedMarkdown(os.path.normpath(file_path), document)
@@ -836,10 +841,10 @@ def _file_link_resolver(
         if url.query:
             if path not in warned:
                 warned.add(path)
-                print(
-                    f"WARNING: unresolved cross-file link to '{path}' "
+                active().warning(
+                    f"unresolved cross-file link to '{path}' "
                     "(query parameters cannot be represented by an internal heading link)",
-                    file=sys.stderr,
+                    kind=_UNRESOLVED,
                 )
             return path
 
@@ -847,10 +852,10 @@ def _file_link_resolver(
         if normalized not in file_anchor_map:
             if normalized not in warned:
                 warned.add(normalized)
-                print(
-                    f"WARNING: unresolved cross-file link to '{file_path}' "
+                active().warning(
+                    f"unresolved cross-file link to '{file_path}' "
                     "(target not found among collected files)",
-                    file=sys.stderr,
+                    kind=_UNRESOLVED,
                 )
             return path
 
@@ -861,10 +866,10 @@ def _file_link_resolver(
                 key = f"{normalized}#{fragment}"
                 if key not in warned:
                     warned.add(key)
-                    print(
-                        f"WARNING: unresolved cross-file link to "
+                    active().warning(
+                        f"unresolved cross-file link to "
                         f"'{file_path}#{fragment}' (heading not found in target file)",
-                        file=sys.stderr,
+                        kind=_UNRESOLVED,
                     )
                 return path
             return f"#{quote(combined, safe='')}"
@@ -873,10 +878,9 @@ def _file_link_resolver(
         if slug is None:
             if normalized not in warned:
                 warned.add(normalized)
-                print(
-                    f"WARNING: unresolved cross-file link to '{file_path}' "
-                    "(target file has no headings)",
-                    file=sys.stderr,
+                active().warning(
+                    f"unresolved cross-file link to '{file_path}' (target file has no headings)",
+                    kind=_UNRESOLVED,
                 )
             return path
         return f"#{quote(slug, safe='')}"
@@ -981,7 +985,7 @@ class ImageEmbedder:
     def _left(self, target: str, reason: str | None) -> str:
         """Leave *target* as it is, reporting why, once, unless another check already did."""
         if target not in self.unembedded and reason is not None:
-            print(f"WARNING: image {target} is not embedded: {reason}", file=sys.stderr)
+            active().warning(f"image {target} is not embedded: {reason}", kind="image not embedded")
         self.unembedded.add(target)
         return target
 
