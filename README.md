@@ -36,6 +36,9 @@ uv tool install ./md-doc-converter
 # or: uv tool install md_doc_converter-*.whl
 ```
 
+On a network that allows only a package mirror, see
+[Package mirrors](#package-mirrors).
+
 Install Node.js for rendering, and optionally LibreOffice and Poppler, from your
 distribution's packages; [nvm](https://github.com/nvm-sh/nvm) also installs
 Node.js without root. Then install the toolchain and check every prerequisite:
@@ -115,8 +118,9 @@ Command-line options override these environment variables.
 - `bin/pandoc`: Pandoc 3.12.1, the version md-doc-converter is tested with,
   from its GitHub release, verified against a pinned SHA-256 checksum;
 - `node/`, for rendering: the Mermaid, KaTeX and Puppeteer npm packages from
-  the lockfile bundled with md-doc-converter, installed without their install
-  scripts or optional packages, which none needs;
+  the lockfile bundled with md-doc-converter, which holds only releases at
+  least a week old, installed without their install scripts or optional
+  packages, which none needs;
 - `puppeteer/`, for rendering: chrome-headless-shell, the build of headless
   Chrome that the locked Puppeteer pins, which Mermaid and the PDF printer
   share.
@@ -131,7 +135,8 @@ browser when a new md-doc-converter version changes them. `setup --force`
 reinstalls everything. To remove the toolchain, delete its directory; to remove
 the command, run `uv tool uninstall md-doc-converter`.
 
-npm uses your npm configuration, including proxies and registry mirrors. On a
+npm uses your npm configuration, including proxies and registry mirrors; see
+[Package mirrors](#package-mirrors). On a
 host that cannot reach GitHub, download `pandoc-3.12.1-linux-amd64.tar.gz` from
 the [Pandoc 3.12.1 release](https://github.com/jgm/pandoc/releases/tag/3.12.1)
 another way into a folder and pass that folder to `setup`, which still verifies
@@ -152,6 +157,35 @@ is safe for documents from elsewhere; see
 [Images and documents from elsewhere](docs/rendering.md#images-and-documents-from-elsewhere).
 Rendered HTML embeds its images, stylesheets and fonts, so opening it, or
 printing it to PDF, needs no network.
+
+## Package mirrors
+
+On a network that allows only a package mirror, such as an organization's proxy
+of PyPI and npm, set up each package manager for it:
+
+- uv, which installs md-doc-converter, downloads from PyPI. It does not read
+  pip's settings, such as `PIP_INDEX_URL` or pip's configuration file, so name
+  the mirror's PyPI index in `UV_DEFAULT_INDEX` as you install:
+
+  ```sh
+  UV_DEFAULT_INDEX=https://mirror.example/pypi/simple/ uv tool install ./md-doc-converter
+  ```
+
+- npm, which `setup` runs, downloads from its configured registry, which may be
+  the mirror already. It fetches the locked packages from there, though the
+  bundled lockfile names `registry.npmjs.org`:
+
+  ```sh
+  npm config get registry
+  npm config set registry https://mirror.example/npm/
+  ```
+
+Some mirrors hold a new release for a week while it is checked. The bundled npm
+lockfile holds only releases at least a week old, so such a mirror has every
+package it names, and `uv tool install` takes the newest release of openpyxl,
+md-doc-converter's one Python dependency, that the mirror has. For a checkout,
+see [Package mirrors](docs/development.md#package-mirrors) in the development
+guide.
 
 ## Troubleshooting
 

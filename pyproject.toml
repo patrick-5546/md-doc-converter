@@ -22,7 +22,7 @@ md-doc-converter = "md_doc_converter.__main__:main"
 [dependency-groups]
 dev = [
     "actionlint-py>=1.7.12.25",
-    "hypothesis>=6.170.8",
+    "hypothesis>=6.170.1",
     "pyrefly>=1.1.1",
     "pytest>=9.1",
     "pytest-cov>=7.1",
@@ -44,6 +44,14 @@ build-backend = "uv_build"
 [tool.uv]
 # setup supports Linux x86_64 only, so the lock resolves for it alone.
 environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
+# Lock only releases at least a week old, as Dependabot's cooldown waits for: most compromised
+# releases are found and pulled within days. Mirrors that hold new releases for a week then have
+# every locked release.
+exclude-newer = "7 days"
+
+[tool.uv.build-backend]
+# npm's settings for locking the bundled manifests; setup copies only the manifests.
+wheel-exclude = [".npmrc"]
 
 [tool.pytest]
 minversion = "9.1"
