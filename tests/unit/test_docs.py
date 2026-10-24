@@ -1,21 +1,60 @@
-"""The docs name the versions, limits, commands and options that the code has."""
+"""The docs name the versions, limits, commands and options that the code has.
+
+`--help` is the reference for the options: the docs name an option only where they explain it,
+so these tests check that each option they name exists, not that they list them all.
+"""
 
 from __future__ import annotations
 
+import contextlib
+import io
 import re
 import subprocess
 import tomllib
 
 import pytest
 
+from md_doc_converter import __main__ as _main
 from md_doc_converter.__main__ import COMMANDS
 from md_doc_converter.converters import packages
-from md_doc_converter.converters.docx import cli as docx_cli
 from md_doc_converter.rendering.pipeline import PDF_TIMEOUT_DEFAULT
 from md_doc_converter.toolchain.environment import NODE_MINIMUM, PANDOC_VERSION
 from tests.support.project import PROJECT_ROOT
 
 VERSION = r"\d+(?:\.\d+)*"
+# An option, such as -o or --split-depth, but not a word with a hyphen in it.
+OPTION = re.compile(r"(?<![\w-])(--?[a-z][a-z0-9-]*)")
+# An example command line: the word after md-doc-converter, and its arguments up to a comment.
+COMMAND_LINE = re.compile(r"md-doc-converter ([^\s`]+)([^`\n#]*)")
+# development.md shows the tools of development, such as make and pytest, with their options.
+CONTRIBUTORS = "docs/development.md"
+
+
+def user_docs() -> dict[str, str]:
+    """The tracked Markdown files that describe md-doc-converter for its users, by path."""
+    return {name: text for name, text in docs().items() if name != CONTRIBUTORS}
+
+
+@pytest.fixture(scope="module")
+def options() -> dict[str, set[str]]:
+    """Each command's options, and under "" md-doc-converter's own, as --help lists them."""
+    found: dict[str, set[str]] = {}
+    with pytest.MonkeyPatch.context() as patch:
+        # Help needs no toolchain: leave PATH as it is. Help is plain text, without color.
+        patch.setattr(_main, "prefer_installed_tools", lambda: None)
+        patch.setenv("PYTHON_COLORS", "0")
+        for command in ("", *COMMANDS):
+            written = io.StringIO()
+            with contextlib.redirect_stdout(written), pytest.raises(SystemExit):
+                _main.main([command, "--help"] if command else ["--help"])
+            help_text = written.getvalue()
+            found[command] = {
+                name.split()[0]
+                for line in help_text[help_text.index("\noptions:\n") :].splitlines()
+                if line.startswith("  -")
+                for name in re.split(r"\s{2,}", line.strip())[0].split(", ")
+            }
+    return found
 
 
 def docs() -> dict[str, str]:
@@ -73,27 +112,31 @@ def test_limits_are_the_codes(pattern: str, value: str) -> None:
         assert values == {value}, name
 
 
-def test_the_readme_lists_every_command() -> None:
+def test_the_readme_points_every_command_to_its_guide() -> None:
     readme = docs()["README.md"]
-    assert sorted(re.findall(r"^\| `([a-z-]+)[ `]", readme, re.MULTILINE)) == sorted(COMMANDS)
+    start = readme.index("## Commands\n")
+    section = readme[start : readme.index("\n## ", start)]
+    named = set(re.findall(r"`([a-z]+(?:-to-[a-z]+)?)`", section))
+    assert named >= set(COMMANDS)
+    assert {name for name in named if "-to-" in name} <= set(COMMANDS)
 
 
-def test_the_word_guide_lists_every_option_of_docx_to_md(
-    capsys: pytest.CaptureFixture[str],
+def test_each_example_gives_its_command_only_that_commands_options(
+    options: dict[str, set[str]],
 ) -> None:
-    with pytest.raises(SystemExit):
-        docx_cli.parse_args(["--help"])
-    options: set[str] = set()
-    for line in capsys.readouterr().out.splitlines():
-        if line.startswith("  -"):
-            names = re.split(r"\s{2,}", line.strip())[0]
-            options.update(name.split()[0] for name in names.split(", "))
-    guide = docs()["docs/word-conversion.md"]
-    start = guide.index("| Option |", guide.index("## Options"))
-    table = guide[start : guide.index("\n\n", start)]
-    listed = {
-        option
-        for row in table.splitlines()
-        for option in re.findall(r"`(-{1,2}[a-z][a-z-]*)", re.split(r"(?<!\\)\|", row)[1])
-    }
-    assert listed == options - {"-h", "--help"}
+    for name, text in user_docs().items():
+        for command, arguments in COMMAND_LINE.findall(text):
+            if command.startswith("-"):
+                command, arguments = "", f"{command}{arguments}"
+            elif command not in COMMANDS:
+                continue  # a placeholder, such as COMMAND, or prose
+            for option in OPTION.findall(arguments):
+                assert option in options[command], f"{name}: md-doc-converter {command} {option}"
+
+
+def test_the_docs_name_only_options_that_exist(options: dict[str, set[str]]) -> None:
+    known = set().union(*options.values())
+    for name, text in user_docs().items():
+        # The table classes' widths are CSS custom properties, --col1 to --col6.
+        named = {option for option in OPTION.findall(text) if not re.fullmatch(r"--col\d+", option)}
+        assert named <= known, f"{name} names options that no command has: {sorted(named - known)}"

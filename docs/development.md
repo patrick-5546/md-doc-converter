@@ -57,8 +57,10 @@ tell how each part works.
 
 - The README covers what md-doc-converter does, installing it, its commands,
   settings and messages. Each guide in `docs/` covers its commands for their
-  users: what they produce, their options and their messages. This file covers
-  the layout, the conventions and the workflows for changing the code.
+  users: what they produce, and the options and messages that need more than a
+  line. `--help` is the reference for every option: a guide names an option only
+  where it explains it, and lists none. This file covers the layout, the
+  conventions and the workflows for changing the code.
 - Change the README or a guide when what users see or do changes. How a module
   works belongs in its docstrings, and why it changed in the commit message.
 - Say each thing in one place, and link to it from the others. Name a version

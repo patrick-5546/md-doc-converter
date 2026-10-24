@@ -9,6 +9,8 @@ md-doc-converter docx-to-md docs/spec.docx -o wiki/review.md   # wiki/review.md,
 and the document's images to `.images/<name>/` beside the Markdown. It needs
 Pandoc, which `md-doc-converter setup --no-render` installs, and for EMF and
 WMF drawings, LibreOffice and Poppler; `md-doc-converter doctor` checks them.
+`md-doc-converter docx-to-md --help` lists its options; this guide explains the
+ones that need more than a line.
 
 Pandoc reads a prepared copy of the document, transforms rewrite what it reads
 into the Markdown described below, and Pandoc writes it as GitHub Flavored
@@ -25,7 +27,10 @@ accepted.
   heading, and every other heading moves down one level. Punctuation that ends
   a heading is trimmed and skipped levels are closed, which markdownlint would
   report; a heading with no text is omitted, and a line break in one becomes a
-  space.
+  space. With `--qualify-duplicate-headings`, a repeated heading also names the
+  headings of the sections that hold it: two `## Overview` headings under
+  `# Block A` and `# Block B` become `## Block A - Overview` and
+  `## Block B - Overview`.
 - **Lists** use `-` for bullets and keep Word's numbers; a lettered or Roman
   level is numbered with digits, the only numbering Markdown has. An empty
   bullet is omitted, and so is an empty numbered item at the start or end of
@@ -62,7 +67,7 @@ accepted.
   extension; GitHub, GitLab and `md-to-html` show them.
 - **Equations** are TeX: `` $`x`$ `` inline and a ```` ```math ```` block on
   their own line, as GitHub writes them, or with `--math dollars`, `$x$` and
-  `$$x$$`.
+  `$$x$$`, for renderers that read only those, such as Azure DevOps Wiki.
 - **Text boxes:** the text of a text box follows the paragraph that holds it.
 - **Images** keep their place, without Word's display size. An image's alt
   text is the title of its figure caption, or else Word's alt text, or else the
@@ -148,48 +153,15 @@ The summary quotes nothing from the document: to report a problem without
 sharing the document, share the summary, not the warnings, which can quote it.
 
 `--verbose` also shows the details that worked out, such as a drawing converted
-through PDF, and each transform's status: `applied`, `partial`, `not applied`,
-`not needed` or `not requested`. The transforms, in the order they apply:
-
-| Transform | What it does |
-| --- | --- |
-| `fields` | Keeps the text of Word fields and drops table-of-contents page numbers. |
-| `hidden-text` | Drops text formatted as Hidden. |
-| `spaces` | Writes Unicode spaces as plain spaces, except in indents, and drops zero-width spaces. |
-| `symbols` | Writes the arrows of symbol fonts, such as Wingdings, as the arrows that every font has. |
-| `underline` | Drops underline from links, headings and monospace text. |
-| `images` | Publishes each image once, with alt text from its caption. |
-| `image-conversion` | Converts EMF and WMF drawings to cropped SVG. |
-| `links` | Keeps hyperlinks and their ScreenTips, leads links to bookmarks, and links typed addresses. |
-| `bookmarks` | Points each bookmark at its heading, its section, or the document's top. |
-| `headings` | Sets heading levels, trims ending punctuation, closes skipped levels, and omits empty headings. |
-| `lists` | Omits empty items and writes lists tight where Markdown means the same. |
-| `tables` | Writes tables as Markdown or minimal HTML. |
-| `code` | Writes monospace text as code. |
-| `cleanup` | Writes one space after list numbers, with each item's other lines indented to its text, trims trailing spaces, and removes escapes that nothing needs. |
-| `duplicate-headings` | Distinguishes repeated headings, with `--qualify-duplicate-headings`. |
-| `pages` | Settles heading IDs and links, and splits pages for `--split-depth`. |
-| `title` | Makes the Title paragraph the only `#` heading. |
-| `checks` | Checks the links, images and bookmarks of the result, changing nothing. |
+through PDF, and the status of each transform, such as `fields` or `tables`:
+`applied`, `partial`, `not applied`, `not needed` or `not requested`.
 
 `docx-to-md` exits with status 0 when it converts the document; 1 when it
 refuses the document, Pandoc cannot read it, a path is invalid, an earlier
 output needs `--replace-generated`, or the output cannot be written; and 2 when
 an option is invalid.
 
-## Options
-
-| Option | Effect |
-| --- | --- |
-| `-o`, `--output FILE.md` | Markdown file to write, with the images in `.images/<name>/` beside it (default: the input's name with `.md`, beside it). |
-| `--split-depth 0..6` | Write a page for each heading of levels 1 to this, in a folder named like the output, which lists them (default: 0, one file). |
-| `--qualify-duplicate-headings` | Distinguish repeated headings by the headings of the sections that hold them, keeping their levels: an `## Overview` under `# Block B` becomes `## Block B - Overview`. |
-| `--dry-run` | Convert and check without writing the Markdown, images or pages. |
-| `--replace-generated` | Allow replacing an existing Markdown file at the default output, and nonempty images and pages folders. |
-| `--math github\|dollars` | How to write equations: `github`, as `` $`x`$ `` and ```` ```math ```` blocks, which GitHub, GitLab and VS Code show; or `dollars`, as `$x$` and `$$x$$`, for renderers that read only those, such as Azure DevOps Wiki (default: `github`). |
-| `--keep-intermediates DIR` | Keep the intermediate files, such as the copy that Pandoc reads, and a `diagnostics.json` report in a new or empty directory apart from the input and outputs, also with `--dry-run`. |
-| `-v`, `--verbose` | Show every warning, and the details of each step. |
-| `-q`, `--quiet` | Show only errors. |
+## Pages
 
 With `--split-depth 1`, `Example.docx` becomes `Example.md`, which lists the
 pages, and a page per section in `Example/`:

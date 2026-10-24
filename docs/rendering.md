@@ -1,14 +1,15 @@
 # Rendering Markdown to HTML and PDF
 
 ```sh
-md-doc-converter md-to-html INPUT [-o FILE.html] [options]
-md-doc-converter md-to-pdf  INPUT [-o FILE.pdf]  [options]
+md-doc-converter md-to-html docs/spec.md   # docs/spec.html
+md-doc-converter md-to-pdf docs            # docs/docs.pdf, from every page in docs/
 ```
 
-`INPUT` is one Markdown file or a folder of Markdown files. Rendering needs
-Node.js and the toolchain that `md-doc-converter setup` installs, including
-Pandoc; `md-doc-converter doctor` checks all of them, and a render that is
-missing one fails before it writes anything.
+`md-to-html` and `md-to-pdf` render one Markdown file, or a folder of Markdown
+files, and `--help` lists each command's options. Rendering needs Node.js and
+the toolchain that `md-doc-converter setup` installs, including Pandoc;
+`md-doc-converter doctor` checks all of them, and a render that is missing one
+fails before it writes anything.
 
 ## Output
 

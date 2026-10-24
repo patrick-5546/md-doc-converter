@@ -60,29 +60,25 @@ md-doc-converter csv-to-md data                 # one Markdown page beside each 
 ```
 
 Every command writes next to its input unless `-o` selects another location,
-and never changes its input. `md-doc-converter COMMAND --help` lists a
-command's options.
+and never changes its input.
 
-| Command | Purpose |
-| --- | --- |
-| `docx-to-md DOCX [-o FILE.md]` | Convert a Word document to Markdown with its images; see [Word conversion](docs/word-conversion.md) |
-| `excel-to-md WORKBOOK [-o DIR] [--dry-run]` | Convert each worksheet to a Markdown page, `<sheet name>.md`; see [Excel and CSV conversion](docs/excel-and-csv.md) |
-| `excel-to-csv WORKBOOK [-o DIR]` | Write each worksheet as `<sheet name>.csv` |
-| `csv-to-md PATH [-o DIR] [--dry-run] [--delimiter NAME]` | Convert a CSV file, or every CSV in a folder, to Markdown |
-| `md-to-html INPUT [-o FILE.html]` | Render a Markdown file or folder to standalone HTML; see [Rendering](docs/rendering.md) |
-| `md-to-pdf INPUT [-o FILE.pdf]` | Render a Markdown file or folder to a paged PDF |
-| `setup [--no-render] [--downloads DIR] [--force]` | Install the pinned toolchain; see [Toolchain](#toolchain) |
-| `doctor` | Check the prerequisites and show how to fix what is missing |
+## Commands
 
-## Guides
+`md-doc-converter --help` lists the commands, and
+`md-doc-converter COMMAND --help` a command's options. What each command does
+is described in:
 
-- [Word conversion](docs/word-conversion.md): what the Markdown holds, the
-  report, the options, and converting again.
-- [Excel and CSV conversion](docs/excel-and-csv.md): how worksheets and CSV
-  files become pages, and what makes clean output.
-- [Rendering](docs/rendering.md): output names, folder input, how Markdown is
-  read, images from elsewhere, Mermaid diagrams, math, the page header and
-  footer, extra stylesheets, the PDF time limit and table styling.
+- [Word conversion](docs/word-conversion.md), for `docx-to-md`: what the
+  Markdown holds, the report, pages, and converting again;
+- [Excel and CSV conversion](docs/excel-and-csv.md), for `excel-to-md`,
+  `excel-to-csv` and `csv-to-md`: how worksheets and CSV files become pages,
+  and what makes clean output;
+- [Rendering](docs/rendering.md), for `md-to-html` and `md-to-pdf`: output
+  names, folder input, how Markdown is read, images from elsewhere, Mermaid
+  diagrams, math, the page header and footer, extra stylesheets, the PDF time
+  limit and table styling;
+- [Installation](#installation) and [Toolchain](#toolchain), for `setup` and
+  `doctor`.
 
 ## Messages
 
@@ -96,10 +92,9 @@ md-to-html: warning: docs/setup.md: broken anchor '#instal' (no matching heading
 They show the first three warnings of each kind and count the rest. `-v`,
 `--verbose` shows every warning and the details of each step; `-q`, `--quiet`
 shows only errors. The result, the last line, goes to standard output and the
-rest to standard error, so `--verbose 2> conversion.log` keeps the whole
-report. On a terminal, a status line names the running step, and warnings and
-errors are colored unless `NO_COLOR` is set. The Excel and CSV commands list
-each file they write.
+rest to standard error, so `--verbose 2> conversion.log` keeps the whole report.
+On a terminal, a status line names the running step, and warnings and errors are
+colored unless `NO_COLOR` is set.
 
 ## Settings
 

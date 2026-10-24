@@ -1,15 +1,16 @@
 # Excel and CSV conversion
 
 ```sh
-md-doc-converter excel-to-md WORKBOOK [-o DIR] [--dry-run]
-md-doc-converter excel-to-csv WORKBOOK [-o DIR]
-md-doc-converter csv-to-md PATH [-o DIR] [--dry-run] [--delimiter comma|semicolon|tab]
+md-doc-converter excel-to-md data/pins.xlsx    # data/<sheet name>.md for each worksheet
+md-doc-converter excel-to-csv data/pins.xlsx   # data/<sheet name>.csv for each worksheet
+md-doc-converter csv-to-md data                # a page beside each CSV in data/ and its subfolders
 ```
 
 Each worksheet or CSV file becomes a Markdown page that holds its table, written
 beside the input unless `-o` names a folder. Each command lists the files it
 writes; with `--dry-run`, `excel-to-md` and `csv-to-md` list them without
-writing. Excel and CSV conversion need neither Pandoc nor Node.js.
+writing. `--help` lists each command's options. Excel and CSV conversion need
+neither Pandoc nor Node.js.
 
 ## Workbooks
 
