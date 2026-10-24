@@ -5,6 +5,7 @@ Most tests render the preprocessed Markdown with the pinned Pandoc and check its
 
 from __future__ import annotations
 
+import io
 import re
 import subprocess
 import time
@@ -18,6 +19,7 @@ from urllib.parse import quote, unquote, urlsplit
 import pytest
 from typing_extensions import override
 
+from md_doc_converter.console import Console, activated
 from md_doc_converter.markdown import preprocess
 from md_doc_converter.markdown.document import MarkdownDocument, MarkdownError
 from tests.support import documents
@@ -404,6 +406,19 @@ def test_wiki_macros_go_without_moving_lines_or_blank_lines_in_code(convert: Con
     assert stats["macros removed"] == 2
     html = convert(preprocess.preprocess(source, "page.md"), "html5")
     assert "pass\n\n\n" in re.sub(r"<[^>]+>", "", html)
+
+
+def test_verbose_counts_what_preparing_the_markdown_changed(tmp_path: Path) -> None:
+    source = tmp_path / "page.md"
+    source.write_text("[[_TOC_]]\n\n# Page\n\n- [1:0]: Mode\n", encoding="utf-8")
+    stream = io.StringIO()
+
+    with activated(Console("md-to-html", "verbose", stream=stream)):
+        preprocess.prepare_markdown(source)
+
+    assert stream.getvalue() == (
+        "md-to-html: prepared the Markdown (macros removed: 1, bit-range definitions defused: 1)\n"
+    )
 
 
 def test_missing_pandoc_is_an_explicit_error(monkeypatch: pytest.MonkeyPatch) -> None:

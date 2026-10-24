@@ -570,14 +570,17 @@ def preprocess(
 
 
 def print_stats(stats: dict[str, Counter[str]]) -> None:
-    """Report, with --verbose, what the transforms changed, in pipeline order."""
+    """Report, with --verbose, what the transforms changed, in pipeline order.
+
+    Each change is named in the plural, such as "macros removed", so its count follows it.
+    """
     changes = [
-        f"{count} {change}"
+        f"{change}: {count}"
         for transform in (*TEXT_TRANSFORMS, *TARGET_TRANSFORMS)
         for change, count in (stats.get(transform.__name__) or Counter[str]()).items()
     ]
     if changes:
-        active().detail("prepared the Markdown: " + ", ".join(changes))
+        active().detail(f"prepared the Markdown ({', '.join(changes)})")
 
 
 def in_git_work_tree(directory: Path) -> bool:
@@ -1036,7 +1039,7 @@ def prepare_markdown(
 ) -> PreparedDocument:
     """Prepare a Markdown file, or every Markdown file in a folder, for Pandoc.
 
-    Report what changed on stderr. *respect_gitignore* skips what Git ignores in a folder.
+    Report, with --verbose, what changed. *respect_gitignore* skips what Git ignores in a folder.
     The images in image_root(source) are embedded, and with *download_images*, those shown by
     http(s) URL; see ImageEmbedder.
     """
