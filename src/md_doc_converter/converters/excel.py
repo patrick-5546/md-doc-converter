@@ -8,6 +8,7 @@ page is the one that csv-to-md writes from excel-to-csv's file; markdown/tables.
 
 import argparse
 import csv
+import ntpath
 import sys
 import zipfile
 from pathlib import Path
@@ -18,6 +19,9 @@ from md_doc_converter.markdown.tables import table_page
 
 if TYPE_CHECKING:
     from openpyxl.worksheet.worksheet import Worksheet
+
+# Windows cannot name a file as some worksheets are named, such as with "<" or "CON".
+WINDOWS = sys.platform == "win32"
 
 
 def _cells(sheet: Worksheet) -> list[list[str]]:
@@ -67,9 +71,22 @@ def worksheets(excel_path: str) -> list[tuple[str, list[list[str]]]]:
         workbook.close()
 
 
+def _tables(excel_path: str, suffix: str) -> list[tuple[str, list[list[str]]]]:
+    """The worksheets of *excel_path*, refusing one that cannot name its file, before any file
+    is written."""
+    sheets = worksheets(excel_path)
+    for name, rows in sheets:
+        # A device name such as NUL would swallow the file, and Windows forbids < > " | in one.
+        if WINDOWS and rows and ntpath.isreserved(name + suffix):
+            raise ValueError(
+                f"the worksheet {name!r} cannot name a file on Windows; rename it in the workbook"
+            )
+    return sheets
+
+
 def excel_to_csv(excel_path: str, output_dir: str | None = None) -> None:
     out = Path(output_dir) if output_dir else Path(excel_path).parent
-    for name, rows in worksheets(excel_path):
+    for name, rows in _tables(excel_path, ".csv"):
         if not rows:
             print(f"Skipped (empty): {name}")
             continue
@@ -83,7 +100,7 @@ def excel_to_csv(excel_path: str, output_dir: str | None = None) -> None:
 def excel_to_md(excel_path: str, output_dir: str | None = None, dry_run: bool = False) -> None:
     workbook = Path(excel_path)
     out = Path(output_dir) if output_dir else workbook.parent
-    for name, rows in worksheets(excel_path):
+    for name, rows in _tables(excel_path, ".md"):
         if not rows:
             print(f"Skipped (empty): {name}")
             continue

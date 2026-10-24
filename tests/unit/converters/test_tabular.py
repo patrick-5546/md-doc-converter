@@ -353,6 +353,26 @@ def test_excel_to_md_writes_the_pages_csv_to_md_writes_from_excel_to_csv(
         assert b"\r" not in (pages / name).read_bytes() + (tmp_path / "csv" / name).read_bytes()
 
 
+@pytest.mark.parametrize("command", ["excel-to-md", "excel-to-csv"])
+@pytest.mark.parametrize("name", ["a<b", 'say "hi"', "a|b", "CON", "nul", "COM1"])
+def test_a_worksheet_that_cannot_name_a_file_on_windows_is_refused(
+    command: str, name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(excel_to_csv, "WINDOWS", True)
+    workbook = openpyxl.Workbook()
+    fine = workbook.active
+    assert fine is not None
+    fine.title = "Fine"
+    fine.append(["Name"])
+    workbook.create_sheet(name).append(["Name"])
+    workbook.save(tmp_path / "book.xlsx")
+    workbook.close()
+    with pytest.raises(SystemExit, match=f"the worksheet {re.escape(repr(name))} cannot name a"):
+        main([command, str(tmp_path / "book.xlsx")])
+    # Not even the other worksheet's file is written.
+    assert [path.name for path in tmp_path.iterdir()] == ["book.xlsx"]
+
+
 def test_excel_to_md_dry_run_names_the_pages_beside_the_workbook(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

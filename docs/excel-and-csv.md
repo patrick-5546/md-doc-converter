@@ -22,7 +22,9 @@ Excel saved with them; a workbook saved by a program that does not calculate
 formulas, such as a script, has none, and those cells come out empty.
 
 A workbook that is encrypted, in the Excel 97-2003 format (`.xls`), or whose
-contents expand to more than 1,024 MiB is refused.
+contents expand to more than 1,024 MiB is refused. On Windows, a workbook with
+a worksheet that cannot name a file there, such as `a<b` or `CON`, is refused
+before any file is written.
 
 For clean output, each worksheet should:
 
