@@ -35,13 +35,8 @@ POPPLER = ("pdftocairo", "pdfinfo", "pdftotext", "pdftohtml", "pdffonts")
 
 
 def find_poppler(command: str) -> str | None:
-    """Poppler's *command*: the one beside its pdftocairo, which only Poppler has.
-
-    The first on PATH may be another program's. On Windows, Git Bash puts Git's own pdftotext,
-    from xpdf, which lacks Poppler's options, before every other.
-    """
-    cairo = executables.which("pdftocairo")
-    return None if cairo is None else executables.which(command, str(Path(cairo).parent))
+    """Poppler's *command*, as md-doc-converter finds it: the one beside its pdftocairo."""
+    return executables.poppler(command)
 
 
 def poppler(command: str) -> str:

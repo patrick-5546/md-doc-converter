@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -66,6 +67,21 @@ def test_a_program_is_a_file_that_may_run(tmp_path: Path) -> None:
     assert executables.runnable(program(tmp_path, "tool"))
     assert not executables.runnable(text)
     assert not executables.runnable(tmp_path / "missing")
+
+
+def test_poppler_commands_are_the_ones_beside_its_pdftocairo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # As in Git Bash on Windows, where Git's own pdftotext, from xpdf, comes first on PATH.
+    xpdf = program(tmp_path / "git", "pdftotext")
+    poppler = {name: program(tmp_path / "poppler", name) for name in ("pdftocairo", "pdftotext")}
+    monkeypatch.setenv("PATH", os.pathsep.join([str(xpdf.parent), str(tmp_path / "poppler")]))
+    assert executables.poppler("pdftotext") == str(poppler["pdftotext"])
+    assert executables.poppler("pdftocairo") == str(poppler["pdftocairo"])
+    # Beside pdftocairo, or not at all.
+    assert executables.poppler("pdfinfo") is None
+    monkeypatch.setenv("PATH", str(xpdf.parent))
+    assert executables.poppler("pdftotext") is None
 
 
 def test_libreoffice_is_found_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

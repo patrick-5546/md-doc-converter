@@ -47,6 +47,16 @@ def _windows_which(name: str, path: str | None) -> str | None:
     return None
 
 
+def poppler(command: str) -> str | None:
+    """Poppler's *command*: the one in the folder of pdftocairo, which only Poppler has.
+
+    The first *command* on PATH may be another program's: on Windows, Git Bash puts Git's own
+    pdftotext, from xpdf, which lacks Poppler's options, before every other.
+    """
+    cairo = which("pdftocairo")
+    return None if cairo is None else which(command, str(Path(cairo).parent))
+
+
 def resolve(name: str, path: str | None = None) -> str:
     """The absolute path of the program *name*, as which() finds it.
 
