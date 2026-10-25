@@ -43,30 +43,29 @@ jobs:
         run: make test
 
   core-windows:
-    name: Core tests (Windows)
+    name: Lint and core tests (Windows)
     runs-on: windows-2025
     timeout-minutes: 20
-    defaults:
-      run:
-        shell: bash
-    env:
-      # The checkout's toolchain, as make selects it on Linux.
-      MD_DOC_CONVERTER_HOME: ${{ github.workspace }}/.toolchain
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - name: Install make
+        run: choco install --yes --no-progress make
       - name: Cache Pandoc
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .toolchain/bin/pandoc.exe
           key: pandoc-${{ runner.os }}-${{ hashFiles('src/md_doc_converter/toolchain/install.py') }}
+      - name: Lint
+        env:
+          # zizmor's online audits check the pinned actions against GitHub.
+          GH_TOKEN: ${{ github.token }}
+        run: make lint
       - name: Core tests
-        # Installs the pinned Pandoc first, unless it is cached, as make test does on Linux.
-        run: |
-          uv run md-doc-converter setup --no-render
-          uv run pytest -n auto
+        # Installs the pinned Pandoc first (setup --no-render), unless it is cached.
+        run: make test
 
   render:
     name: Rendering tests
@@ -131,19 +130,14 @@ jobs:
     name: Rendering tests (Windows)
     runs-on: windows-2025
     timeout-minutes: 30
-    defaults:
-      run:
-        shell: bash
-    env:
-      MD_DOC_CONVERTER_HOME: ${{ github.workspace }}/.toolchain
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # Chocolatey puts Poppler's commands on PATH; md-doc-converter finds LibreOffice where its
-      # installer puts it.
-      - name: Install LibreOffice and Poppler
-        run: choco install --yes --no-progress libreoffice-fresh poppler
+      # Chocolatey puts make's and Poppler's commands on PATH; md-doc-converter finds LibreOffice
+      # where its installer puts it.
+      - name: Install make, LibreOffice and Poppler
+        run: choco install --yes --no-progress make libreoffice-fresh poppler
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
@@ -155,9 +149,7 @@ jobs:
           key: toolchain-${{ runner.os }}-${{ hashFiles('src/md_doc_converter/toolchain/package.json', 'src/md_doc_converter/toolchain/package-lock.json', 'src/md_doc_converter/toolchain/environment.py', 'src/md_doc_converter/toolchain/install.py') }}
       - name: Rendering tests
         # Runs setup first, which installs whatever the cache did not restore.
-        run: |
-          uv run md-doc-converter setup
-          uv run pytest tests/rendering
+        run: make test-render
 
   package:
     name: Build and install check (${{ matrix.os }})
