@@ -76,7 +76,7 @@ tell how each part works.
 ## Environment
 
 Development needs Linux x86_64 or Windows x86_64,
-[uv](https://docs.astral.sh/uv/) and Git, with make on Linux, plus Node.js
+[uv](https://docs.astral.sh/uv/), GNU make 4 or newer and Git, plus Node.js
 22.13 or newer for the render suite, and LibreOffice and Poppler (`pdftocairo`)
 for its EMF tests. uv installs Python (version from `.python-version`) and the
 locked dependencies in `uv.lock`. The `Makefile` runs each task through uv and
@@ -97,23 +97,10 @@ so every checker is a locked development dependency. Their settings are in
 `pyproject.toml`; `.editorconfig` gives editors the indentation and line
 endings.
 
-Windows has no make, so there each task runs with uv as the `Makefile` runs it,
-from the checkout, in PowerShell:
-
-```powershell
-$env:MD_DOC_CONVERTER_HOME = "$PWD\.toolchain"
-uv run md-doc-converter setup --no-render   # make setup-pandoc; make setup without --no-render
-uv run ruff format src tests                # make format
-uv run rumdl fmt .
-uv run pytest -n auto                       # make test
-uv run pytest tests/rendering               # make test-render
-uv run ruff format --check src tests        # make lint, but for actionlint and zizmor,
-uv run ruff check src tests                 # which check the workflow on Linux
-uv run ty check src tests
-uv run pyrefly check
-uv run rumdl check .
-uv run typos
-```
+On Windows, install make with `winget install ezwinports.make`. There make runs
+each task's commands with cmd.exe, whichever shell starts it, so the tasks run
+alike from PowerShell, cmd and Git Bash. `make -n TASK` prints a task's commands
+without running them.
 
 ### Package mirrors
 

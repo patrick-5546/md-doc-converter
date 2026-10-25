@@ -13,7 +13,6 @@
 from __future__ import annotations
 
 import os
-import sys
 import tempfile
 from collections.abc import MutableMapping, Sequence
 from pathlib import Path
@@ -28,12 +27,7 @@ from md_doc_converter.toolchain.environment import (
 from tests.support.project import PROJECT_ROOT
 
 RENDERING = PROJECT_ROOT / "tests" / "rendering"
-# Windows has no make; the tests use .toolchain/ unless MD_DOC_CONVERTER_HOME is set.
-SETUP_PANDOC = (
-    "run `uv run md-doc-converter setup --no-render` with MD_DOC_CONVERTER_HOME set to .toolchain"
-    if sys.platform == "win32"
-    else "run `make setup-pandoc`"
-)
+SETUP_PANDOC = "run `make setup-pandoc`"
 SYMBOLIC_LINKS = "symbolic links (on Windows, turn on Developer Mode to create them)"
 # The Poppler utilities that the render suite runs: pdftocairo converts EMF drawings, and
 # the others read the PDFs it prints.

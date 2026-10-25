@@ -1,10 +1,17 @@
 # Development tasks for md-doc-converter; `make help` lists them.
 # Each task runs through uv, which first creates or updates .venv from uv.lock.
 
-# Fail a recipe on its first failing command, including inside a pipeline; flag undefined
-# variables; no implicit rules, which a task runner never needs.
+# Recipes run with bash, which fails a recipe on its first failing command, including inside a
+# pipeline. GNU make built for Windows, unlike MSYS2's or Cygwin's, would run them with whichever
+# sh.exe is on PATH, or else cmd.exe, so there they always run with cmd.exe: each recipe line is
+# commands joined by &&, which both shells run alike. Flag undefined variables; no implicit rules,
+# which a task runner never needs.
+ifneq ($(filter Windows32 %-mingw32,$(MAKE_HOST)),)
+SHELL := cmd.exe
+else
 SHELL := bash
 .SHELLFLAGS := -eu -o pipefail -c
+endif
 MAKEFLAGS += --warn-undefined-variables --no-builtin-rules
 .SUFFIXES:
 
@@ -17,8 +24,9 @@ UV_RUN := uv run
 .PHONY: help setup setup-pandoc doctor format lint test test-render test-all coverage build \
 	lock-npm
 
+# Python, which uv runs on every system, lists the tasks without updating .venv first.
 help: ## List the tasks
-	@awk 'BEGIN { FS = ":.*## " } /^[a-z-]+:.*## / { printf "  %-13s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
+	@$(UV_RUN) --quiet --no-project python -c "import re, sys; [print(f'  {name:<13} {text}') for path in sys.argv[1:] for name, text in re.findall(r'^([a-z-]+):.*## (.*)', open(path, encoding='utf-8').read(), re.M)]" $(MAKEFILE_LIST)
 
 setup: ## Install the toolchain into .toolchain/; rendering needs Node.js
 	$(UV_RUN) md-doc-converter setup
