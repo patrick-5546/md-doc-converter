@@ -30,12 +30,11 @@ need neither Pandoc nor Node.js.
 
 ## Installation
 
-Install the command with [uv](https://docs.astral.sh/uv/) from a checkout or a
-built wheel:
+Install the command with [uv](https://docs.astral.sh/uv/) from a checkout, or
+from a built wheel by the wheel file's path:
 
 ```sh
 uv tool install ./md-doc-converter
-# or: uv tool install md_doc_converter-*.whl
 ```
 
 On a network that allows only a package mirror, see

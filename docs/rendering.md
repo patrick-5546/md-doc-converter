@@ -171,7 +171,8 @@ md-doc-converter md-to-pdf docs/spec.md --header "Design review" --footer "Draft
 
 The header appears at the top right and the footer at the bottom left, in
 8-point gray text. `MD_DOC_CONVERTER_HEADER` and `MD_DOC_CONVERTER_FOOTER` set
-defaults; the options override them, and an empty option clears a default.
+defaults; the options override them, and an empty option, such as `--header=`,
+clears a default.
 
 The text is literal, never CSS or HTML, and is escaped safely. Quote it for the
 shell, using single quotes when it contains `$` or other shell-special
