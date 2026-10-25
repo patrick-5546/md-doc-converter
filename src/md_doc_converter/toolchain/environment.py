@@ -63,8 +63,13 @@ def current_platform(system: str = sys.platform, machine: str | None = None) -> 
 
 
 def host_platform() -> Platform:
-    """This computer's platform, or on another one, the supported platform of its kind."""
-    return current_platform() or (WINDOWS if sys.platform == "win32" else LINUX)
+    """This computer's platform, or on another one, the supported platform of its kind.
+
+    Each supported system has one platform, so the system picks it without the machine type.
+    Every command finds its toolchain with this, and on Windows, platform.machine() makes a
+    WMI query that takes a noticeable part of a command's start.
+    """
+    return WINDOWS if sys.platform == "win32" else LINUX
 
 
 def default_home(

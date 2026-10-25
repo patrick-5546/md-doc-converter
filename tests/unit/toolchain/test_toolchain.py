@@ -172,6 +172,13 @@ def test_setup_supports_linux_and_windows_on_x86_64(
     assert current_platform(system, machine) is expected
 
 
+def test_each_supported_system_has_one_platform() -> None:
+    # So the system alone picks this computer's platform: host_platform() doesn't ask for the
+    # machine type, which takes a WMI query on Windows that every command would wait for.
+    systems = [system for system, _ in PLATFORMS]
+    assert len(set(systems)) == len(systems)
+
+
 def test_doctor_names_the_platform_or_those_that_setup_supports(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

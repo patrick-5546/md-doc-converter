@@ -125,6 +125,32 @@ def test_cli_help_is_available_without_site_packages_or_external_tools(
     assert expected in result.stdout
 
 
+def test_a_command_asks_for_neither_the_version_nor_the_machine_type(tmp_path: Path) -> None:
+    # Each would slow every command's start on Windows: importing importlib.metadata to look
+    # the version up, and platform.machine(), which makes a WMI query.
+    table = tmp_path / "table.csv"
+    table.write_text("a,b\n1,2\n", encoding="utf-8")
+    script = (
+        "import platform, sys\n"
+        "def machine():\n    raise AssertionError('asked for the machine type')\n"
+        "platform.machine = machine\n"
+        "from md_doc_converter.__main__ import main\n"
+        f"assert main(['csv-to-md', {str(table)!r}]) == 0\n"
+        "assert 'importlib.metadata' not in sys.modules\n"
+    )
+    windows = {name: os.environ[name] for name in WINDOWS_VARIABLES if name in os.environ}
+    result = subprocess.run(
+        [sys.executable, "-B", "-S", "-c", script],
+        cwd=tmp_path,
+        env={"PATH": "", "PYTHONPATH": str(SOURCE_ROOT), **windows},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert table.with_suffix(".md").is_file()
+
+
 def test_resource_paths_are_durable_and_independent_of_caller_directory(tmp_path: Path) -> None:
     result = subprocess.run(
         [
@@ -202,5 +228,5 @@ def test_a_source_tree_reports_that_the_package_is_not_installed(
     def not_installed(distribution: str) -> str:
         raise metadata.PackageNotFoundError(distribution)
 
-    monkeypatch.setattr(resources.metadata, "version", not_installed)
+    monkeypatch.setattr(metadata, "version", not_installed)
     assert resources.package_version() == "(not installed)"

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Sequence
 
 from md_doc_converter.resources import package_version
 from md_doc_converter.toolchain.environment import prefer_installed_tools
@@ -20,6 +21,33 @@ COMMANDS = {
 }
 
 
+class _VersionAction(argparse.Action):
+    """Print the version and exit, as argparse's version action does.
+
+    Unlike that action, it looks the version up only then: every command would otherwise wait
+    for the lookup, which is slow on Windows.
+    """
+
+    def __init__(self, option_strings: Sequence[str], dest: str) -> None:
+        super().__init__(
+            option_strings,
+            dest,
+            nargs=0,
+            default=argparse.SUPPRESS,
+            help="show program's version number and exit",
+        )
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: object,
+        option_string: str | None = None,
+    ) -> None:
+        print(f"md-doc-converter {package_version()}")
+        parser.exit()
+
+
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
     # Conversion and rendering then use the Pandoc that `setup` pinned, when it is installed.
@@ -33,9 +61,7 @@ def main(argv: list[str] | None = None) -> int:
         + "\n".join(f"  {name:<{width}}  {summary}" for name, summary in COMMANDS.items())
         + "\n\nRun `md-doc-converter COMMAND --help` for a command's options.",
     )
-    parser.add_argument(
-        "--version", action="version", version=f"md-doc-converter {package_version()}"
-    )
+    parser.add_argument("--version", action=_VersionAction)
     parser.add_argument(
         "command", choices=COMMANDS, metavar="COMMAND", help="one of the commands listed below"
     )
