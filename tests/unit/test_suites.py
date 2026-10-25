@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -38,6 +39,15 @@ def tools(monkeypatch: pytest.MonkeyPatch, *available: str, toolchain: str = "ok
             return check
 
         monkeypatch.setattr(suites, name, reported)
+
+
+def program(folder: Path, name: str) -> Path:
+    """Write a program *name* in *folder*: an .exe on Windows, and elsewhere a file that may run."""
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / (f"{name}.exe" if sys.platform == "win32" else name)
+    path.write_text("", encoding="utf-8")
+    path.chmod(0o755)
+    return path
 
 
 @pytest.fixture
@@ -109,6 +119,22 @@ def test_the_render_suite_names_each_missing_toolchain_part(
         "packages: detail (Run setup)",
         "browser: detail (Run setup)",
     ]
+
+
+def test_the_render_suite_runs_the_poppler_commands_beside_its_pdftocairo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # As in Git Bash on Windows, where Git's own pdftotext, from xpdf, comes first on PATH.
+    xpdf = program(tmp_path / "git", "pdftotext")
+    poppler = {name: program(tmp_path / "poppler", name) for name in suites.POPPLER}
+    monkeypatch.setenv("PATH", os.pathsep.join([str(xpdf.parent), str(tmp_path / "poppler")]))
+
+    assert suites.find_poppler("pdftotext") == str(poppler["pdftotext"])
+    assert suites.poppler("pdffonts") == str(poppler["pdffonts"])
+
+    # Without Poppler's pdftocairo, there is no Poppler command, whatever else is on PATH.
+    monkeypatch.setenv("PATH", str(xpdf.parent))
+    assert suites.find_poppler("pdftotext") is None
 
 
 @pytest.mark.parametrize(

@@ -5,6 +5,8 @@
 - A run stops before collecting when the selected suites miss a prerequisite: Git, the pinned
   Pandoc and permission to create symbolic links for every suite, and Node.js, Poppler,
   LibreOffice and the installed toolchain for the rendering suite in tests/rendering.
+- The rendering suite runs Poppler's commands from the folder of its pdftocairo, so another
+  program of the same name earlier on PATH cannot stand in for one.
 - A skipped test fails the run, so a missing tool cannot quietly reduce coverage.
 """
 
@@ -36,6 +38,23 @@ SYMBOLIC_LINKS = "symbolic links (on Windows, turn on Developer Mode to create t
 # The Poppler utilities that the render suite runs: pdftocairo converts EMF drawings, and
 # the others read the PDFs it prints.
 POPPLER = ("pdftocairo", "pdfinfo", "pdftotext", "pdftohtml", "pdffonts")
+
+
+def find_poppler(command: str) -> str | None:
+    """Poppler's *command*: the one beside its pdftocairo, which only Poppler has.
+
+    The first on PATH may be another program's. On Windows, Git Bash puts Git's own pdftotext,
+    from xpdf, which lacks Poppler's options, before every other.
+    """
+    cairo = executables.which("pdftocairo")
+    return None if cairo is None else executables.which(command, str(Path(cairo).parent))
+
+
+def poppler(command: str) -> str:
+    """Poppler's *command*, which the render suite's prerequisites guarantee."""
+    found = find_poppler(command)
+    assert found is not None, "the render suite's prerequisites guarantee Poppler"
+    return found
 
 
 def can_link() -> bool:
@@ -83,7 +102,9 @@ def missing_prerequisites(*, render: bool) -> list[str]:
     if not can_link():
         missing.append(SYMBOLIC_LINKS)
     if render:
-        missing.extend(tool for tool in ("node", *POPPLER) if executables.which(tool) is None)
+        if executables.which("node") is None:
+            missing.append("node")
+        missing.extend(tool for tool in POPPLER if find_poppler(tool) is None)
         if executables.libreoffice() is None:
             missing.append("libreoffice/soffice (EMF regression coverage)")
         tools = toolchain()

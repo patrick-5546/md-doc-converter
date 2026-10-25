@@ -14,6 +14,8 @@ import zlib
 from pathlib import Path
 from urllib.parse import unquote
 
+from tests.support.suites import poppler
+
 CLI = (sys.executable, "-m", "md_doc_converter")
 SETTINGS = {"MD_DOC_CONVERTER_HEADER", "MD_DOC_CONVERTER_FOOTER", "MD_DOC_CONVERTER_PDF_TIMEOUT"}
 
@@ -250,7 +252,10 @@ def test_a_document_from_elsewhere_cannot_read_local_files_into_its_output(
 
     command(tmp_path, *CLI, "md-to-pdf", "docs/page.md")
     text = subprocess.run(
-        ["pdftotext", str(docs / "page.pdf"), "-"], capture_output=True, text=True, check=True
+        [poppler("pdftotext"), str(docs / "page.pdf"), "-"],
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout
     assert "Kept" in text
     assert "LEAKED" not in text

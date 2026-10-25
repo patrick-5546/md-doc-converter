@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.support.suites import POPPLER, poppler
+
 CLI = (sys.executable, "-m", "md_doc_converter")
 # No fi, fl or ff, which fonts may print as ligatures.
 HEADER, FOOTER = "Design review", "Example Corp"
@@ -68,13 +70,11 @@ WIDE_DOCUMENT = f"""# Signals
 
 
 def run(*arguments: str | Path, cwd: Path | None = None) -> str:
-    result = subprocess.run(
-        [str(argument) for argument in arguments],
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    command = [str(argument) for argument in arguments]
+    # Poppler's own, not another program of the same name that may come first on PATH.
+    if command[0] in POPPLER:
+        command[0] = poppler(command[0])
+    result = subprocess.run(command, cwd=cwd, capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
     return result.stdout
 
