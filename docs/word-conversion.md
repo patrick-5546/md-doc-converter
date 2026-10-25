@@ -73,8 +73,13 @@ accepted.
 - **Images** keep their place, without Word's display size. An image's alt
   text is the title of its figure caption, or else Word's alt text, or else the
   text of a heading right above it, also one kept as a list item; otherwise it
-  is empty, and reported. EMF and WMF drawings become SVG, cropped to the
-  drawing. An SVG image that contains a script is replaced by the PNG copy that
+  is empty, and reported. EMF and WMF drawings, which Word keeps for drawings
+  pasted from Visio and other programs, become SVG, cropped to the drawing:
+  LibreOffice draws each as a PDF, which Poppler turns into SVG. Its text is
+  drawn as shapes, so that it looks the same everywhere, with an invisible copy
+  of the words that a search of a PDF of the page still finds. LibreOffice
+  before 7.4 cannot report the drawing's frame, so its whole page is kept, and
+  reported. An SVG image that contains a script is replaced by the PNG copy that
   Word keeps with it.
 - **Spaces:** no-break and other Unicode spaces become plain spaces, except
   spaces that indent a line, which stay no-break spaces so that the indent
@@ -153,9 +158,10 @@ converted spec.docx -> spec.md: 1 page, 25 tables, 16 image references, 40 Word 
 The summary quotes nothing from the document: to report a problem without
 sharing the document, share the summary, not the warnings, which can quote it.
 
-`--verbose` also shows the details that worked out, such as a drawing converted
-through PDF, and the status of each transform, such as `fields` or `tables`:
-`applied`, `partial`, `not applied`, `not needed` or `not requested`.
+`--verbose` also shows the details that worked out, such as an image published
+under another name because its own was taken, and the status of each transform,
+such as `fields` or `tables`: `applied`, `partial`, `not applied`, `not needed`
+or `not requested`.
 
 `docx-to-md` exits with status 0 when it converts the document; 1 when it
 refuses the document, Pandoc cannot read it, a path is invalid, an earlier

@@ -242,7 +242,7 @@ def test_real_native_cases_are_collected_only_by_the_render_suite() -> None:
     assert not core & render
     for name in (
         "test_real_synthetic_emf_conversion",
-        "test_real_synthetic_emf_pdf_fallback",
+        "test_real_drawing_text_stays_searchable",
         "test_zero_timeout_is_accepted",
     ):
         assert not any(case.endswith("::" + name) for case in core)

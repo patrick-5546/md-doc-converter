@@ -307,6 +307,25 @@ def test_fixes_install_with_the_package_manager_of_the_system() -> None:
         assert not any("winget" in fix for fix in fixes)
 
 
+def test_poppler_needs_each_command_that_emf_conversion_runs(fakes: FakeTools) -> None:
+    unconverted = "EMF/WMF drawings in Word documents are kept in their original format"
+    assert checks.check_poppler() == checks.Check(
+        "poppler", "warn", f"not found; {unconverted}", checks.POPPLER_FIX
+    )
+    fakes.write("pdftocairo")
+    cairo = fakes.path("pdftocairo")
+    assert checks.check_poppler().detail == f"no pdfinfo beside {cairo}; {unconverted}"
+    fakes.write("pdfinfo")
+    assert checks.check_poppler() == checks.Check(
+        "poppler",
+        "warn",
+        f"no pdftotext beside {cairo}; the text of converted EMF/WMF drawings is not searchable",
+        checks.POPPLER_FIX,
+    )
+    fakes.write("pdftotext")
+    assert checks.check_poppler() == checks.Check("poppler", "ok", str(cairo))
+
+
 def test_versions_are_checked(fakes: FakeTools) -> None:
     fakes.write(versions={"node": "v20.11.1", "pandoc": "pandoc 3.1.9"})
     node = checks.check_node()

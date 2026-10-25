@@ -201,13 +201,34 @@ def check_libreoffice() -> Check:
     )
 
 
-def check_pdftocairo() -> Check:
-    return _optional(
-        "pdftocairo",
-        executables.which("pdftocairo"),
-        "the PDF fallback for EMF/WMF drawings is unavailable",
-        POPPLER_FIX,
-    )
+def check_poppler() -> Check:
+    """Poppler turns LibreOffice's PDFs of EMF/WMF drawings into SVG; its pdftotext keeps the
+    drawings' text searchable."""
+    cairo = executables.poppler("pdftocairo")
+    if cairo is None:
+        return _optional(
+            "poppler",
+            None,
+            "EMF/WMF drawings in Word documents are kept in their original format",
+            POPPLER_FIX,
+        )
+    if executables.poppler("pdfinfo") is None:
+        return Check(
+            "poppler",
+            "warn",
+            f"no pdfinfo beside {cairo}; "
+            "EMF/WMF drawings in Word documents are kept in their original format",
+            POPPLER_FIX,
+        )
+    if executables.poppler("pdftotext") is None:
+        return Check(
+            "poppler",
+            "warn",
+            f"no pdftotext beside {cairo}; the text of converted EMF/WMF drawings is not "
+            "searchable",
+            POPPLER_FIX,
+        )
+    return Check("poppler", "ok", cairo)
 
 
 def render_checks(tools: Toolchain, *, pdf: bool) -> list[Check]:
@@ -238,7 +259,7 @@ def doctor_checks(tools: Toolchain) -> list[Check]:
         check_browser(tools),
         check_git(),
         check_libreoffice(),
-        check_pdftocairo(),
+        check_poppler(),
     ]
 
 

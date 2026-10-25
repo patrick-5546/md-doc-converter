@@ -6,7 +6,6 @@ import hashlib
 import html
 import re
 import urllib.parse
-import zipfile
 from collections import Counter, defaultdict
 from collections.abc import Collection
 from concurrent.futures import Future, ThreadPoolExecutor, wait
@@ -235,12 +234,14 @@ def escape_image_alt_text(value: str) -> str:
     return re.sub(r"([\\`*_\[\]|])", r"\\\1", text)
 
 
-def validate_svg(path: Path) -> None:
+def validate_svg(path: Path) -> ET.Element:
+    """Check the SVG at *path*, and return its root."""
     try:
         root = ET.parse(path).getroot()
     except ET.ParseError as error:
         raise ConversionError(f"Invalid SVG {path}: {error}") from error
     _validate_svg_root(root, path)
+    return root
 
 
 def validate_svg_bytes(data: bytes, label: str) -> None:
@@ -307,85 +308,54 @@ def _validate_svg_root(root: ET.Element, path: Path | str) -> None:
 
 
 # LibreOffice draws an EMF or WMF file in the middle of a default page, such as US Letter, and
-# exports the whole page; the SVG is cropped back to the drawing's frame.
+# exports the whole page as a tagged PDF, whose one Figure gives the drawing's frame; pdftocairo
+# turns the page into an SVG, which is cropped back to the frame. LibreOffice's PDF export draws
+# a drawing as Word does far more often than its SVG export, which misplaces rotated text, drops
+# repeated bitmaps and fails on some drawings outright. pdftocairo draws text as outlines, which
+# look the same everywhere; an invisible copy of the words keeps them searchable.
 Frame = tuple[float, float, float, float]
 _LENGTH = re.compile(r"\s*([0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)\s*(mm|cm|in|pt|pc|px)?\s*")
-_MM_PER_UNIT = {"mm": 1.0, "cm": 10.0, "in": 25.4, "pt": 25.4 / 72, "pc": 25.4 / 6, "px": 25.4 / 96}
-_ODF_DRAW = "{urn:oasis:names:tc:opendocument:xmlns:drawing:1.0}"
-_ODF_FO = "{urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0}"
-_ODF_STYLE = "{urn:oasis:names:tc:opendocument:xmlns:style:1.0}"
-_ODF_SVG = "{urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0}"
+# LibreOffice 7.4 and newer read the export's options as JSON; older ones ignore them.
+_TAGGED_PDF = 'pdf:draw_pdf_Export:{"UseTaggedPDF":{"type":"boolean","value":"true"}}'
+_NUMBER = r"[-+]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][-+]?[0-9]+)?"
+# A frame as `pdfinfo -struct` prints it: left, bottom, right and top, up from the page's bottom.
+_BBOX = re.compile(rf"^\s*/BBox \[({_NUMBER}) ({_NUMBER}) ({_NUMBER}) ({_NUMBER})\]", re.MULTILINE)
+_XHTML = "{http://www.w3.org/1999/xhtml}"
+# Characters that XML cannot hold, which a PDF may still map a glyph to.
+_NOT_XML = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]")
 
 
-def _length_mm(value: str | None) -> float | None:
-    match = _LENGTH.fullmatch(value or "")
-    return float(match.group(1)) * _MM_PER_UNIT[match.group(2) or "px"] if match else None
+def _figure_frame(structure: str, view_box: str | None) -> Frame | str:
+    """The drawing's frame from *structure*, which `pdfinfo -struct` printed of LibreOffice's
+    tagged PDF, in the user units of the page's SVG, whose viewBox is *view_box*; or why it is
+    unknown.
 
-
-def _svg_frame(root: ET.Element) -> Frame | None:
-    """The frame of the one drawing on a LibreOffice SVG page, in SVG user units."""
-    boxes = [node for node in root.iter() if node.get("class") == "BoundingBox"]
-    if len(boxes) != 1:
-        return None
+    The PDF measures up from the bottom of the page, the SVG down from the top. LibreOffice puts
+    the drawing in the middle of the page, so a frame that is not there was misread.
+    """
+    boxes = _BBOX.findall(structure)
+    if not boxes:
+        return "LibreOffice did not report the drawing's frame, as LibreOffice 7.4 and newer do"
+    if len(boxes) > 1:
+        return "LibreOffice reported more than one frame"
     try:
-        x, y, width, height = (
-            float(boxes[0].get(key, "")) for key in ("x", "y", "width", "height")
+        left, top, width, height = (
+            float(part) for part in re.split(r"[\s,]+", (view_box or "").strip())
         )
     except ValueError:
-        return None
-    return x, y, width, height
+        return "the page's viewBox is not four numbers"
+    x0, y0, x1, y1 = (float(value) for value in boxes[0])
+    # Allow for rounding.
+    if abs(x0 - (width - x1)) > 1 or abs(y0 - (height - y1)) > 1:
+        return "the drawing's frame is not in the middle of the page"
+    return left + x0, top + height - y1, x1 - x0, y1 - y0
 
 
-def _odg_frame(path: Path) -> Frame | None:
-    """The frame of the drawing on LibreOffice's page, as fractions of the page.
-
-    The PDF export has no shape information, so an ODG export of the same page supplies it.
-    """
+def _crop_svg(path: Path, frame: Frame) -> str | None:
+    """Crop the SVG page at *path* to *frame*, in user units; return why it could not be
+    cropped."""
     try:
-        with zipfile.ZipFile(path) as archive:
-            content = ET.fromstring(archive.read("content.xml"))
-            styles = ET.fromstring(archive.read("styles.xml"))
-    except OSError, KeyError, zipfile.BadZipFile, ET.ParseError:
-        return None
-    page = next(content.iter(_ODF_DRAW + "page"), None)
-    frames: list[ET.Element] = [] if page is None else page.findall(_ODF_DRAW + "frame")
-    if page is None or len(frames) != 1:
-        return None
-    master = next(
-        (
-            node
-            for node in styles.iter(_ODF_STYLE + "master-page")
-            if node.get(_ODF_STYLE + "name") == page.get(_ODF_DRAW + "master-page-name")
-        ),
-        None,
-    )
-    layout = next(
-        (
-            node
-            for node in styles.iter(_ODF_STYLE + "page-layout")
-            if master is not None
-            and node.get(_ODF_STYLE + "name") == master.get(_ODF_STYLE + "page-layout-name")
-        ),
-        None,
-    )
-    properties = None if layout is None else layout.find(_ODF_STYLE + "page-layout-properties")
-    if properties is None:
-        return None
-    page_width = _length_mm(properties.get(_ODF_FO + "page-width"))
-    page_height = _length_mm(properties.get(_ODF_FO + "page-height"))
-    x, y, width, height = (
-        _length_mm(frames[0].get(_ODF_SVG + key)) for key in ("x", "y", "width", "height")
-    )
-    if not page_width or not page_height or x is None or y is None or not width or not height:
-        return None
-    return x / page_width, y / page_height, width / page_width, height / page_height
-
-
-def _crop_svg(path: Path, frame: Frame, *, fraction: bool = False) -> str | None:
-    """Crop the SVG page at *path* to *frame*, given in user units or as fractions of the page;
-    return why it could not be cropped."""
-    try:
-        # Its line endings are kept as LibreOffice wrote them.
+        # Its line endings are kept as pdftocairo wrote them.
         text = path.read_text(encoding="utf-8", newline="")
     except (OSError, UnicodeDecodeError) as error:
         return f"the SVG could not be read: {error}"
@@ -409,9 +379,6 @@ def _crop_svg(path: Path, frame: Frame, *, fraction: bool = False) -> str | None
     if sizes[0] is None or sizes[1] is None or page_width <= 0 or page_height <= 0:
         return "the page's size is not a length"
     x, y, width, height = frame
-    if fraction:
-        x, y = left + x * page_width, top + y * page_height
-        width, height = width * page_width, height * page_height
     # Allow for rounding at the page's edges, but never cut into a drawing.
     slack_x, slack_y = page_width / 100, page_height / 100
     if (
@@ -458,7 +425,7 @@ def _size_in_points(path: Path) -> None:
         # Its line endings are kept as pdftocairo wrote them.
         text = path.read_text(encoding="utf-8", newline="")
     except (OSError, UnicodeDecodeError) as error:
-        raise ConversionError(f"PDF-to-SVG fallback SVG could not be read: {error}") from error
+        raise ConversionError(f"PDF-to-SVG conversion's SVG could not be read: {error}") from error
     start = re.search(r"<svg\b[^>]*>", text)
     if start is None:
         return
@@ -470,132 +437,204 @@ def _size_in_points(path: Path) -> None:
 
 # A converted drawing's SVG, or why it could not be converted, and notes on the conversion.
 VectorResult = tuple[bytes | str, list[str]]
-# The notes: LibreOffice's SVG export failed, and the PDF route is tried; or it worked, but the
-# drawing could not be cut from LibreOffice's page.
-_FALLBACK = "trying the PDF/pdftocairo vector fallback"
+# The notes: the drawing could not be cut from LibreOffice's page, which the Markdown shows; or
+# its words could not be kept searchable, a detail.
 _WHOLE_PAGE = "kept LibreOffice's whole page around the drawing"
+_UNSEARCHABLE = "its text is not searchable"
+
+
+def _number(value: float) -> str:
+    return f"{value:.2f}".rstrip("0").rstrip(".")
+
+
+def _vertical(boxes: list[tuple[float, float, float, float, str]]) -> bool:
+    """Whether the words in *boxes*, a line of them, read up or down rather than across."""
+    if len(boxes) > 1:
+        # Vertical words stack in a column; horizontal words stand side by side.
+        return max(box[0] for box in boxes) < min(box[2] for box in boxes)
+    left, top, right, bottom, text = boxes[0]
+    return bottom - top > 1.8 * (right - left) and len(text) > 2
+
+
+def _text_layer(words: str) -> str:
+    """An invisible SVG group of the words that `pdftotext -bbox-layout` found, given as its
+    XHTML *words*, each over the place where it is drawn; or "" if there are none.
+
+    A line is a text element whose words are stretched over their boxes, so that a PDF of the
+    page finds and selects them where they show. A line's box spans its font's ascent and
+    descent: the baseline is about a fifth of the way from the descent's side, and the font's
+    size about 85% of the box across the line. A vertical line turns to read up the page, or
+    down when its words go down.
+    """
+    group = ET.Element("g", {"fill-opacity": "0", "font-family": "sans-serif"})
+    for line in ET.fromstring(_NOT_XML.sub("", words)).iter(_XHTML + "line"):
+        boxes: list[tuple[float, float, float, float, str]] = []
+        for word in line.iter(_XHTML + "word"):
+            text = " ".join((word.text or "").split())
+            try:
+                left, top, right, bottom = (
+                    float(word.get(edge, "")) for edge in ("xMin", "yMin", "xMax", "yMax")
+                )
+            except ValueError:
+                continue
+            if text and right > left and bottom > top:
+                boxes.append((left, top, right, bottom, text))
+        if not boxes:
+            continue
+        left, top = min(box[0] for box in boxes), min(box[1] for box in boxes)
+        right, bottom = max(box[2] for box in boxes), max(box[3] for box in boxes)
+        # Each word's start along the line, its length and its text.
+        spans: list[tuple[float, float, str]]
+        if not _vertical(boxes):
+            size = bottom - top
+            place = {"y": _number(bottom - 0.22 * size)}
+            spans = [(box[0], box[2] - box[0], box[4]) for box in boxes]
+        elif len(boxes) == 1 or boxes[0][1] > boxes[-1][1]:
+            size = right - left
+            place = {
+                "transform": f"translate({_number(right - 0.22 * size)} {_number(bottom)}) "
+                "rotate(-90)"
+            }
+            spans = [(bottom - box[3], box[3] - box[1], box[4]) for box in boxes]
+        else:
+            size = right - left
+            place = {
+                "transform": f"translate({_number(left + 0.22 * size)} {_number(top)}) rotate(90)"
+            }
+            spans = [(box[1] - top, box[3] - box[1], box[4]) for box in boxes]
+        element = ET.SubElement(group, "text", {**place, "font-size": _number(0.85 * size)})
+        for index, (start, length, text) in enumerate(spans):
+            span = ET.SubElement(
+                element,
+                "tspan",
+                {
+                    "x": _number(start),
+                    "textLength": _number(length),
+                    "lengthAdjust": "spacingAndGlyphs",
+                },
+            )
+            span.text = text
+            # Words apart, so that a phrase can be found.
+            span.tail = " " if index < len(spans) - 1 else None
+    return ET.tostring(group, encoding="unicode") if len(group) else ""
+
+
+def _add_text_layer(svg: Path, words: Path) -> None:
+    """Add the invisible layer of the words that pdftotext wrote to *words* to *svg*."""
+    layer = _text_layer(words.read_text(encoding="utf-8", errors="replace"))
+    if not layer:
+        return
+    # Its line endings are kept as pdftocairo wrote them.
+    text = svg.read_text(encoding="utf-8", newline="")
+    end = text.rfind("</svg>")
+    if end < 0:
+        raise ConversionError(f"SVG has no </svg> end tag: {svg}")
+    svg.write_text(text[:end] + layer + text[end:], encoding="utf-8", newline="")
+
+
+def _produced(path: Path) -> bool:
+    return path.is_file() and path.stat().st_size > 0
+
+
+def _page_svg(
+    pdf: Path, work: Path, findings: list[str], *, cairo: str, info: str, pdftotext: str | None
+) -> bytes:
+    """The SVG of LibreOffice's page *pdf*, cropped to its drawing, with its words searchable.
+
+    It is written in *work*; what could not be done is noted in *findings*.
+    """
+    svg, words = work / f"{pdf.stem}.svg", work / f"{pdf.stem}.html"
+    # Its warnings concern our intermediate PDF, which users cannot act on.
+    _reference.run_command([cairo, "-svg", str(pdf), str(svg)], "PDF-to-SVG conversion", quiet=True)
+    if not _produced(svg):
+        raise ConversionError("PDF-to-SVG conversion produced no SVG")
+    _size_in_points(svg)
+    view_box = validate_svg(svg).get("viewBox")
+    try:
+        structure = _reference.run_command(
+            [info, "-struct", str(pdf)], "EMF frame lookup", quiet=True
+        )
+    except ConversionError as error:
+        problem: str | None = str(error)
+    else:
+        frame = _figure_frame(structure, view_box)
+        problem = frame if isinstance(frame, str) else _crop_svg(svg, frame)
+    if problem is not None:
+        findings.append(f"{_WHOLE_PAGE}: {problem}")
+    if pdftotext is None:
+        findings.append(f"{_UNSEARCHABLE}: Poppler's pdftotext is not installed")
+    else:
+        try:
+            _reference.run_command(
+                [pdftotext, "-bbox-layout", "-enc", "UTF-8", str(pdf), str(words)],
+                "EMF text lookup",
+                quiet=True,
+            )
+            _add_text_layer(svg, words)
+        except (ConversionError, ET.ParseError, OSError, ValueError) as error:
+            findings.append(f"{_UNSEARCHABLE}: {error}")
+    validate_svg(svg)
+    return svg.read_bytes()
 
 
 def _convert_vectors(drawings: dict[str, tuple[bytes, str]], work: Path) -> dict[str, VectorResult]:
     """Convert EMF/WMF drawings, by name, to SVGs cropped to each drawing.
 
-    One LibreOffice run with one profile exports every drawing as SVG. The drawings it could not
-    export take the PDF fallback together: one PDF run, one ODG run for their frames, and
-    pdftocairo for each.
+    One LibreOffice run with one profile exports every drawing as a tagged PDF; Poppler turns
+    each into an SVG with pdftocairo, finds its frame with pdfinfo and its words with pdftotext.
     """
     office = executables.libreoffice()
+    cairo, info = executables.poppler("pdftocairo"), executables.poppler("pdfinfo")
     if office is None:
         missing = "EMF conversion requires LibreOffice/soffice; other images do not"
         return {name: (missing, []) for name in drawings}
-    sources = work / "sources"
+    if cairo is None or info is None:
+        tools = " and ".join(
+            name for name, path in (("pdftocairo", cairo), ("pdfinfo", info)) if path is None
+        )
+        missing = f"EMF conversion requires Poppler's {tools}; other images do not"
+        return {name: (missing, []) for name in drawings}
+    pdftotext = executables.poppler("pdftotext")
+    sources, pdfs, svgs = work / "sources", work / "pdf", work / "svg"
     sources.mkdir(parents=True)
+    pdfs.mkdir()
+    svgs.mkdir()
     paths: dict[str, Path] = {}
     for name, (data, suffix) in drawings.items():
         paths[name] = sources / f"{name}{suffix}"
         paths[name].write_bytes(data)
-    profile = (work / "profile").as_uri()
-
-    def export(
-        kind: str, names: list[str], description: str
-    ) -> tuple[Path, ConversionError | None]:
-        """Export the drawings *names* in one run; return the folder and how the run failed.
-
-        LibreOffice's warnings on success (such as a missing Java runtime) are not shown.
-        """
-        folder = work / kind
-        folder.mkdir()
-        command = [office, f"-env:UserInstallation={profile}", "--headless", "--convert-to", kind]
-        try:
-            _reference.run_command(
-                [*command, "--outdir", str(folder), *(str(paths[name]) for name in names)],
-                description,
-                quiet=True,
-            )
-        except ConversionError as error:
-            return folder, error
-        return folder, None
-
-    def produced(path: Path) -> bool:
-        return path.is_file() and path.stat().st_size > 0
-
-    findings: dict[str, list[str]] = {name: [] for name in drawings}
-    results: dict[str, VectorResult] = {}
-    svgs: dict[str, Path] = {}
-    frames: dict[str, Frame | None] = {}
-    fallback: dict[str, ConversionError] = {}
-    folder, failure = export("svg", list(drawings), "EMF-to-SVG conversion")
-    for name in drawings:
-        svg = folder / f"{name}.svg"
-        try:
-            if not produced(svg):
-                raise failure or ConversionError("LibreOffice SVG export produced no nonempty SVG")
-            validate_svg(svg)
-        except ConversionError as error:
-            fallback[name] = error
-            findings[name].append(f"{error}; {_FALLBACK}")
-            continue
-        svgs[name] = svg
-        frames[name] = _svg_frame(ET.parse(svg).getroot())
-
-    if fallback:
-        cairo = executables.which("pdftocairo")
-        pdfs, failure = (
-            export("pdf", list(fallback), "EMF-to-PDF fallback conversion")
-            if cairo is not None
-            else (work / "pdf", None)
+    failure: ConversionError | None = None
+    try:
+        # LibreOffice's warnings on success (such as a missing Java runtime) are not shown.
+        _reference.run_command(
+            [
+                office,
+                f"-env:UserInstallation={(work / 'profile').as_uri()}",
+                "--headless",
+                "--convert-to",
+                _TAGGED_PDF,
+                "--outdir",
+                str(pdfs),
+                *(str(path) for path in paths.values()),
+            ],
+            "EMF-to-PDF conversion",
+            quiet=True,
         )
-        cairo_folder = work / "cairo"
-        cairo_folder.mkdir()
-        for name, direct_error in fallback.items():
-            pdf, svg = pdfs / f"{name}.pdf", cairo_folder / f"{name}.svg"
-            try:
-                if cairo is None:
-                    raise ConversionError(
-                        f"{direct_error}; this EMF requires pdftocairo for PDF-to-SVG"
-                    )
-                if not produced(pdf):
-                    raise failure or ConversionError(
-                        f"{direct_error}; EMF fallback did not produce {pdf}"
-                    )
-                # Its warnings concern our intermediate PDF, which users cannot act on.
-                _reference.run_command(
-                    [cairo, "-svg", str(pdf), str(svg)],
-                    "PDF-to-SVG fallback conversion",
-                    quiet=True,
-                )
-                if not produced(svg):
-                    raise ConversionError(f"{direct_error}; PDF-to-SVG fallback produced no SVG")
-                validate_svg(svg)
-                _size_in_points(svg)
-            except ConversionError as error:
-                results[name] = (str(error), findings[name])
-                continue
-            svgs[name] = svg
-        located = [name for name in fallback if name in svgs]
-        if located:
-            odgs, _failure = export("odg", located, "EMF frame lookup")
-            for name in located:
-                frames[name] = _odg_frame(odgs / f"{name}.odg")
-
-    for name, svg in svgs.items():
-        fraction = name in fallback
-        frame = frames[name]
-        if frame is None:
-            problem: str | None = (
-                "LibreOffice did not report the drawing's frame"
-                if fraction
-                else "LibreOffice did not mark one drawing on it"
-            )
-        else:
-            problem = _crop_svg(svg, frame, fraction=fraction)
+    except ConversionError as error:
+        # The drawings that it exported still convert.
+        failure = error
+    results: dict[str, VectorResult] = {}
+    for name in drawings:
+        pdf = pdfs / f"{name}.pdf"
+        findings: list[str] = []
         try:
-            if problem is None:
-                validate_svg(svg)
-            else:
-                findings[name].append(f"{_WHOLE_PAGE}: {problem}")
-            results[name] = (svg.read_bytes(), findings[name])
+            if not _produced(pdf):
+                raise failure or ConversionError("LibreOffice exported no PDF of the drawing")
+            svg = _page_svg(pdf, svgs, findings, cairo=cairo, info=info, pdftotext=pdftotext)
         except (ConversionError, OSError) as error:
-            results[name] = (str(error), findings[name])
+            results[name] = (str(error), findings)
+        else:
+            results[name] = (svg, findings)
     return results
 
 
@@ -742,13 +781,12 @@ class ImageStager:
         cached = self._converted[digest]
         label = suffix[1:].upper()
         for message in self._findings.pop(digest, []):
-            if message.endswith(_FALLBACK):
-                # How the conversion turns out is reported next.
-                report.warn(f"{preferred.as_posix()}: {message}", section="detail")
-            else:
+            if message.startswith(_WHOLE_PAGE):
                 report.warn(
                     f"{preferred.as_posix()}: {message}", kind=_WHOLE_PAGE, section="markdown"
                 )
+            else:
+                report.warn(f"{preferred.as_posix()}: {message}", section="detail")
         if isinstance(cached, str):
             report.skipped(
                 "image-conversion",

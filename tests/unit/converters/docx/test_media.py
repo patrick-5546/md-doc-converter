@@ -1,9 +1,9 @@
-"""Word drawings: EMF conversion through LibreOffice and pdftocairo, and images' alt text."""
+"""Word drawings: EMF conversion through LibreOffice and Poppler, and images' alt text."""
 
 from __future__ import annotations
 
-import re
-import zipfile
+import html
+import json
 from collections.abc import Callable, Collection
 from pathlib import Path, PurePosixPath
 from xml.etree import ElementTree as ET
@@ -26,66 +26,67 @@ from tests.support.docx import (
     table,
 )
 
-# LibreOffice exports an EMF as a whole Letter page with the drawing in the middle.
-LIBREOFFICE_PAGE = (
-    '<?xml version="1.0" encoding="UTF-8"?>\n'
-    '<svg version="1.2" width="215.9mm" height="279.4mm" viewBox="0 0 21590 27940" '
-    'stroke-width="28.222" xmlns="http://www.w3.org/2000/svg">\n'
-    '<g class="Page"><g class="Graphic"><g id="id3">'
-    '<rect class="BoundingBox" stroke="none" fill="none" x="5937" y="8142" width="9716" '
-    'height="11655"/><path d="M 6000 8200 L 15000 19000"/></g></g></g>\n</svg>\n'
-)
+# pdftocairo's SVG of LibreOffice's page: US Letter, 612 by 792 points, the drawing in the middle.
 CAIRO_PAGE = (
     '<?xml version="1.0" encoding="UTF-8"?>\n'
     '<svg xmlns="http://www.w3.org/2000/svg" width="612pt" height="792pt" viewBox="0 0 612 792">'
     '\n<path d="M 300 390 L 310 400"/>\n</svg>\n'
 )
-ODF = (
-    'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" '
-    'xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" '
-    'xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" '
-    'xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" '
-    'xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0"'
+# What `pdfinfo -struct` prints of the tagged PDF: the frame of a 1 cm drawing in the middle.
+FIGURE = "Figure:\n   /Placement /Block\n   /BBox [291.827 381.827 320.173 410.173]\n"
+CROPPED_PAGE = CAIRO_PAGE.replace(
+    'width="612pt" height="792pt" viewBox="0 0 612 792"',
+    'width="28.346pt" height="28.346pt" viewBox="291.827 381.827 28.346 28.346"',
 )
-
-
-def _write_odg(path: Path) -> None:
-    """An ODG export of a 1 cm drawing on a Letter page, beside an unused A4 page layout."""
-    with zipfile.ZipFile(path, "w") as archive:
-        archive.writestr(
-            "content.xml",
-            f"<office:document-content {ODF}><office:body><office:drawing>"
-            '<draw:page draw:name="page1" draw:master-page-name="Default">'
-            '<draw:frame svg:width="1cm" svg:height="1cm" svg:x="10.294cm" svg:y="13.469cm">'
-            "<draw:image/></draw:frame></draw:page></office:drawing></office:body>"
-            "</office:document-content>",
-        )
-        archive.writestr(
-            "styles.xml",
-            f"<office:document-styles {ODF}><office:automatic-styles>"
-            '<style:page-layout style:name="PM0">'
-            '<style:page-layout-properties fo:page-width="21cm" fo:page-height="29.7cm"/>'
-            '</style:page-layout><style:page-layout style:name="PM1">'
-            '<style:page-layout-properties fo:page-width="21.59cm" fo:page-height="27.94cm"/>'
-            "</style:page-layout></office:automatic-styles><office:master-styles>"
-            '<style:master-page style:name="Default" style:page-layout-name="PM1"/>'
-            "</office:master-styles></office:document-styles>",
-        )
-
-
 INVALID_SVG = '<svg xmlns="http://www.w3.org/2000/svg"><path clip-path="url(#none)"/></svg>'
-# What each step writes for a drawing: "svg" (the direct export) and "cairo" an SVG or nothing,
-# "pdf" and "odg" whether LibreOffice exports them.
+# A word that pdftotext found: its left, top, right and bottom edges, and its text.
+Word = tuple[float, float, float, float, str]
+
+
+def words_page(*lines: list[Word]) -> str:
+    """What `pdftotext -bbox-layout` writes of a page with *lines* of words."""
+    blocks = "".join(
+        "<block><line>"
+        + "".join(
+            f'<word xMin="{left}" yMin="{top}" xMax="{right}" yMax="{bottom}">'
+            f"{html.escape(text, quote=False)}</word>"
+            for left, top, right, bottom, text in line
+        )
+        + "</line></block>"
+        for line in lines
+    )
+    return (
+        '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" '
+        '"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">'
+        '<html xmlns="http://www.w3.org/1999/xhtml">\n<head>\n<title></title>\n</head>\n<body>\n'
+        f'<doc>\n<page width="612.000000" height="792.000000">\n<flow>{blocks}</flow>\n</page>\n'
+        "</doc>\n</body>\n</html>\n"
+    )
+
+
+NO_WORDS = words_page()
+# A line of two words across the drawing, and the invisible copy that keeps them searchable.
+LINE = [(295.0, 390.0, 305.0, 398.0, "Cache"), (306.0, 390.0, 316.0, 398.0, "line")]
+LAYER = (
+    '<g fill-opacity="0" font-family="sans-serif"><text y="396.24" font-size="6.8">'
+    '<tspan x="295" textLength="10" lengthAdjust="spacingAndGlyphs">Cache</tspan> '
+    '<tspan x="306" textLength="10" lengthAdjust="spacingAndGlyphs">line</tspan></text></g>'
+)
+# What each tool writes for a drawing: "pdf" whether LibreOffice exports one; "cairo" and
+# "words" what pdftocairo and pdftotext write, or None for nothing; "struct" what pdfinfo
+# prints. False makes a tool fail.
 Outputs = dict[str, str | bool | None]
+DEFAULTS: Outputs = {"pdf": True, "cairo": CAIRO_PAGE, "struct": FIGURE, "words": NO_WORDS}
+POPPLER = {"pdftocairo": "cairo", "pdfinfo": "struct", "pdftotext": "words"}
 
 
 class FakeDrawingTools:
-    """LibreOffice and pdftocairo stand-ins that write each drawing's outputs and record calls.
+    """LibreOffice and Poppler stand-ins that write each drawing's outputs and record calls.
 
     An instance replaces `run_command`, which runs the real tools.
     """
 
-    def __init__(self, outputs: dict[str, Outputs], failing: str | None = None) -> None:
+    def __init__(self, outputs: dict[str, Outputs], failing: bool) -> None:
         self.outputs = outputs
         self.failing = failing
         self.calls: list[list[str]] = []
@@ -93,31 +94,31 @@ class FakeDrawingTools:
     def __call__(self, args: list[str], description: str, *, quiet: bool = False) -> str:
         assert quiet, "drawing conversions must not show the tools' warnings on success"
         self.calls.append(args)
-        if args[1] == "-svg":
-            written = self.outputs[Path(args[2]).stem].get("cairo")
-            if isinstance(written, str):
-                Path(args[3]).write_text(written, encoding="utf-8", newline="\n")
+        crash = _models.ConversionError(f"{description} failed: synthetic crash")
+        tool = Path(args[0]).name
+        if tool not in POPPLER:
+            folder = Path(args[args.index("--outdir") + 1])
+            for source in args[args.index("--outdir") + 2 :]:
+                if self.output(Path(source).stem, "pdf"):
+                    (folder / f"{Path(source).stem}.pdf").write_bytes(b"synthetic mocked PDF")
+            if self.failing:
+                raise crash
             return ""
-        kind = args[args.index("--convert-to") + 1]
-        folder = Path(args[args.index("--outdir") + 1])
-        for source in args[args.index("--outdir") + 2 :]:
-            name = Path(source).stem
-            written = self.outputs[name].get(kind, kind != "svg")
-            if kind == "svg" and isinstance(written, str):
-                (folder / f"{name}.svg").write_text(written, encoding="utf-8", newline="\n")
-            elif kind == "pdf" and written:
-                (folder / f"{name}.pdf").write_bytes(b"synthetic mocked PDF")
-            elif kind == "odg" and written:
-                _write_odg(folder / f"{name}.odg")
-        if kind == self.failing:
-            raise _models.ConversionError(f"{description} failed: synthetic crash")
+        pdf = next(Path(arg) for arg in args if arg.endswith(".pdf"))
+        written = self.output(pdf.stem, POPPLER[tool])
+        if written is False:
+            raise crash
+        if tool == "pdfinfo":
+            return str(written)
+        if isinstance(written, str):
+            Path(args[-1]).write_text(written, encoding="utf-8", newline="\n")
         return ""
 
+    def output(self, name: str, kind: str) -> str | bool | None:
+        return self.outputs[name].get(kind, DEFAULTS[kind])
+
     def kinds(self) -> list[str]:
-        return [
-            "cairo" if call[1] == "-svg" else call[call.index("--convert-to") + 1]
-            for call in self.calls
-        ]
+        return [POPPLER.get(Path(call[0]).name, "pdf") for call in self.calls]
 
     def inputs(self, index: int) -> list[str]:
         call = self.calls[index]
@@ -132,11 +133,11 @@ Convert = Callable[..., tuple[Results, FakeDrawingTools]]
 @pytest.fixture
 def convert(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> Convert:
     """Convert one synthetic drawing per name in *outputs* with the native tools faked;
-    *missing* names tools that are not installed, *failing* the kind of export whose run fails.
-    Return each result, as text, and the fakes."""
+    *missing* names tools that are not installed, and *failing* makes LibreOffice's run fail
+    after its exports. Return each result, as text, and the fakes."""
 
     def run(
-        outputs: dict[str, Outputs], *, missing: Collection[str] = (), failing: str | None = None
+        outputs: dict[str, Outputs], *, missing: Collection[str] = (), failing: bool = False
     ) -> tuple[Results, FakeDrawingTools]:
         tools = FakeDrawingTools(outputs, failing)
 
@@ -162,75 +163,67 @@ def convert(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.Monkey
     return run
 
 
-CROPPED_PAGE = LIBREOFFICE_PAGE.replace(
-    'width="215.9mm" height="279.4mm" viewBox="0 0 21590 27940"',
-    'width="97.16mm" height="116.55mm" viewBox="5937 8142 9716 11655"',
-)
-# The ODG frame is at 10.294 cm, 13.469 cm on a 21.59 cm by 27.94 cm page of 612 by 792 pt.
-CROPPED_CAIRO_PAGE = CAIRO_PAGE.replace(
-    'width="612pt" height="792pt" viewBox="0 0 612 792"',
-    'width="28.3465pt" height="28.3465pt" viewBox="291.7984 381.7984 28.3465 28.3465"',
-)
-# LibreOffice pages on which the drawing's frame cannot be found.
-TWO_FRAMES_PAGE = LIBREOFFICE_PAGE.replace(
-    "<path", '<rect class="BoundingBox" x="1" y="1" width="1" height="1"/><path'
-)
-OFF_PAGE = LIBREOFFICE_PAGE.replace('x="5937"', 'x="21000"')
+def whole_page(reason: str) -> str:
+    return f"kept LibreOffice's whole page around the drawing: {reason}"
 
 
-def test_libreoffice_page_is_cropped_to_the_drawing(convert: Convert) -> None:
-    results, tools = convert({"drawing": {"svg": LIBREOFFICE_PAGE}})
+def test_the_page_is_cropped_to_the_frame_of_its_drawing(convert: Convert) -> None:
+    results, tools = convert({"drawing": {}})
     assert results == {"drawing": (CROPPED_PAGE, [])}
-    assert tools.kinds() == ["svg"]
-
-
-def test_fallback_page_is_cropped_to_the_frame_of_an_odg_export(convert: Convert) -> None:
-    results, tools = convert({"drawing": {"svg": None, "cairo": CAIRO_PAGE}})
-    result, findings = results["drawing"]
-    assert result == CROPPED_CAIRO_PAGE
-    assert len(findings) == 1
-    assert "trying the PDF/pdftocairo vector fallback" in findings[0]
-    assert tools.kinds() == ["svg", "pdf", "cairo", "odg"]
+    assert tools.kinds() == ["pdf", "cairo", "struct", "words"]
+    office = tools.calls[0]
+    target = office[office.index("--convert-to") + 1]
+    kind, filter_name, options = target.split(":", 2)
+    assert (kind, filter_name) == ("pdf", "draw_pdf_Export")
+    assert json.loads(options) == {"UseTaggedPDF": {"type": "boolean", "value": "true"}}
 
 
 @pytest.mark.parametrize(
-    ("reason", "outputs", "expected"),
+    ("structure", "reason"),
     [
         pytest.param(
-            "LibreOffice did not mark one drawing on it",
-            {"svg": TWO_FRAMES_PAGE},
-            TWO_FRAMES_PAGE,
-            id="two-drawings-marked",
+            "Figure\n",
+            "LibreOffice did not report the drawing's frame, as LibreOffice 7.4 and newer do",
+            id="no-frame",
+        ),
+        pytest.param(FIGURE * 2, "LibreOffice reported more than one frame", id="two-frames"),
+        pytest.param(
+            FIGURE.replace("291.827 381.827 320.173", "100 381.827 128.346"),
+            "the drawing's frame is not in the middle of the page",
+            id="left-of-the-middle",
         ),
         pytest.param(
+            FIGURE.replace("381.827 320.173 410.173", "300 320.173 328.346"),
+            "the drawing's frame is not in the middle of the page",
+            id="below-the-middle",
+        ),
+        pytest.param(
+            "   /BBox [-20 -20 632 812]\n",
             "the drawing's frame is not on the page",
-            {"svg": OFF_PAGE},
-            OFF_PAGE,
-            id="frame-off-the-page",
+            id="beyond-the-page",
         ),
-        pytest.param(
-            "LibreOffice did not report the drawing's frame",
-            {"svg": None, "cairo": CAIRO_PAGE, "odg": False},
-            CAIRO_PAGE,
-            id="no-odg-frame",
-        ),
+        pytest.param(False, "EMF frame lookup failed: synthetic crash", id="pdfinfo-fails"),
     ],
 )
 def test_page_is_kept_whole_when_the_drawing_frame_is_unknown(
-    reason: str, outputs: Outputs, expected: str, convert: Convert
+    structure: str | bool, reason: str, convert: Convert
 ) -> None:
-    results, _tools = convert({"drawing": outputs})
-    result, findings = results["drawing"]
-    assert result == expected
-    assert findings[-1] == f"kept LibreOffice's whole page around the drawing: {reason}"
+    results, _tools = convert({"drawing": {"struct": structure}})
+    assert results["drawing"] == (CAIRO_PAGE, [whole_page(reason)])
+
+
+def test_frames_are_read_as_pdfinfo_prints_numbers(convert: Convert) -> None:
+    exponent = FIGURE.replace("291.827 381.827", "2.91827e+02 3.81827E2")
+    results, _tools = convert({"drawing": {"struct": exponent}})
+    assert results["drawing"] == (CROPPED_PAGE, [])
 
 
 def test_a_unitless_pdftocairo_page_is_measured_in_points(convert: Convert) -> None:
     # Poppler before 25.04 with Cairo 1.17.6 or newer writes the page size without a unit.
     unitless = CAIRO_PAGE.replace('width="612pt" height="792pt"', 'width="612" height="792"')
-    cropped, _tools = convert({"drawing": {"svg": None, "cairo": unitless}})
-    assert cropped["drawing"][0] == CROPPED_CAIRO_PAGE
-    whole, _tools = convert({"drawing": {"svg": None, "cairo": unitless, "odg": False}})
+    cropped, _tools = convert({"drawing": {"cairo": unitless}})
+    assert cropped["drawing"][0] == CROPPED_PAGE
+    whole, _tools = convert({"drawing": {"cairo": unitless, "struct": ""}})
     assert whole["drawing"][0] == CAIRO_PAGE
 
 
@@ -265,104 +258,199 @@ def test_only_a_unitless_page_size_gets_points(before: str, after: str, tmp_path
 
 @pytest.mark.parametrize("newline", [b"\n", b"\r\n"], ids=["lf", "crlf"])
 def test_a_rewritten_svg_keeps_the_line_endings_of_its_tool(newline: bytes, tmp_path: Path) -> None:
-    def page(tag: bytes) -> bytes:
-        return newline.join((b"<?xml version='1.0'?>", tag, b"</svg>", b""))
+    def page(tag: bytes, layer: bytes = b"") -> bytes:
+        return newline.join((b"<?xml version='1.0'?>", tag, layer + b"</svg>", b""))
 
     path = tmp_path / "page.svg"
     path.write_bytes(page(b'<svg width="10" height="20" viewBox="0 0 10 20">'))
     _media._size_in_points(path)
     assert path.read_bytes() == page(b'<svg width="10pt" height="20pt" viewBox="0 0 10 20">')
-    assert _media._crop_svg(path, (0, 0, 0.5, 0.5), fraction=True) is None
-    assert path.read_bytes() == page(b'<svg width="5pt" height="10pt" viewBox="0 0 5 10">')
+    assert _media._crop_svg(path, (0, 0, 5, 10)) is None
+    cropped = b'<svg width="5pt" height="10pt" viewBox="0 0 5 10">'
+    assert path.read_bytes() == page(cropped)
+    words = tmp_path / "page.html"
+    words.write_text(words_page(LINE), encoding="utf-8")
+    _media._add_text_layer(path, words)
+    assert path.read_bytes() == page(cropped, LAYER.encode())
 
 
 def test_all_drawings_convert_in_one_libreoffice_run(convert: Convert) -> None:
-    results, tools = convert({name: {"svg": LIBREOFFICE_PAGE} for name in ("a", "b", "c")})
+    results, tools = convert({name: {} for name in ("a", "b", "c")})
     assert results == {name: (CROPPED_PAGE, []) for name in ("a", "b", "c")}
-    assert tools.kinds() == ["svg"]
+    assert tools.kinds() == ["pdf", *["cairo", "struct", "words"] * 3]
     assert tools.inputs(0) == ["a", "b", "c"]
 
 
-def test_only_drawings_that_svg_export_missed_take_the_fallback_together(
-    convert: Convert,
-) -> None:
-    results, tools = convert(
-        {
-            "a": {"svg": LIBREOFFICE_PAGE},
-            "b": {"svg": None, "cairo": CAIRO_PAGE},
-            "c": {"svg": INVALID_SVG, "cairo": CAIRO_PAGE},
-        }
-    )
-    assert results["a"] == (CROPPED_PAGE, [])
-    for name, reason in (
-        ("b", "LibreOffice SVG export produced no nonempty SVG"),
-        ("c", "Unresolved SVG resource"),
-    ):
-        result, findings = results[name]
-        assert result == CROPPED_CAIRO_PAGE
-        [finding] = findings
-        assert reason in finding
-        assert finding.endswith("; trying the PDF/pdftocairo vector fallback")
-    assert tools.kinds() == ["svg", "pdf", "cairo", "cairo", "odg"]
-    assert [tools.inputs(index) for index in (0, 1, 4)] == [
-        ["a", "b", "c"],
-        ["b", "c"],
-        ["b", "c"],
-    ]
-    profiles = {call[1] for call in tools.calls if call[1] != "-svg"}
-    assert len(profiles) == 1
-
-
-def test_a_failed_fallback_affects_only_its_drawing(convert: Convert) -> None:
-    results, tools = convert(
-        {
-            "a": {"svg": None, "pdf": False},
-            "b": {"svg": None, "cairo": CAIRO_PAGE},
-        }
-    )
-    result, findings = results["a"]
-    assert re.search(r"; EMF fallback did not produce .*a\.pdf$", result)
-    assert len(findings) == 1
-    assert results["b"][0] == CROPPED_CAIRO_PAGE
-    assert tools.kinds() == ["svg", "pdf", "cairo", "odg"]
-    assert tools.inputs(3) == ["b"]
-
-
 def test_a_failed_run_keeps_the_drawings_it_exported(convert: Convert) -> None:
-    results, _tools = convert(
-        {
-            "a": {"svg": LIBREOFFICE_PAGE},
-            "b": {"svg": None, "cairo": CAIRO_PAGE},
-        },
-        failing="svg",
-    )
-    assert results["a"] == (CROPPED_PAGE, [])
-    result, [finding] = results["b"]
-    assert result == CROPPED_CAIRO_PAGE
-    assert (
-        finding == "EMF-to-SVG conversion failed: synthetic crash; "
-        "trying the PDF/pdftocairo vector fallback"
-    )
+    results, _tools = convert({"a": {}, "b": {"pdf": False}}, failing=True)
+    assert results == {
+        "a": (CROPPED_PAGE, []),
+        "b": ("EMF-to-PDF conversion failed: synthetic crash", []),
+    }
+
+
+@pytest.mark.parametrize(
+    ("outputs", "error"),
+    [
+        pytest.param({"pdf": False}, "LibreOffice exported no PDF of the drawing", id="no-pdf"),
+        pytest.param(
+            {"cairo": False}, "PDF-to-SVG conversion failed: synthetic crash", id="cairo-fails"
+        ),
+        pytest.param({"cairo": None}, "PDF-to-SVG conversion produced no SVG", id="no-svg"),
+        pytest.param({"cairo": INVALID_SVG}, "Unresolved SVG resource in ", id="invalid-svg"),
+    ],
+)
+def test_a_failed_conversion_affects_only_its_drawing(
+    outputs: Outputs, error: str, convert: Convert
+) -> None:
+    results, _tools = convert({"a": outputs, "b": {}})
+    result, findings = results["a"]
+    assert error in result
+    assert findings == []
+    assert results["b"] == (CROPPED_PAGE, [])
 
 
 def test_missing_office_is_a_clear_conditional_failure(convert: Convert) -> None:
-    results, tools = convert(
-        {"a": {"svg": LIBREOFFICE_PAGE}, "b": {}}, missing=("libreoffice", "soffice")
-    )
+    results, tools = convert({"a": {}, "b": {}}, missing=("libreoffice", "soffice"))
     for result, findings in results.values():
         assert "requires LibreOffice" in result
         assert findings == []
     assert tools.calls == []
 
 
-def test_pdftocairo_is_needed_only_by_the_fallback(convert: Convert) -> None:
-    results, tools = convert(
-        {"a": {"svg": LIBREOFFICE_PAGE}, "b": {"svg": None, "cairo": CAIRO_PAGE}},
-        missing=("pdftocairo",),
-    )
-    assert results["a"] == (CROPPED_PAGE, [])
-    assert "this EMF requires pdftocairo for PDF-to-SVG" in results["b"][0]
-    assert tools.kinds() == ["svg"]
+@pytest.mark.parametrize(
+    ("missing", "tools"),
+    [
+        pytest.param(("pdftocairo",), "pdftocairo and pdfinfo", id="no-poppler"),
+        pytest.param(("pdfinfo",), "pdfinfo", id="no-pdfinfo"),
+    ],
+)
+def test_missing_poppler_is_a_clear_conditional_failure(
+    missing: tuple[str, ...], tools: str, convert: Convert
+) -> None:
+    results, fakes = convert({"a": {}}, missing=missing)
+    assert results == {"a": (f"EMF conversion requires Poppler's {tools}; other images do not", [])}
+    assert fakes.calls == []
+
+
+def test_the_words_of_a_drawing_stay_searchable(convert: Convert) -> None:
+    results, _tools = convert({"drawing": {"words": words_page(LINE)}})
+    assert results["drawing"] == (CROPPED_PAGE.replace("</svg>", LAYER + "</svg>"), [])
+
+
+@pytest.mark.parametrize(
+    ("missing", "outputs", "reason"),
+    [
+        pytest.param(("pdftotext",), {}, "Poppler's pdftotext is not installed", id="no-pdftotext"),
+        pytest.param(
+            (), {"words": False}, "EMF text lookup failed: synthetic crash", id="pdftotext-fails"
+        ),
+        pytest.param((), {"words": None}, "No such file or directory", id="no-words"),
+        pytest.param((), {"words": "<doc><line>"}, "no element found", id="unreadable-words"),
+    ],
+)
+def test_a_drawing_whose_words_cannot_be_read_keeps_its_svg(
+    missing: tuple[str, ...], outputs: Outputs, reason: str, convert: Convert
+) -> None:
+    results, tools = convert({"drawing": outputs}, missing=missing)
+    result, [finding] = results["drawing"]
+    assert result == CROPPED_PAGE
+    assert finding.startswith("its text is not searchable: ")
+    assert reason in finding
+    assert ("words" in tools.kinds()) == (not missing)
+
+
+def layer(*lines: list[Word]) -> ET.Element:
+    """The text layer of a page with *lines* of words, parsed."""
+    return ET.fromstring(_media._text_layer(words_page(*lines)))
+
+
+def test_a_line_of_words_is_one_text_element_over_their_boxes() -> None:
+    assert _media._text_layer(words_page(LINE)) == LAYER
+    assert _media._text_layer(NO_WORDS) == ""
+
+
+@pytest.mark.parametrize(
+    ("line", "transform", "starts"),
+    [
+        pytest.param(
+            [(100.0, 140.0, 110.0, 170.0, "Request"), (100.0, 100.0, 110.0, 135.0, "Queue")],
+            "translate(107.8 170) rotate(-90)",
+            ["0", "35"],
+            id="up",
+        ),
+        pytest.param(
+            [(100.0, 100.0, 110.0, 135.0, "Request"), (100.0, 140.0, 110.0, 170.0, "Queue")],
+            "translate(102.2 100) rotate(90)",
+            ["0", "40"],
+            id="down",
+        ),
+        pytest.param(
+            [(100.0, 100.0, 110.0, 135.0, "Request")],
+            "translate(107.8 135) rotate(-90)",
+            ["0"],
+            id="one-word-up",
+        ),
+    ],
+)
+def test_a_vertical_line_turns_to_read_along_its_words(
+    line: list[Word], transform: str, starts: list[str]
+) -> None:
+    [text] = layer(line)
+    assert text.attrib == {"transform": transform, "font-size": "8.5"}
+    assert [span.get("x") for span in text] == starts
+    assert [span.get("textLength") for span in text] == [
+        f"{bottom - top:g}" for _left, top, _right, bottom, _text in line
+    ]
+
+
+def test_short_words_side_by_side_are_a_horizontal_line() -> None:
+    # Narrower than tall, but beside each other: a horizontal line of short words.
+    [text] = layer([(100.0, 100.0, 104.0, 110.0, "a"), (106.0, 100.0, 110.0, 110.0, "b")])
+    assert "transform" not in text.attrib
+    assert [span.text for span in text] == ["a", "b"]
+
+
+def test_layer_text_is_escaped_and_unusable_words_are_dropped() -> None:
+    words = words_page(
+        [
+            (100.0, 100.0, 110.0, 110.0, "a<b&c"),
+            (111.0, 100.0, 120.0, 110.0, "x\x03y"),
+            (121.0, 100.0, 121.0, 110.0, "flat"),
+            (122.0, 100.0, 130.0, 110.0, "bad"),
+            (131.0, 100.0, 140.0, 110.0, " "),
+        ]
+    ).replace('xMin="122.0"', 'xMin="wide"')
+    layer = _media._text_layer(words)
+    assert [span.text for span in ET.fromstring(layer).iter("tspan")] == ["a<b&c", "xy"]
+    assert ">a&lt;b&amp;c<" in layer
+
+
+def test_a_drawing_s_notes_are_reported_by_kind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    notes = [
+        f"{_media._WHOLE_PAGE}: synthetic reason",
+        f"{_media._UNSEARCHABLE}: synthetic reason",
+    ]
+
+    def convert_vectors(
+        drawings: dict[str, tuple[bytes, str]], _work: Path
+    ) -> dict[str, _media.VectorResult]:
+        return dict.fromkeys(drawings, (b"<svg/>", notes))
+
+    monkeypatch.setattr(_media, "_convert_vectors", convert_vectors)
+    drawing = synthetic_emf()
+    report = TransformReport()
+    stager = _media.ImageStager(tmp_path, _package({"word/media/drawing.emf": drawing}))
+    try:
+        stager.publish("part:word/media/drawing.emf", drawing, PurePosixPath("d.emf"), report)
+    finally:
+        stager.close()
+    assert report.findings == [f"d.emf: {note}" for note in notes]
+    # Only the whole page shows in the Markdown; the unsearchable text is a detail.
+    assert report.kinds == {_media._WHOLE_PAGE: 1}
+    assert report.sections == {_media._WHOLE_PAGE: "markdown"}
 
 
 def _package(parts: dict[str, bytes], shown: Collection[str] = ()) -> _models.WordPackage:

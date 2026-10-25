@@ -1767,7 +1767,7 @@ def test_png_and_svg_do_not_require_office_or_poppler(
     original = executables.which
 
     def forbid_optional(name: str, path: str | None = None) -> str | None:
-        if name in {"libreoffice", "soffice", "pdftocairo"}:
+        if name in {"libreoffice", "soffice", "pdftocairo", "pdfinfo", "pdftotext"}:
             pytest.fail(f"Unnecessary optional dependency probe: {name}")
         return original(name, path)
 
@@ -2527,7 +2527,7 @@ def test_a_documents_drawings_convert_together_and_report_separately(
     ) -> dict[str, _media.VectorResult]:
         calls.append(sorted(suffix for _data, suffix in drawings.values()))
         return {
-            name: (SVG, ["synthetic note"] if suffix == ".wmf" else [])
+            name: (SVG, [f"{_media._WHOLE_PAGE}: synthetic reason"] if suffix == ".wmf" else [])
             for name, (_data, suffix) in drawings.items()
         }
 
@@ -2553,8 +2553,8 @@ def test_a_documents_drawings_convert_together_and_report_separately(
         "EMF to SVG": 2,
         "WMF to SVG": 1,
     }
-    assert "third.wmf: synthetic note" in warnings
-    assert warnings.count("synthetic note") == 1
+    assert f"third.wmf: {_media._WHOLE_PAGE}: synthetic reason" in warnings
+    assert warnings.count("synthetic reason") == 1
 
 
 def test_libreoffice_converts_the_drawings_of_the_body_while_pandoc_reads_it(

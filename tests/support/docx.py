@@ -387,26 +387,105 @@ def write_docx(
             archive.writestr(name, data)
 
 
-def synthetic_emf(variant: int = 0) -> bytes:
-    """A 10 mm square EMF drawing; each *variant*, up to 39, draws a different rectangle."""
-    records = [
-        struct.pack("<IIii", 27, 16, 0, 0),
-        struct.pack("<IIii", 54, 16, 100, 100),
-        struct.pack("<IIiiii", 43, 24, 10 + variant, 10 + variant, 90 - variant, 90 - variant),
-        struct.pack("<IIIII", 14, 20, 0, 0, 20),
-    ]
+def emf(records: list[bytes], width: int = 100, height: int = 100, *, handles: int = 1) -> bytes:
+    """An EMF drawing of *records*, *width* by *height* pixels of a device with ten pixels to
+    the millimetre; *handles* counts the objects that the records create, and the reserved one.
+    """
+    body = b"".join(records) + struct.pack("<IIIII", 14, 20, 0, 0, 20)
     header = b"".join(
         (
             struct.pack("<II", 1, 108),
-            struct.pack("<4i", 0, 0, 100, 100),
-            struct.pack("<4i", 0, 0, 1000, 1000),
-            struct.pack("<IIII", 0x464D4520, 0x10000, 108 + sum(map(len, records)), 5),
-            struct.pack("<HHIII", 1, 0, 0, 0, 0),
-            struct.pack("<4i", 100, 100, 10, 10),
-            struct.pack("<IIIii", 0, 0, 0, 10000, 10000),
+            struct.pack("<4i", 0, 0, width, height),
+            struct.pack("<4i", 0, 0, width * 10, height * 10),
+            struct.pack("<IIII", 0x464D4520, 0x10000, 108 + len(body), len(records) + 2),
+            struct.pack("<HHIII", handles, 0, 0, 0, 0),
+            struct.pack("<4i", width, height, width // 10, height // 10),
+            struct.pack("<IIIii", 0, 0, 0, width * 100, height * 100),
         )
     )
-    return header + b"".join(records)
+    return header + body
+
+
+def synthetic_emf(variant: int = 0) -> bytes:
+    """A 10 mm square EMF drawing; each *variant*, up to 39, draws a different rectangle."""
+    return emf(
+        [
+            struct.pack("<IIii", 27, 16, 0, 0),
+            struct.pack("<IIii", 54, 16, 100, 100),
+            struct.pack("<IIiiii", 43, 24, 10 + variant, 10 + variant, 90 - variant, 90 - variant),
+        ]
+    )
+
+
+def emf_text(x: int, y: int, text: str, *, glyphs: bool = False) -> bytes:
+    """EMR_EXTTEXTOUTW: *text* from *x*, *y*; with *glyphs*, its characters are glyph indices.
+
+    Without an array of the characters' advances, LibreOffice spaces them by the font.
+    """
+    string = text.encode("utf-16le")
+    string += b"\0" * (-len(string) % 4)
+    payload = b"".join(
+        (
+            struct.pack("<4i", 0, 0, -1, -1),
+            struct.pack("<Iff", 2, 0, 0),
+            struct.pack("<ii", x, y),
+            # The string follows the record's 76 bytes.
+            struct.pack("<III", len(text), 76, 0x10 if glyphs else 0),
+            struct.pack("<4i", 0, 0, -1, -1),
+            struct.pack("<I", 0),
+            string,
+        )
+    )
+    return struct.pack("<II", 84, 8 + len(payload)) + payload
+
+
+def text_emf(*lines: str, space_glyph: bool = False) -> bytes:
+    """A 60 mm by 20 mm EMF drawing of *lines* of Arial text, one below another.
+
+    With *space_glyph*, a space drawn by its glyph's index comes first, as Word draws some: then
+    LibreOffice's SVG export fails, where Arial is a substitute's name, as on Linux.
+    """
+    font = struct.pack("<iiiiiBBBBBBBB", -60, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0)
+    font += "Arial".encode("utf-16le").ljust(64, b"\0")
+    records = [
+        struct.pack("<III", 82, 104, 1) + font,
+        struct.pack("<III", 37, 12, 1),
+        struct.pack("<III", 18, 12, 1),
+    ]
+    if space_glyph:
+        records.append(emf_text(20, 20, "\x03", glyphs=True))
+    records += [emf_text(20, 20 + 70 * number, line) for number, line in enumerate(lines)]
+    return emf(records, 600, 200, handles=2)
+
+
+def bitmap_emf() -> bytes:
+    """A 30 mm by 15 mm EMF drawing of one 8 by 8 pixel bitmap, drawn twice, side by side.
+
+    LibreOffice 26's SVG export writes the second as a reference to a bitmap that it leaves out.
+    """
+    bits = b"".join(
+        bytes((0, 0, 255)) if (row + column) % 2 else bytes((255, 128, 0))
+        for row in range(8)
+        for column in range(8)
+    )
+    info = struct.pack("<IiiHHIIiiII", 40, 8, 8, 1, 24, 0, len(bits), 0, 0, 0, 0)
+
+    def draw(x: int) -> bytes:
+        # The bitmap's header and bits follow the record's 80 bytes.
+        payload = b"".join(
+            (
+                struct.pack("<4i", x, 25, x + 99, 124),
+                struct.pack("<6i", x, 25, 0, 0, 8, 8),
+                struct.pack("<4I", 80, len(info), 80 + len(info), len(bits)),
+                struct.pack("<II", 0, 0x00CC0020),
+                struct.pack("<ii", 100, 100),
+                info,
+                bits,
+            )
+        )
+        return struct.pack("<II", 81, 8 + len(payload)) + payload
+
+    return emf([draw(25), draw(175)], 300, 150)
 
 
 def numbered(text: str, level: int = 0, *, number: str = "1") -> ET.Element:

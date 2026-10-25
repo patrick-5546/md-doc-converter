@@ -77,7 +77,7 @@ tell how each part works.
 
 Development needs Linux x86_64 or Windows x86_64,
 [uv](https://docs.astral.sh/uv/), GNU make 4 or newer and Git, plus Node.js
-22.13 or newer for the render suite, and LibreOffice and Poppler (`pdftocairo`)
+22.13 or newer for the render suite, and LibreOffice 7.4 or newer and Poppler
 for its EMF tests. uv installs Python (version from `.python-version`) and the
 locked dependencies in `uv.lock`. The `Makefile` runs each task through uv and
 sets `MD_DOC_CONVERTER_HOME` to `.toolchain/` in the checkout unless it is

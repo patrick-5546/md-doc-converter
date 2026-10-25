@@ -19,10 +19,10 @@ and PDF.
 - Python 3.15. uv installs it if needed; on a host that cannot reach GitHub,
   where uv downloads Python from, install Python 3.15 another way.
 - [Node.js](https://nodejs.org/) 22.13 or newer, with npm, for rendering.
-- Optional: LibreOffice (`libreoffice` or `soffice`, or on Windows where its
-  installer puts it) and Poppler (`pdftocairo`) to convert EMF and WMF drawings
-  in Word documents to SVG, and Git to skip Git-ignored files when converting or
-  rendering a folder.
+- Optional: LibreOffice 7.4 or newer (`libreoffice` or `soffice`, or on Windows
+  where its installer puts it) and Poppler (`pdftocairo`, `pdfinfo` and
+  `pdftotext`) to convert EMF and WMF drawings in Word documents to SVG, and Git
+  to skip Git-ignored files when converting or rendering a folder.
 
 `md-doc-converter setup` installs the rest, including Pandoc for Word
 conversion and rendering; see [Toolchain](#toolchain). Excel and CSV conversion

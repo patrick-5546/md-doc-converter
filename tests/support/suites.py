@@ -29,8 +29,8 @@ from tests.support.project import PROJECT_ROOT
 RENDERING = PROJECT_ROOT / "tests" / "rendering"
 SETUP_PANDOC = "run `make setup-pandoc`"
 SYMBOLIC_LINKS = "symbolic links (on Windows, turn on Developer Mode to create them)"
-# The Poppler utilities that the render suite runs: pdftocairo converts EMF drawings, and
-# the others read the PDFs it prints.
+# The Poppler utilities that the render suite runs: pdftocairo, pdfinfo and pdftotext convert
+# EMF drawings, and they and the others read the PDFs that it prints.
 POPPLER = ("pdftocairo", "pdfinfo", "pdftotext", "pdftohtml", "pdffonts")
 
 
