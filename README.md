@@ -130,9 +130,8 @@ Windows `%LOCALAPPDATA%\md-doc-converter`:
   md-doc-converter is tested with, from its GitHub release, verified against a
   pinned SHA-256 checksum;
 - `node/`, for rendering: the Mermaid, KaTeX and Puppeteer npm packages from
-  the lockfile bundled with md-doc-converter, which holds only releases at
-  least a week old, installed without their install scripts or optional
-  packages, which none needs;
+  the lockfile bundled with md-doc-converter, installed without their install
+  scripts or optional packages, which none needs;
 - `puppeteer/`, for rendering: chrome-headless-shell, the build of headless
   Chrome that the locked Puppeteer pins, which Mermaid and the PDF printer
   share.
@@ -148,10 +147,10 @@ reinstalls everything. To remove the toolchain, delete its directory; to remove
 the command, run `uv tool uninstall md-doc-converter`.
 
 npm uses your npm configuration, including proxies and registry mirrors; see
-[Package mirrors](#package-mirrors). On a
-host that cannot reach GitHub, download the archive for your platform,
-`pandoc-3.12.1-linux-amd64.tar.gz` or `pandoc-3.12.1-windows-x86_64.zip`, from
-the [Pandoc 3.12.1 release](https://github.com/jgm/pandoc/releases/tag/3.12.1)
+[Package mirrors](#package-mirrors). On a host that cannot reach GitHub,
+download the archive for your platform, `pandoc-3.12.1-linux-amd64.tar.gz` or
+`pandoc-3.12.1-windows-x86_64.zip`, from the
+[Pandoc 3.12.1 release](https://github.com/jgm/pandoc/releases/tag/3.12.1)
 another way into a folder and pass that folder to `setup`, which still verifies
 the archive's checksum:
 
@@ -174,39 +173,27 @@ printing it to PDF, needs no network.
 ## Package mirrors
 
 On a network that allows only a package mirror, such as an organization's proxy
-of PyPI and npm, set up each package manager for it:
+of PyPI and npm, point each package manager at it:
 
-- uv, which installs md-doc-converter, downloads from PyPI. It does not read
-  pip's settings, such as `PIP_INDEX_URL` or pip's configuration file, so name
-  the mirror's PyPI index in `UV_DEFAULT_INDEX` as you install:
-
-  ```sh
-  UV_DEFAULT_INDEX=https://mirror.example/pypi/simple/ uv tool install ./md-doc-converter
-  ```
-
-  In PowerShell:
-
-  ```powershell
-  $env:UV_DEFAULT_INDEX = "https://mirror.example/pypi/simple/"
-  uv tool install ./md-doc-converter
-  Remove-Item Env:UV_DEFAULT_INDEX
-  ```
-
-- npm, which `setup` runs, downloads from its configured registry, which may be
-  the mirror already. It fetches the locked packages from there, though the
-  bundled lockfile names `registry.npmjs.org`:
+- uv does not read pip's settings, such as `PIP_INDEX_URL`, so name the
+  mirror's PyPI index as you install:
 
   ```sh
-  npm config get registry
+  uv tool install --default-index https://mirror.example/pypi/simple/ ./md-doc-converter
+  ```
+
+- npm, which `setup` runs, fetches the locked packages from your configured
+  registry, though the bundled lockfile names `registry.npmjs.org`:
+
+  ```sh
   npm config set registry https://mirror.example/npm/
   ```
 
-Some mirrors hold a new release for a week while it is checked. The bundled npm
-lockfile holds only releases at least a week old, so such a mirror has every
-package it names, and `uv tool install` takes the newest release of openpyxl,
-md-doc-converter's one Python dependency, that the mirror has. For a checkout,
-see [Package mirrors](docs/development.md#package-mirrors) in the development
-guide.
+A mirror that holds new releases for a week still has every package: the
+bundled npm lockfile names only releases at least a week old, and
+`uv tool install` takes the newest openpyxl, md-doc-converter's one Python
+dependency, that the mirror has. For a checkout, see
+[Package mirrors](docs/development.md#package-mirrors) in the development guide.
 
 ## Troubleshooting
 

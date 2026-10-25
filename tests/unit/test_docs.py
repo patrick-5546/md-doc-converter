@@ -28,6 +28,8 @@ OPTION = re.compile(r"(?<![\w-])(--?[a-z][a-z0-9-]*)")
 COMMAND_LINE = re.compile(r"md-doc-converter ([^\s`]+)([^`\n#]*)")
 # development.md shows the tools of development, such as make and pytest, with their options.
 CONTRIBUTORS = "docs/development.md"
+# The options of other programs that the user docs show: uv's, to install through a mirror.
+OTHER_OPTIONS = {"--default-index"}
 
 
 def user_docs() -> dict[str, str]:
@@ -133,7 +135,7 @@ def test_each_example_gives_its_command_only_that_commands_options(
 
 
 def test_the_docs_name_only_options_that_exist(options: dict[str, set[str]]) -> None:
-    known = set().union(*options.values())
+    known = set().union(*options.values(), OTHER_OPTIONS)
     for name, text in user_docs().items():
         # The table classes' widths are CSS custom properties, --col1 to --col6.
         named = {option for option in OPTION.findall(text) if not re.fullmatch(r"--col\d+", option)}

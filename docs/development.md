@@ -104,19 +104,18 @@ without running them.
 
 ### Package mirrors
 
-uv installs the files that `uv.lock` names from the URLs it records, which are
-PyPI's. Given a mirror's index, with `--default-index`, `UV_DEFAULT_INDEX` or a
-`uv.toml`, uv's project commands, such as `uv run` and `uv lock`, lock again
-through the mirror instead and write the mirror's URLs into `uv.lock`, which
-other machines and the CI cannot use. Name a mirror only on the command line, as
-below, never machine-wide, and do not commit a lock that names one. uv has no
-setting that downloads through a mirror while it keeps PyPI's URLs in the lock;
-[astral-sh/uv#6349](https://github.com/astral-sh/uv/issues/6349) asks for one.
+`uv.lock` records PyPI's URLs. Given a mirror's index, with `--default-index`,
+`UV_DEFAULT_INDEX` or a `uv.toml`, uv's project commands, such as `uv run` and
+`uv lock`, lock again through the mirror and write its URLs into `uv.lock`,
+which other machines and the CI cannot use. So never set a mirror machine-wide,
+and do not commit a lock that names one; uv cannot yet download through a mirror
+while it keeps PyPI's URLs
+([astral-sh/uv#6349](https://github.com/astral-sh/uv/issues/6349)).
 
-On a network that allows only a package mirror, `uv run`, and every task that
-uses it, therefore fails as it syncs `.venv`. Install the locked packages
-through the mirror instead, with the lock's hashes; `uv run` then finds `.venv`
-in sync. Run these again whenever `uv.lock` changes:
+On a network that allows only a mirror, `uv run`, and every task that uses it,
+therefore fails as it syncs `.venv`. Install the locked packages through the
+mirror instead, with the lock's hashes, and again whenever `uv.lock` changes;
+`uv run` then finds `.venv` in sync:
 
 ```sh
 mirror=https://mirror.example/pypi/simple/
@@ -125,19 +124,11 @@ uv export --frozen --all-groups --no-emit-project |
 uv pip install --index-url "$mirror" --exclude-newer false --no-deps -e .
 ```
 
-In PowerShell:
-
-```powershell
-$mirror = "https://mirror.example/pypi/simple/"
-uv export --frozen --all-groups --no-emit-project |
-  uv pip sync --index-url $mirror --exclude-newer false -
-uv pip install --index-url $mirror --exclude-newer false --no-deps -e .
-```
-
-`--exclude-newer false` turns off the week-long limit that `pyproject.toml`
-sets, which these commands need not apply again: the locked versions are a week
-old already, and a mirror may report when it took in a file rather than when it
-was published. npm needs only its registry set, as the README's
+In PowerShell, set the variable with
+`$mirror = "https://mirror.example/pypi/simple/"`; the other lines are the same.
+`--exclude-newer false` turns off `pyproject.toml`'s week-long limit: the locked
+versions meet it already, and a mirror may date a file by when it took it in.
+For npm, set its registry, as the README's
 [Package mirrors](../README.md#package-mirrors) shows.
 
 ## Test suites
@@ -192,19 +183,16 @@ minimum is enforced; use it to find untested code.
 ## Updating dependencies
 
 Dependabot (`.github/dependabot.yml`) proposes weekly updates for the Python
-packages, the bundled npm manifests and the workflow's actions, once a release
-is a week old, in one pull request per ecosystem; major Python and npm updates
-come separately. Most compromised releases are found and pulled within days, so
-the lockfiles hold only releases at least a week old too, whoever updates them:
-`exclude-newer` in `pyproject.toml` sets this for uv, and `min-release-age` in
-the `.npmrc` beside the npm manifests sets it for npm 11.10 or newer. A minimum
-version in `pyproject.toml` or `package.json` must be a week old too, or locking
-fails. A [package mirror](#package-mirrors) that holds new releases for a week
-then has every locked release. To update by hand:
+packages, the bundled npm manifests and the workflow's actions, in one pull
+request per ecosystem; major Python and npm updates come separately. Most
+compromised releases are found and pulled within days, so every update takes
+only releases at least a week old: Dependabot waits a week, `exclude-newer` in
+`pyproject.toml` sets the limit for uv, and `min-release-age` in the `.npmrc`
+beside the npm manifests sets it for npm 11.10 or newer. A minimum version in
+`pyproject.toml` or `package.json` must be a week old too, or locking fails. To
+update by hand:
 
-- **Python:** edit `pyproject.toml`, then run `uv lock`. `uv.lock` records the
-  week as a span, not a date, and each new resolution, such as
-  `uv lock --upgrade`, counts it back from its own time.
+- **Python:** edit `pyproject.toml`, then run `uv lock`.
 - **npm packages:** edit `src/md_doc_converter/toolchain/package.json`, then run
   `make lock-npm`; the next `setup` reinstalls the packages. Keep the override
   that gives every package the math filter's KaTeX, so that Mermaid draws math
@@ -220,17 +208,14 @@ then has every locked release. To update by hand:
   `gh api repos/jgm/pandoc/releases/tags/VERSION --jq '.assets[] | [.name, .digest] | @tsv'`
   lists; then update tests that compare exact Pandoc output.
 
-The week-long limits apply to a security fix too, for which Dependabot skips its
-cooldown. To take a release less than a week old, lift the limit for it alone:
+Dependabot proposes a security fix without waiting, but the lockfiles' limits
+still apply. To take a release less than a week old, lift the limit for that
+package alone:
 
-- **Python:** add the package to `pyproject.toml`'s
-  `[tool.uv.exclude-newer-package]` table with the value `false`, then run
-  `uv lock`. `uv.lock` records the exception, so once the release is a week
+- **Python:** add it to `pyproject.toml`'s `[tool.uv.exclude-newer-package]`
+  table with the value `false` and run `uv lock`; once the release is a week
   old, remove the entry and run `uv lock` again.
 - **npm packages:** run `npm_config_min_release_age=0 make lock-npm`.
-
-A mirror that holds new releases serves the release only once it lets it
-through.
 
 ## Continuous integration
 
