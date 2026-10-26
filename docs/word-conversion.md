@@ -37,7 +37,8 @@ accepted.
   bullet is omitted, and so is an empty numbered item at the start or end of
   its list. A paragraph of a list that shows no number or bullet at any level,
   which Word uses to indent paragraphs, is a paragraph, in the list item before
-  it if there is one.
+  it if there is one. An empty paragraph between two items of a list is
+  omitted, so that the list goes on, as in Word, rather than beginning again.
 - **Line breaks** are Markdown hard line breaks, a backslash at the end of the
   line; two in a row start a new paragraph. In a table cell they are `<br>`.
 - **Tables** are Markdown tables, with Word's first row as the header, or

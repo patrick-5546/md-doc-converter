@@ -582,6 +582,38 @@ def test_paragraphs_of_lists_that_show_no_number_are_paragraphs(convert: Convert
     assert "lists:" not in warnings
 
 
+def test_empty_paragraphs_inside_a_word_list_do_not_split_it(
+    convert: Converter, pandoc: str
+) -> None:
+    # Word numbers a list on past an empty paragraph; Pandoc would end the list there.
+    result, report, warnings = convert.reported(
+        [
+            paragraph("Intro"),
+            numbered("Alpha"),
+            numbered("Alpha one", 1),
+            paragraph(""),
+            paragraph(" "),
+            numbered("Alpha one a", 2),
+            numbered("Beta"),
+            # Another list, and a paragraph after the list, are not joined to it.
+            paragraph(""),
+            numbered("Bullet", number="2"),
+            paragraph(""),
+            paragraph("Outro"),
+        ],
+        extras={"word/numbering.xml": numbering_xml(second="bullet")},
+    )
+    assert list_shape(_reference.pandoc_html(result, pandoc)) == [
+        ("ol", "1", 7, 2),
+        ("ol", "1", 7, 1),
+        ("ol", "1", 7, 1),
+        ("ul", "1", 1, 1),
+    ]
+    assert re.search(r"7\.\s+Alpha one a\n+8\.\s+Beta\n", result)
+    assert "2 empty paragraph(s) inside a Word list omitted" in "\n".join(report.summary())
+    assert "lists:" not in warnings
+
+
 def test_paragraphs_pandoc_reads_as_headings_are_not_list_items(convert: Converter) -> None:
     contents = word_style("TOCHeading", based_on="Heading1", number="1")
     properties = contents.find(W + "pPr")

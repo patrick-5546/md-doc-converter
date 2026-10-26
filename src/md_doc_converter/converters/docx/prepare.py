@@ -48,6 +48,7 @@ _LISTED_HEADING = "Word numbers this outline-level heading as a list item; kept 
 _PUNCTUATION_TRIMMED = "heading(s) with trailing punctuation trimmed"
 _LEVELS_CLOSED = "heading(s) moved up to close a skipped level"
 _UNLABELED_ITEMS = "Word list paragraph(s) without a number or bullet kept as paragraphs"
+_LIST_GAPS = "empty paragraph(s) inside a Word list omitted"
 # The names Word gives the bookmarks that its tables of contents and cross-references lead to.
 _FIELD_BOOKMARKS = ("_Toc", "_Ref")
 DRIFTED_BOOKMARK = (
@@ -873,6 +874,41 @@ def _prepare_images(
     return images
 
 
+def _join_split_lists(root: ET.Element, list_of: Callable[[ET.Element], str | None]) -> int:
+    """Remove the empty paragraphs between two items of the same Word list; return how many.
+
+    Word numbers a list on past them, but Pandoc ends a list at any paragraph that is not an
+    item: the list began again after one, and its next item lost its level. A paragraph that
+    holds a bookmark stays.
+    """
+    removed = 0
+    for parent in list(root.iter()):
+        current: str | None = None
+        gap: list[ET.Element] = []
+        for child in list(parent):
+            number = list_of(child) if child.tag == WORD + "p" else None
+            if number is not None:
+                if gap and number == current:
+                    for paragraph in gap:
+                        parent.remove(paragraph)
+                    removed += len(gap)
+                current = number
+            elif child.tag in _TRANSPARENT:
+                continue
+            elif (
+                current is not None
+                and child.tag == WORD + "p"
+                and not _ooxml.shows_content(child)
+                and not any(node.tag == WORD + "bookmarkStart" for node in child.iter())
+            ):
+                gap.append(child)
+                continue
+            else:
+                current = None
+            gap.clear()
+    return removed
+
+
 def _report_drifted_bookmarks(root: ET.Element, report: TransformReport) -> None:
     """Report each linked bookmark of a Word table of contents or cross-reference that starts
     before the paragraph it marks.
@@ -1149,14 +1185,19 @@ def prepare_document(
             current = parents.get(current)
         return False
 
+    def list_of(paragraph: ET.Element) -> str | None:
+        """The numId of the Word list that *paragraph* is an item of, as Pandoc reads it."""
+        if _ooxml.pandoc_heading(paragraph, styles.definitions):
+            return None
+        try:
+            number = _ooxml.numbering_reference(paragraph, styles.definitions)
+        except ConversionError:
+            return None
+        return number if number is not None and int(number) and number in numbered else None
+
     def list_item(paragraph: ET.Element) -> bool:
         """Whether *paragraph* is an item of a Word list, as Pandoc reads it."""
-        if _ooxml.pandoc_heading(paragraph, styles.definitions):
-            return False
-        try:
-            return _ooxml.is_list_item(paragraph, styles.definitions, numbered)
-        except ConversionError:
-            return False
+        return list_of(paragraph) is not None
 
     headings: list[ET.Element] = []
     listed: list[ET.Element] = []
@@ -1170,6 +1211,8 @@ def prepare_document(
         images = _prepare_images(
             root, relationships, package, {*headings, *listed}, modified, report
         )
+    with transform(report, "lists"):
+        report.applied("lists", _LIST_GAPS, _join_split_lists(root, list_of))
     _report_drifted_bookmarks(root, report)
     bookmarks = _prepare_links(root, relationships, paths, report)
     _keep_metadata_in_body(root, styles, numbered)
