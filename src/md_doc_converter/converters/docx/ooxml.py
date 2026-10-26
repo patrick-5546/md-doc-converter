@@ -954,6 +954,24 @@ def unlink_missing_references(root: ET.Element, bookmarks: Collection[str]) -> l
     return missing
 
 
+def linked_bookmarks(root: ET.Element) -> set[str]:
+    r"""The bookmarks that Word links to: those of hyperlinks to a place in the document, such
+    as table-of-contents entries, and of cross-reference fields with the \h switch."""
+    names = {
+        link.get(WORD + "anchor", "")
+        for link in root.iter(WORD + "hyperlink")
+        if link.get(REL + "id") is None
+    }
+    for parent in list(root.iter()):
+        if parent.tag not in {WORD + "p", WORD + "hyperlink"}:
+            continue
+        for _start, _end, instruction, _cached in _complex_fields(parent):
+            match = _REFERENCE_FIELD.fullmatch(instruction)
+            if match is not None and re.search(r"\\h\b", match.group(3)):
+                names.add(match.group(1) or match.group(2) or "")
+    return names - {""}
+
+
 # What Word shows for an unchecked and a checked check box form field.
 CHECK_BOXES = ("\u2610", "\u2612")
 

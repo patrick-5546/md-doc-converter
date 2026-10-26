@@ -47,6 +47,11 @@ _PICTURE_HEADING = "Word heading has only a picture; kept as a paragraph"
 _LISTED_HEADING = "Word numbers this outline-level heading as a list item; kept as a list item"
 _PUNCTUATION_TRIMMED = "heading(s) with trailing punctuation trimmed"
 _LEVELS_CLOSED = "heading(s) moved up to close a skipped level"
+# The names Word gives the bookmarks that its tables of contents and cross-references lead to.
+_FIELD_BOOKMARKS = ("_Toc", "_Ref")
+DRIFTED_BOOKMARK = (
+    "Word table-of-contents or cross-reference bookmark starts before the paragraph it marks"
+)
 _TEXT_TAGS = frozenset(
     {WORD + "t", "{http://schemas.openxmlformats.org/officeDocument/2006/math}t"}
 )
@@ -845,6 +850,57 @@ def _prepare_images(
     return images
 
 
+def _report_drifted_bookmarks(root: ET.Element, report: TransformReport) -> None:
+    """Report each linked bookmark of a Word table of contents or cross-reference that starts
+    before the paragraph it marks.
+
+    Word puts such a bookmark around one paragraph, such as a heading. Text typed at the start
+    of that paragraph goes into the bookmark, which then starts at the earlier place: Word's
+    links lead there, and so do the Markdown's, until the table of contents is updated and the
+    cross-references are inserted again.
+    """
+    linked = _ooxml.linked_bookmarks(root)
+    starts = {
+        node.get(WORD + "id"): node
+        for node in root.iter(WORD + "bookmarkStart")
+        if node.get(WORD + "name", "").startswith(_FIELD_BOOKMARKS)
+        and node.get(WORD + "name") in linked
+    }
+    if not starts:
+        return
+    nodes = list(root.iter())
+    order = {node: index for index, node in enumerate(nodes)}
+    parents = {child: parent for parent in nodes for child in parent}
+
+    def paragraph_of(node: ET.Element) -> ET.Element | None:
+        current = parents.get(node)
+        while current is not None and current.tag != WORD + "p":
+            current = parents.get(current)
+        return current
+
+    def shows(first: int, last: int) -> bool:
+        return any(
+            node.tag == WORD + "sym"
+            or node.tag in IMAGE_CONTAINERS
+            or (node.tag in _TEXT_TAGS and (node.text or "").strip())
+            for node in nodes[first:last]
+        )
+
+    for end in root.iter(WORD + "bookmarkEnd"):
+        start = starts.get(end.get(WORD + "id"))
+        paragraph = paragraph_of(end)
+        if start is None or paragraph is None or paragraph is paragraph_of(start):
+            continue
+        # The end follows text of its paragraph, and something shows before that paragraph.
+        if shows(order[paragraph], order[end]) and shows(order[start] + 1, order[paragraph]):
+            text = " ".join(_ooxml.paragraph_text(paragraph).split())
+            report.warn(
+                f"bookmarks: Word bookmark {start.get(WORD + 'name')!r} starts before the "
+                f"paragraph it marks, {text!r}; links to it lead where it starts, as in Word",
+                kind=DRIFTED_BOOKMARK,
+            )
+
+
 def _prepare_links(
     root: ET.Element,
     relationships: ET.Element,
@@ -1089,6 +1145,7 @@ def prepare_document(
         images = _prepare_images(
             root, relationships, package, {*headings, *listed}, modified, report
         )
+    _report_drifted_bookmarks(root, report)
     bookmarks = _prepare_links(root, relationships, paths, report)
     _keep_metadata_in_body(root, styles, numbered)
     _plain_layout(root, styles)

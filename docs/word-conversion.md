@@ -57,11 +57,17 @@ accepted.
   backtick, a leading `#` or a line of `---`, stays text.
 - **Links** keep their targets, and a ScreenTip becomes the link's title. A
   link to a Word bookmark, such as a cross-reference that Word links, leads to
-  the heading the bookmark marks, or to the section that holds it. A web or
-  e-mail address typed as text becomes a link.
+  the heading the bookmark marks, or to the section that holds it. A
+  table-of-contents entry or cross-reference whose bookmark starts before the
+  paragraph it marks, as when text was typed at the start of a heading, leads
+  where the bookmark starts, as it does in Word, and the report names it:
+  update the table of contents, and insert the cross-reference again, in Word.
+  A web or e-mail address typed as text becomes a link.
 - **Fields** keep the text Word shows, such as caption numbers, and a check box
   shows ☐ or ☒. Page numbers stay text. A table of contents keeps each entry's
-  link, number and title, but not its page number.
+  link, number and title, but not its page number. Word shows a field's text
+  as of its last update, so update the fields before converting: in Word, press
+  Ctrl+A and then F9.
 - **Footnotes and endnotes** become footnotes, `[^1]`, numbered in order and
   defined at the end of the Markdown. VS Code's Markdown preview shows
   them only with the [Markdown Footnotes](https://marketplace.visualstudio.com/items?itemName=bierner.markdown-footnotes)

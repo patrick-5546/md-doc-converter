@@ -8,6 +8,7 @@ from xml.etree import ElementTree as ET
 import pytest
 
 from md_doc_converter.converters.docx import bookmarks as _bookmarks
+from md_doc_converter.converters.docx import ooxml as _ooxml
 from md_doc_converter.converters.docx import package as _package
 from md_doc_converter.converters.docx import prepare as _prepare
 from md_doc_converter.converters.docx import publication as _publication
@@ -110,6 +111,60 @@ def test_a_range_that_holds_prose_before_a_heading_stays_in_its_section(
         [paragraph("First", "Heading1"), prose, following], tmp_path, pandoc
     )
     assert found.bookmark_sections["_Range"] == BookmarkSection(found.headings[0].key, False)
+
+
+def test_toc_and_cross_reference_bookmarks_that_start_early_are_reported(
+    tmp_path: Path, pandoc: str
+) -> None:
+    # Text typed at the start of a heading goes into the bookmark of the table-of-contents
+    # entry or cross-reference that leads to it, which then starts at the earlier place.
+    def drifted(name: str, before: str, marked: str) -> list[ET.Element]:
+        earlier = paragraph(before, "Heading1")
+        earlier.insert(1, start(name))
+        heading = paragraph(marked, "Heading1")
+        heading.append(end(name))
+        return [earlier, paragraph("Typed at the start of the heading"), heading]
+
+    def reference(instruction: str) -> ET.Element:
+        field = ET.Element(W + "fldSimple", {W + "instr": instruction})
+        field.append(_ooxml.word_run("See there"))
+        result = ET.Element(W + "p")
+        result.append(field)
+        return result
+
+    near = paragraph("")
+    near.insert(0, start("_TocNear"))
+    marked = paragraph("Lambda", "Heading1")
+    marked.append(end("_TocNear"))
+    found, _blocks, report = navigate(
+        [
+            *drifted("_TocLate", "Alpha", "Beta"),
+            *drifted("_RefLate", "Gamma", "Delta"),
+            *drifted("_TocUnlinked", "Epsilon", "Zeta"),
+            *drifted("Named", "Eta", "Theta"),
+            *drifted("_RefPlain", "Iota", "Kappa"),
+            near,
+            marked,
+            hyperlink("Beta", anchor="_TocLate"),
+            reference(" REF _RefLate \\h "),
+            hyperlink("Theta", anchor="Named"),
+            hyperlink("Lambda", anchor="_TocNear"),
+            reference(" REF _RefPlain "),
+        ],
+        tmp_path,
+        pandoc,
+    )
+    assert [finding for finding in report.findings if finding.startswith("bookmarks:")] == [
+        f"bookmarks: Word bookmark {name!r} starts before the paragraph it marks, {text!r}; "
+        "links to it lead where it starts, as in Word"
+        for name, text in (("_TocLate", "Beta"), ("_RefLate", "Delta"))
+    ]
+    assert report.kinds[_prepare.DRIFTED_BOOKMARK] == 2
+    assert report.sections[_prepare.DRIFTED_BOOKMARK] == "word"
+    # Reported, not moved: links lead where the bookmark starts, as Word's do.
+    keys = {heading.title: heading.key for heading in found.headings}
+    assert found.bookmark_sections["_TocLate"] == BookmarkSection(keys["Alpha"], True)
+    assert found.bookmark_sections["_TocNear"] == BookmarkSection(keys["Lambda"], True)
 
 
 def test_bookmarks_side_by_side_each_lead_to_the_same_place(tmp_path: Path, pandoc: str) -> None:
