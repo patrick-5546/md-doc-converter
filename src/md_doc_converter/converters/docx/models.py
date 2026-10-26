@@ -30,7 +30,7 @@ class ConversionPaths:
     output: Path
     images: Path
     pages: Path
-    diagnostics: Path | None
+    intermediates: Path | None
     explicit_output: bool
     split_depth: int
     replace_generated: bool

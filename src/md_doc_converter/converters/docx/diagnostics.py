@@ -1,4 +1,4 @@
-"""Conversion warnings, the transform report, and retained diagnostic reports.
+"""Conversion warnings and the transform report.
 
 Each warning has a kind, generic text that the summary counts, and a part of the summary: "to
 check in Word" for what the document's author can fix, "expected in Markdown" for what
@@ -7,24 +7,15 @@ Markdown shows differently; a detail, which only --verbose shows, is something t
 
 from __future__ import annotations
 
-import json
 import re
-import tempfile
 from collections import Counter
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Literal
 
 from md_doc_converter.console import Console, active
-from md_doc_converter.converters.docx.models import (
-    ConversionError,
-    ConversionPaths,
-    DocumentNavigation,
-    HeadingChange,
-    PackageError,
-)
+from md_doc_converter.converters.docx.models import ConversionError, PackageError
 
 TRANSFORMS = (
     "fields",
@@ -233,18 +224,6 @@ class TransformReport:
             return f"not requested ({record.unavailable})" if record.unavailable else status
         return status
 
-    def as_json(self) -> dict[str, dict[str, object]]:
-        return {
-            name: {
-                "status": record.status(),
-                "applied": dict(record.applied),
-                "not_applied": dict(record.skipped),
-                "failure": record.failure,
-                "reason": record.unavailable,
-            }
-            for name, record in self.records.items()
-        }
-
 
 @contextmanager
 def transform(report: TransformReport, name: str) -> Generator[None]:
@@ -255,67 +234,3 @@ def transform(report: TransformReport, name: str) -> Generator[None]:
         raise
     except Exception as error:  # noqa: BLE001 - a layer must never stop the conversion
         report.failed(name, error)
-
-
-def write_diagnostics(
-    work: Path,
-    paths: ConversionPaths,
-    findings: list[str],
-    stats: dict[str, int],
-    changes: list[HeadingChange],
-    status: str,
-    error: str | None = None,
-    *,
-    source: DocumentNavigation | None = None,
-    report: TransformReport | None = None,
-) -> None:
-    if paths.diagnostics is None:
-        return
-    document = {
-        "status": status,
-        "input": str(paths.source_entry),
-        "output": str(paths.output),
-        "image_directory": str(paths.images),
-        "page_directory": str(paths.pages) if paths.split_depth else None,
-        "document_view": "accepted/final; review history is not archived",
-        "warnings": findings,
-        "statistics": stats,
-        "transforms": report.as_json() if report is not None else None,
-        "qualified_headings": [
-            {
-                "line": change.line_number,
-                "original": change.original_title,
-                "qualified": change.final_title,
-                "ancestors": list(change.ancestors),
-            }
-            for change in changes
-        ],
-        "bookmark_targets": {
-            name: {
-                "page": target.page.as_posix(),
-                "fragment": target.fragment,
-                "kind": (
-                    "heading"
-                    if source.bookmark_sections[name].exact
-                    else ("section" if target.fragment else "document_top")
-                ),
-            }
-            for name, target in source.bookmark_targets.items()
-            if name in source.bookmarks
-        }
-        if source is not None
-        else dict[str, dict[str, str]](),
-        "error": error,
-    }
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        encoding="utf-8",
-        newline="\n",
-        prefix=".diagnostics-",
-        suffix=".json",
-        dir=work,
-        delete=False,
-    ) as stream:
-        stream.write(json.dumps(document, indent=2, ensure_ascii=True) + "\n")
-        prepared = Path(stream.name)
-    prepared.replace(work / "diagnostics.json")

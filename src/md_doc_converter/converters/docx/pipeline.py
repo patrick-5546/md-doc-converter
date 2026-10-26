@@ -108,11 +108,7 @@ def _convert_in_work(
     report: TransformReport,
     math: _tree.MathSyntax = "github",
 ) -> dict[str, int]:
-    findings = report.findings
-    stats: dict[str, int] = {}
     changes: list[HeadingChange] = []
-    published = False
-    navigation: DocumentNavigation | None = None
     stager: _media.ImageStager | None = None
     try:
         package = _package.read_package(paths)
@@ -186,50 +182,14 @@ def _convert_in_work(
                 destination = staged_pages / page.relative_to(paths.output.stem)
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_text(content, encoding="utf-8", newline="\n")
-        _diagnostics.write_diagnostics(
-            work, paths, findings, stats, changes, "validated", source=navigation, report=report
-        )
         if not dry_run:
             report.console.status("writing the files")
             _publication.publish_outputs(staged_markdown, stager.root, paths, staged_pages)
-            published = True
-        _diagnostics.write_diagnostics(
-            work,
-            paths,
-            findings,
-            stats,
-            changes,
-            "dry-run" if dry_run else "published",
-            source=navigation,
-            report=report,
-        )
         return stats
-    except (ConversionError, OSError, UnicodeError) as error:
-        detail = (
-            f"Outputs were published, but completing diagnostics failed: {error}"
-            if published
-            else str(error)
-        )
-        try:
-            _diagnostics.write_diagnostics(
-                work,
-                paths,
-                findings,
-                stats,
-                changes,
-                "failed",
-                detail,
-                source=navigation,
-                report=report,
-            )
-        except OSError as diagnostic_error:
-            raise ConversionError(
-                f"{detail}; cannot write diagnostic report at {work / 'diagnostics.json'}: "
-                f"{diagnostic_error}"
-            ) from error
-        if isinstance(error, ConversionError) and not published:
-            raise
-        raise ConversionError(detail) from error
+    except ConversionError:
+        raise
+    except (OSError, UnicodeError) as error:
+        raise ConversionError(str(error)) from error
     finally:
         # LibreOffice may still be converting drawings in the work folder, which goes next.
         if stager is not None:
@@ -280,11 +240,11 @@ def convert_docx(
         replace_generated=replace_generated,
         keep_intermediates=keep_intermediates,
     )
-    if paths.diagnostics is not None:
-        paths.diagnostics.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if paths.intermediates is not None:
+        paths.intermediates.mkdir(mode=0o700, parents=True, exist_ok=True)
         return _convert_in_work(
             paths,
-            paths.diagnostics,
+            paths.intermediates,
             qualify_duplicates=qualify_duplicate_headings,
             dry_run=dry_run,
             report=report,

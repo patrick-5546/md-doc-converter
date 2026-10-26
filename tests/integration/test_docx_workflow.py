@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import copy
 import inspect
-import json
 import os
 import re
 import subprocess
@@ -1114,7 +1113,7 @@ def test_preamble_bookmark_targets_document_top_across_split_pages(
 
 
 def test_only_referenced_nonheading_bookmarks_report_retargeting(
-    source: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    source: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     write_docx(
         source,
@@ -1128,17 +1127,17 @@ def test_only_referenced_nonheading_bookmarks_report_retargeting(
             hyperlink("Body", anchor="_Body"),
         ],
     )
-    diagnostics = tmp_path / "diagnostics"
-    _pipeline.convert_docx(source, keep_intermediates=diagnostics)
+    _pipeline.convert_docx(source)
     warnings = capsys.readouterr().err
     assert "'_Before' now links to the document top" in warnings
     assert "'_Body' now links to its containing section #1-overview" in warnings
     assert "_Unused" not in warnings
     assert "_Exact" not in warnings
-    report = json.loads((diagnostics / "diagnostics.json").read_text(encoding="utf-8"))
-    assert report["bookmark_targets"]["_Exact"]["kind"] == "heading"
-    assert report["bookmark_targets"]["_Body"]["kind"] == "section"
-    assert report["bookmark_targets"]["_Before"]["kind"] == "document_top"
+    # A heading's bookmark leads to the heading, others to their section or the document top.
+    result = source.with_suffix(".md").read_text(encoding="utf-8")
+    assert "[Section](#1-overview)" in result
+    assert "[Body](#1-overview)" in result
+    assert "[Preamble](#)" in result
 
 
 @pytest.mark.parametrize(
@@ -2402,27 +2401,17 @@ def test_media_with_same_basename_in_distinct_package_paths_are_not_flattened(
     assert "/two/image.png" in result
 
 
-def test_missing_media_is_dropped_and_reported_in_diagnostics(
-    source: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    write_docx(
-        source,
+def test_missing_media_is_dropped_and_reported(convert: Converter) -> None:
+    result, report, warnings = convert.reported(
         [paragraph("Before"), image(), paragraph("After")],
         relations=(("image", "image", "media/missing.png", "Internal"),),
     )
-    diagnostics = tmp_path / "diagnostics"
-    report = _diagnostics.TransformReport()
-    _pipeline.convert_docx(source, keep_intermediates=diagnostics, report=report)
-    warnings = capsys.readouterr().err
-    result = source.with_suffix(".md").read_text(encoding="utf-8")
     assert "Before" in result
     assert "After" in result
     assert "![" not in result
     assert "Missing Word media part 'word/media/missing.png'; image dropped" in warnings
-    saved = json.loads((diagnostics / "diagnostics.json").read_text(encoding="utf-8"))
-    assert saved["status"] == "published"
-    assert saved["transforms"]["images"]["status"] == "not applied"
-    assert saved["transforms"]["images"]["not_applied"] == {
+    assert report.status("images") == "not applied"
+    assert dict(report.records["images"].skipped) == {
         "Missing Word media part '...'; image dropped": 1
     }
 
@@ -2637,17 +2626,13 @@ def test_dry_run_has_no_final_writes_and_retains_only_requested_bundle(
 ) -> None:
     write_docx(source, [paragraph("Title.", "Heading1")])
     output = tmp_path / "new" / "document.md"
-    diagnostics = tmp_path / "diagnostics"
+    intermediates = tmp_path / "intermediates"
     _pipeline.convert_docx(
-        source, output, split_depth=1, dry_run=True, keep_intermediates=diagnostics
+        source, output, split_depth=1, dry_run=True, keep_intermediates=intermediates
     )
     assert not output.parent.exists()
-    assert (
-        json.loads((diagnostics / "diagnostics.json").read_text(encoding="utf-8"))["status"]
-        == "dry-run"
-    )
-    assert (diagnostics / "prepared.docx").is_file()
-    assert (diagnostics / "final.md").is_file()
+    assert (intermediates / "prepared.docx").is_file()
+    assert (intermediates / "final.md").is_file()
 
 
 def test_dry_run_without_diagnostics_leaves_directory_listing_unchanged(
@@ -2693,37 +2678,6 @@ def test_tmpdir_inside_images_is_not_used_as_scratch(
     assert not source.with_suffix(".md").exists()
 
 
-def test_postpublication_diagnostic_failure_reports_outputs_are_published(
-    source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    write_docx(source, [paragraph("Published content")])
-    original = _diagnostics.write_diagnostics
-    diagnostics = tmp_path / "diagnostics"
-
-    def fail_final_report(
-        work: Path,
-        paths: _models.ConversionPaths,
-        findings: list[str],
-        stats: dict[str, int],
-        changes: list[_models.HeadingChange],
-        status: str,
-        error: str | None = None,
-        *,
-        source: _models.DocumentNavigation | None = None,
-        report: _diagnostics.TransformReport | None = None,
-    ) -> None:
-        if status == "published":
-            raise OSError("diagnostic completion failed")
-        original(work, paths, findings, stats, changes, status, error, source=source, report=report)
-
-    monkeypatch.setattr(_diagnostics, "write_diagnostics", fail_final_report)
-    with pytest.raises(_models.ConversionError, match=r"Outputs were published"):
-        _pipeline.convert_docx(source, keep_intermediates=diagnostics)
-    assert source.with_suffix(".md").read_text(encoding="utf-8") == "Published content\n"
-    report = json.loads((diagnostics / "diagnostics.json").read_text(encoding="utf-8"))
-    assert "Outputs were published" in report["error"]
-
-
 def test_dry_run_with_replacement_permission_preserves_existing_batch(
     source: Path, tmp_path: Path
 ) -> None:
@@ -2751,19 +2705,19 @@ def test_explicit_markdown_replacement_is_normal_without_directory_content(
     assert result == "new\n"
 
 
-def test_unsafe_destination_is_rejected_before_conversion_or_diagnostics_creation(
+def test_unsafe_destination_is_rejected_before_conversion_or_intermediates_creation(
     source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     write_docx(source, [paragraph("Text")])
     output = tmp_path / "alias.md"
     os.link(source, output)
-    diagnostics = tmp_path / "diagnostics"
+    intermediates = tmp_path / "intermediates"
     prepare = mock.Mock()
     monkeypatch.setattr(_prepare, "prepare_document", prepare)
     with pytest.raises(_models.ConversionError, match=r"aliases the source DOCX"):
-        _pipeline.convert_docx(source, output, keep_intermediates=diagnostics)
+        _pipeline.convert_docx(source, output, keep_intermediates=intermediates)
     prepare.assert_not_called()
-    assert not diagnostics.exists()
+    assert not intermediates.exists()
 
 
 def test_word_conversion_needs_pandoc(source: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -3915,18 +3869,10 @@ def test_broken_local_hyperlink_is_kept_and_reported(convert: Converter) -> None
     assert "    issue (1): a local link target does not exist" in summary
 
 
-def test_malformed_uri_is_kept_and_reported(
-    source: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    write_docx(
-        source,
+def test_malformed_uri_is_kept_and_reported(convert: Converter) -> None:
+    result, _report, warnings = convert.reported(
         [hyperlink("Broken", relation="broken")],
         relations=(("broken", "hyperlink", "https://[bad", "External"),),
     )
-    diagnostics = tmp_path / "diagnostics"
-    report = _diagnostics.TransformReport()
-    _pipeline.convert_docx(source, keep_intermediates=diagnostics, report=report)
-    assert "Broken" in source.with_suffix(".md").read_text(encoding="utf-8")
-    assert "Invalid retained URI" in capsys.readouterr().err
-    saved = json.loads((diagnostics / "diagnostics.json").read_text(encoding="utf-8"))
-    assert saved["status"] == "published"
+    assert "Broken" in result
+    assert "Invalid retained URI" in warnings

@@ -80,8 +80,9 @@ def test_actual_cli_preserves_caller_relative_paths(tmp_path: Path) -> None:
     markdown = (tmp_path / "out" / "Explicit Name.md").read_bytes()
     assert b"CLI text" in markdown
     assert (tmp_path / "out" / ".images" / "Explicit Name" / "image.png").is_file()
-    # The Markdown and the report have LF line endings on every system.
-    assert b"\r" not in markdown + (tmp_path / "debug" / "diagnostics.json").read_bytes()
+    assert (tmp_path / "debug" / "prepared.docx").is_file()
+    # The Markdown has LF line endings on every system.
+    assert b"\r" not in markdown
     assert not (tmp_path / "in" / "Renamed.v2.md").exists()
 
 

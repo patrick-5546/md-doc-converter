@@ -150,23 +150,23 @@ def validate_paths(
         raise ConversionError(f"The .images folder must not be a symbolic link: {image_parent}")
     images = _entry_path(image_parent / output_entry.stem)
     pages = _entry_path(output_entry.with_suffix(""))
-    diagnostics = _entry_path(keep_intermediates) if keep_intermediates is not None else None
+    intermediates = _entry_path(keep_intermediates) if keep_intermediates is not None else None
     paths = ConversionPaths(
         source,
         source_entry,
         output_entry,
         images,
         pages,
-        diagnostics,
+        intermediates,
         output_path is not None,
         split_depth,
         replace_generated,
     )
-    _validate_destinations(paths, diagnostics_empty=True)
+    _validate_destinations(paths, intermediates_empty=True)
     return paths
 
 
-def _validate_destinations(paths: ConversionPaths, *, diagnostics_empty: bool) -> None:
+def _validate_destinations(paths: ConversionPaths, *, intermediates_empty: bool) -> None:
     output, images, pages = paths.output, paths.images, paths.pages
     if images != output.parent / ".images" / output.stem or pages != output.with_suffix(""):
         raise ConversionError("Image and page destinations must derive from the Markdown output")
@@ -189,12 +189,14 @@ def _validate_destinations(paths: ConversionPaths, *, diagnostics_empty: bool) -
     directories = [images]
     if paths.split_depth:
         directories.append(pages)
-    if paths.diagnostics is not None:
-        diagnostic = paths.diagnostics
+    if paths.intermediates is not None:
+        intermediates = paths.intermediates
         for protected in related:
-            if overlaps(diagnostic, protected):
-                raise ConversionError(f"Diagnostic directory overlaps {protected}: {diagnostic}")
-        directories.append(diagnostic)
+            if overlaps(intermediates, protected):
+                raise ConversionError(
+                    f"Intermediate directory overlaps {protected}: {intermediates}"
+                )
+        directories.append(intermediates)
     for path in (output, *directories):
         _check_parent_types(path)
         if is_link(path):
@@ -214,14 +216,14 @@ def _validate_destinations(paths: ConversionPaths, *, diagnostics_empty: bool) -
         if directory.exists() and not directory.is_dir():
             raise ConversionError(f"Destination is not a directory: {directory}")
         if directory.exists() and any(directory.iterdir()):
-            if directory == paths.diagnostics:
-                if diagnostics_empty:
+            if directory == paths.intermediates:
+                if intermediates_empty:
                     raise ConversionError(f"Intermediate directory is not empty: {directory}")
             elif not paths.replace_generated:
                 raise ConversionError(
                     f"Nonempty generated directory requires --replace-generated: {directory}"
                 )
-        if directory != paths.diagnostics:
+        if directory != paths.intermediates:
             _check_tree(directory, paths.source)
 
 
@@ -267,7 +269,7 @@ def publish_outputs(
     """
     if (staged_pages is not None) != bool(paths.split_depth):
         raise ConversionError("Staged pages must match the selected split depth")
-    _validate_destinations(paths, diagnostics_empty=False)
+    _validate_destinations(paths, intermediates_empty=False)
     if is_link(staged_images) or not staged_images.is_dir():
         raise ConversionError(f"Invalid staged artifact: {staged_images}")
     images = staged_images if any(staged_images.iterdir()) else None

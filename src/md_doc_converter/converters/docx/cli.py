@@ -78,9 +78,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=Path,
         metavar="DIR",
         help=(
-            "Keep the intermediate files, such as the copy that Pandoc reads, and a "
-            "diagnostics.json report in a new or empty directory apart from the input and "
-            "outputs, also with --dry-run"
+            "Keep the intermediate files, such as the copy that Pandoc reads, in a new or "
+            "empty directory apart from the input and outputs, also with --dry-run"
         ),
     )
     add_verbosity_options(parser)

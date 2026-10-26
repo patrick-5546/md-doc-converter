@@ -250,11 +250,11 @@ def test_incompatible_image_parent_is_rejected(source: Path, tmp_path: Path) -> 
         _publication.validate_paths(source, tmp_path / "output.md")
 
 
-def test_diagnostics_cannot_be_source_hardlink(source: Path, tmp_path: Path) -> None:
-    diagnostic = tmp_path / "debug"
-    os.link(source, diagnostic)
+def test_intermediates_cannot_be_source_hardlink(source: Path, tmp_path: Path) -> None:
+    intermediates = tmp_path / "debug"
+    os.link(source, intermediates)
     with pytest.raises(_models.ConversionError, match="not a directory"):
-        _publication.validate_paths(source, None, keep_intermediates=diagnostic)
+        _publication.validate_paths(source, None, keep_intermediates=intermediates)
 
 
 @pytest.mark.parametrize(
@@ -267,16 +267,16 @@ def test_diagnostics_cannot_be_source_hardlink(source: Path, tmp_path: Path) -> 
         pytest.param("output/debug", id="inside-pages"),
     ],
 )
-def test_diagnostics_reject_all_destination_overlaps(
+def test_intermediates_reject_all_destination_overlaps(
     directory: str, source: Path, tmp_path: Path
 ) -> None:
-    with pytest.raises(_models.ConversionError, match="Diagnostic directory overlaps"):
+    with pytest.raises(_models.ConversionError, match="Intermediate directory overlaps"):
         _publication.validate_paths(
             source, tmp_path / "output.md", keep_intermediates=tmp_path / directory
         )
 
 
-def test_diagnostic_directory_must_be_new_or_empty(source: Path, tmp_path: Path) -> None:
+def test_intermediate_directory_must_be_new_or_empty(source: Path, tmp_path: Path) -> None:
     directory = tmp_path / "debug"
     directory.mkdir()
     _publication.validate_paths(source, None, keep_intermediates=directory)
@@ -286,7 +286,7 @@ def test_diagnostic_directory_must_be_new_or_empty(source: Path, tmp_path: Path)
 
 
 @pytest.mark.parametrize("kind", FOLDER_LINKS)
-def test_diagnostic_symlink_is_rejected(kind: str, source: Path, tmp_path: Path) -> None:
+def test_intermediate_symlink_is_rejected(kind: str, source: Path, tmp_path: Path) -> None:
     target = tmp_path / "empty"
     target.mkdir()
     link = tmp_path / "debug"
