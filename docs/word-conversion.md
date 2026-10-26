@@ -29,11 +29,10 @@ accepted.
   punctuation that ends it, and its level when it skips one, such as a Heading
   3 right after a Heading 1: markdownlint reports both, and the report names
   each skip, to fix in Word. A heading with no text is omitted, and a line
-  break in one becomes a space. With
-  `--qualify-duplicate-headings`, a repeated heading also names the
-  headings of the sections that hold it: two `## Overview` headings under
-  `# Block A` and `# Block B` become `## Block A - Overview` and
-  `## Block B - Overview`.
+  break in one becomes a space. With `--qualify-duplicate-headings`, a repeated
+  heading also names the headings of the sections that hold it: two
+  `## Overview` headings under `# Block A` and `# Block B` become
+  `## Block A - Overview` and `## Block B - Overview`.
 - **Lists** use `-` for bullets and keep Word's numbers; a lettered or Roman
   level is numbered with digits, the only numbering Markdown has. An empty
   bullet is omitted, and so is an empty numbered item at the start or end of
@@ -48,10 +47,9 @@ accepted.
   table, or a heading or nested list in a cell. In a cell, line breaks,
   paragraphs and a one-level list become lines separated by `<br>`; in the
   header, whose line breaks usually narrow a column, they become spaces, unless
-  the table has only that row. Rows that
-  show nothing are omitted, except the first after the header, such as a
-  template's row to fill in. Column widths, colors, borders and cell alignment
-  are not kept.
+  the table has only that row. Rows that show nothing are omitted, except the
+  first after the header, such as a template's row to fill in. Column widths,
+  colors, borders and cell alignment are not kept.
 - **Code:** text in a monospace font, such as Consolas, becomes code: whole
   paragraphs of it, or a one-cell table of them, a fenced `text` block, and
   shorter runs inline code. Curly quotes and dashes in code become ASCII.
@@ -84,17 +82,16 @@ accepted.
   `$$x$$`, for renderers that read only those, such as Azure DevOps Wiki.
 - **Text boxes:** the text of a text box follows the paragraph that holds it.
 - **Images** keep their place, without Word's display size. An image's alt
-  text is the title of its figure caption, or else Word's alt text, or else the
-  text of a heading right above it, also one kept as a list item; otherwise it
-  is empty, and reported. EMF and WMF drawings, which Word keeps for drawings
-  pasted from Visio and other programs, become SVG, cropped to the drawing:
-  LibreOffice draws each as a PDF, which Poppler turns into SVG. Its text is
-  drawn as shapes, so that it looks the same everywhere, with an invisible copy
-  of the words that a search of a PDF of the page still finds; symbols that no
-  font has, such as Word's Wingdings arrows, are left out of the copy.
-  LibreOffice before 7.4 cannot report the drawing's frame, so its whole page is
-  kept, and reported. An SVG image that contains a script is replaced by the
-  PNG copy that Word keeps with it.
+  text is the title of its figure caption, or else Word's alt text; otherwise
+  it is empty, and reported, to add in Word. EMF and WMF drawings, which Word
+  keeps for drawings pasted from Visio and other programs, become SVG, cropped
+  to the drawing: LibreOffice draws each as a PDF, which Poppler turns into
+  SVG. Its text is drawn as shapes, so that it looks the same everywhere, with
+  an invisible copy of the words that a search of a PDF of the page still
+  finds; symbols that no font has, such as Word's Wingdings arrows, are left
+  out of the copy. LibreOffice before 7.4 cannot report the drawing's frame, so
+  its whole page is kept, and reported. An SVG image that contains a script is
+  replaced by the PNG copy that Word keeps with it.
 - **Spaces:** no-break and other Unicode spaces become plain spaces, except
   spaces that indent a line, which stay no-break spaces so that the indent
   shows. Zero-width spaces are dropped.

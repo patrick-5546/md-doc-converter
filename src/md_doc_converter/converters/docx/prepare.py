@@ -93,7 +93,6 @@ class PreparedImage:
     # The Word paragraph that holds it, counted from 0, for warnings.
     paragraph_index: int
     from_caption: bool = False
-    from_heading: bool = False
 
 
 @dataclass
@@ -389,7 +388,7 @@ def _prepare_headings(
     list_item: Callable[[ET.Element], bool],
     in_table: Callable[[ET.Element], bool],
     report: TransformReport,
-) -> tuple[list[ET.Element], list[ET.Element]]:
+) -> list[ET.Element]:
     """Give each heading a "heading N" style at its final level, and make the rest paragraphs.
 
     A heading by Word's outline level or style keeps its level, up to 6; one that shows no
@@ -397,10 +396,9 @@ def _prepare_headings(
     heading style, stays the list item that Word numbers. A heading more than one level below
     the heading before it keeps its level too, and is reported, as markdownlint's MD001 would
     report it; headings in tables are left out of that. Return the headings, in document
-    order, and the numbered headings that stay list items.
+    order.
     """
     levels: dict[ET.Element, int] = {}
-    listed: list[ET.Element] = []
     for index, paragraph in enumerate(_ooxml.scoped_iter(root, WORD + "p")):
         try:
             level = _ooxml.heading_level(paragraph, styles.definitions)
@@ -428,7 +426,6 @@ def _prepare_headings(
             and list_item(paragraph)
         ):
             report.skipped("headings", _LISTED_HEADING, f"paragraph {index + 1}: {_LISTED_HEADING}")
-            listed.append(paragraph)
             continue
         if not _shows_text(paragraph):
             reason = _PICTURE_HEADING if _has_picture(paragraph) else _EMPTY_HEADING
@@ -456,7 +453,7 @@ def _prepare_headings(
                 for node in properties.findall(WORD + name):
                     properties.remove(node)
         report.applied("headings")
-    return list(levels), listed
+    return list(levels)
 
 
 def _split_code_edges(run: ET.Element, parent: ET.Element) -> None:
@@ -802,20 +799,18 @@ def _prepare_images(
     root: ET.Element,
     relationships: ET.Element,
     package: WordPackage,
-    headings: Collection[ET.Element],
     modified: dict[str, bytes],
     report: TransformReport,
 ) -> dict[str, PreparedImage]:
     """Point each picture at a media part of its own, holding the image it shows.
 
     Pandoc names an image by its media file, so the file says which picture it is, with the
-    package part shown and the alt text: the picture's figure caption, else Word's alt text,
-    else a heading directly above it.
+    package part shown and the alt text: the picture's figure caption, else Word's alt text.
     """
     parents = {child: parent for parent in root.iter() for child in parent}
     relations = {node.get("Id", ""): node for node in relationships}
     units = _ooxml.image_units(root)
-    descriptions = _media.image_descriptions(root, units, headings)
+    descriptions = _media.image_descriptions(root, units)
     images: dict[str, PreparedImage] = {}
     folder = posixpath.dirname(package.document_part)
     for unit, description in zip(units, descriptions, strict=True):
@@ -846,7 +841,6 @@ def _prepare_images(
                 description.alt_text,
                 description.paragraph_index,
                 from_caption=description.from_caption,
-                from_heading=description.from_heading,
             )
         if unit.tag != WORD + "drawing":
             _separate_vml_images(unit, shown[1:], parents)
@@ -1198,17 +1192,13 @@ def prepare_document(
         return list_of(paragraph) is not None
 
     headings: list[ET.Element] = []
-    listed: list[ET.Element] = []
     with transform(report, "headings"):
-        headings, listed = _prepare_headings(root, styles, list_item, in_table, report)
+        headings = _prepare_headings(root, styles, list_item, in_table, report)
     with transform(report, "code"):
         _prepare_code(root, styles, package, set(headings), list_item, report)
     images: dict[str, PreparedImage] = {}
     with transform(report, "images"):
-        # A numbered heading kept as a list item still heads a picture directly below it.
-        images = _prepare_images(
-            root, relationships, package, {*headings, *listed}, modified, report
-        )
+        images = _prepare_images(root, relationships, package, modified, report)
     with transform(report, "lists"):
         report.applied("lists", _LIST_GAPS, _join_split_lists(root, list_of))
     _report_drifted_bookmarks(root, report)

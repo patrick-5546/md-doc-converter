@@ -18,12 +18,9 @@ from md_doc_converter.converters.docx import reference as _reference
 from md_doc_converter.converters.docx.diagnostics import TransformReport
 from tests.support.docx import (
     W,
-    cell,
     image,
     paragraph,
-    row,
     synthetic_emf,
-    table,
 )
 
 # pdftocairo's SVG of LibreOffice's page: US Letter, 612 by 792 points, the drawing in the middle.
@@ -672,62 +669,21 @@ def test_without_a_caption_word_alt_text_is_kept() -> None:
     ]
 
 
-def _headed(*content: ET.Element) -> list[tuple[str | None, bool]]:
-    """Alt text, and whether a heading gave it, with each Heading1 paragraph a heading."""
-    root = ET.Element(W + "document")
-    ET.SubElement(root, W + "body").extend(content)
-    headings = {
-        node
-        for node in root.iter(W + "p")
-        if any(style.get(W + "val") == "Heading1" for style in node.iter(W + "pStyle"))
-    }
-    return [
-        (description.alt_text, description.from_heading)
-        for description in _media.image_descriptions(root, headings=headings)
+def test_a_heading_above_an_image_does_not_describe_it() -> None:
+    # A heading is not alt text: the image's own description is missing, and reported.
+    assert _described(paragraph("Data flow", "Heading1"), paragraph(""), image(alt=None)) == [
+        (None, False)
     ]
 
 
-def test_a_heading_describes_the_images_directly_below_it() -> None:
-    pair = image(alt=None)
-    pair.extend(image(alt=None).findall(W + "r"))
-    assert _headed(
-        _caption("1.2", "\t", "Block", "\u2011", "diagram", style="Heading1"),
-        paragraph(""),
-        image(alt=None),
-        paragraph("Data flow", "Heading1"),
-        pair,
-    ) == [("1.2 Block\u2011diagram", True), ("Data flow", True), ("Data flow", True)]
-
-
-def _image_beside_text() -> ET.Element:
-    result = image(alt=None)
-    result.append(_ooxml.word_run("See the diagram."))
-    return result
-
-
-@pytest.mark.parametrize(
-    "content",
-    [
-        pytest.param([paragraph("Body text"), image(alt=None)], id="text-between"),
-        pytest.param([table(row(cell("x")), columns=1), image(alt=None)], id="table-between"),
-        pytest.param([_image_beside_text()], id="text-beside-the-image"),
-        pytest.param([table(row(cell(image(alt=None))), columns=1)], id="image-in-a-table"),
-    ],
-)
-def test_only_a_heading_directly_above_in_the_same_container_counts(
-    content: list[ET.Element],
-) -> None:
-    assert _headed(paragraph("Heading", "Heading1"), *content)[-1] == (None, False)
-
-
-def test_a_caption_or_word_alt_text_wins_over_the_heading() -> None:
-    assert _headed(
+def test_images_below_headings_take_their_caption_or_word_alt_text() -> None:
+    assert _described(
         paragraph("Heading", "Heading1"),
         image(alt=None),
         _figure(": Caption"),
         paragraph("Other", "Heading1"),
         image(alt="Word"),
-    ) == [("Caption", False), ("Word", False)]
+    ) == [("Caption", True), ("Word", False)]
 
 
 @pytest.mark.parametrize(

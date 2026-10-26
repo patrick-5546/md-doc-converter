@@ -8,7 +8,6 @@ import re
 import unicodedata
 import urllib.parse
 from collections import Counter, defaultdict
-from collections.abc import Collection
 from concurrent.futures import Future, ThreadPoolExecutor, wait
 from pathlib import Path, PurePosixPath
 from xml.etree import ElementTree as ET
@@ -102,33 +101,15 @@ def _caption_title(paragraph: ET.Element) -> str | None:
     return title if re.search(r"\w", title) else text or None
 
 
-def _shown_text(paragraph: ET.Element) -> str:
-    """The text Word shows for *paragraph*, on one line."""
-    pieces: list[str] = []
-    for run in paragraph.iter(WORD + "r"):
-        for node in run:
-            if node.tag == WORD + "t":
-                pieces.append(node.text or "")
-            elif node.tag == WORD + "noBreakHyphen":
-                pieces.append("\u2011")
-            elif node.tag in {WORD + "tab", WORD + "br", WORD + "cr"}:
-                pieces.append(" ")
-    return " ".join("".join(pieces).split())
-
-
 def image_descriptions(
     root: ET.Element,
     units: list[ET.Element] | None = None,
-    headings: Collection[ET.Element] = (),
 ) -> list[ImageDescription]:
-    """Describe each image by its figure caption, or else by Word's alt text, or else by the
-    text of a heading in *headings* directly above it.
+    """Describe each image by its figure caption, or else by Word's alt text.
 
     A caption is the nearest paragraph with text above or below a paragraph with one image,
     in the same table cell or body. An image with a caption on both sides takes the one on
     the side where most of the document's captions are, and each caption describes one image.
-    A heading describes the images of a paragraph without text when no paragraph with text
-    or an image comes between them.
     """
     parents = {child: parent for parent in root.iter() for child in parent}
     paragraphs = list(_ooxml.scoped_iter(root, WORD + "p"))
@@ -146,17 +127,6 @@ def image_descriptions(
     containers: dict[ET.Element | None, list[ET.Element]] = defaultdict(list)
     for paragraph in paragraphs:
         containers[ancestor(paragraph, {WORD + "tc", WORD + "body"})].append(paragraph)
-
-    def heading_above(paragraph: ET.Element | None) -> str | None:
-        if paragraph is None or paragraph in headings or _ooxml.paragraph_text(paragraph):
-            return None
-        container = ancestor(paragraph, {WORD + "tc", WORD + "body"})
-        for above in reversed(paragraphs[: paragraph_indices[paragraph]]):
-            if _ooxml.paragraph_text(above) or counts[above]:
-                if above in headings and ancestor(above, {WORD + "tc", WORD + "body"}) is container:
-                    return _shown_text(above) or None
-                return None
-        return None
 
     titles: dict[ET.Element, str | None] = {}
     metadata: list[str | None] = []
@@ -212,13 +182,11 @@ def image_descriptions(
     result: list[ImageDescription] = []
     for index, (paragraph, description) in enumerate(zip(image_paragraphs, metadata, strict=True)):
         title = titles[chosen[index]] if index in chosen else None
-        heading = None if title or description else heading_above(paragraph)
         result.append(
             ImageDescription(
-                title or description or heading,
+                title or description,
                 paragraph_indices[paragraph] if paragraph is not None else -1,
                 from_caption=title is not None,
-                from_heading=heading is not None,
             )
         )
     return result

@@ -23,7 +23,6 @@ from md_doc_converter.pandoc import decode_document
 
 EMPTY_ITEMS = "empty Word list item(s) omitted"
 _CAPTIONED = "image(s) described by their caption"
-_HEADED = "image(s) described by the heading above"
 _LISTS = frozenset({"BulletList", "OrderedList"})
 
 
@@ -608,8 +607,6 @@ def publish_images(
             alt_text = image.alt_text
             if image.from_caption:
                 report.applied("images", _CAPTIONED)
-            if image.from_heading:
-                report.applied("images", _HEADED)
             if alt_text is None:
                 counts.unresolved_alt_text += 1
                 report.warn(

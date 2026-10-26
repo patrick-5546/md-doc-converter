@@ -39,7 +39,6 @@ class ImageDescription:
     alt_text: str | None
     paragraph_index: int
     from_caption: bool = False
-    from_heading: bool = False
 
 
 @dataclass(frozen=True)
