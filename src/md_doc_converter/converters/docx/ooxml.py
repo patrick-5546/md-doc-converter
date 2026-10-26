@@ -6,6 +6,7 @@ import copy
 import io
 import posixpath
 import re
+import unicodedata
 import urllib.parse
 import uuid
 from collections import Counter
@@ -485,6 +486,62 @@ def plain_spaces(root: ET.Element, styles: ET.Element) -> int:
                     for character in value
                 )
                 node.set(key, plain)
+    return changed
+
+
+NO_BREAK_HYPHEN = "\u2011"
+LEFT_TO_RIGHT_MARK = "\u200e"
+_RIGHT_TO_LEFT_SETTINGS = frozenset({WORD + "rtl", WORD + "bidi", WORD + "bidiVisual"})
+
+
+def _right_to_left(*roots: ET.Element) -> bool:
+    """Whether *roots* hold right-to-left text, or turn on a right-to-left setting."""
+    for root in roots:
+        for node in root.iter():
+            if node.tag in _RIGHT_TO_LEFT_SETTINGS and word_flag(node):
+                return True
+            if node.tag in _TEXT_TAGS and any(
+                ord(character) >= 0x590
+                and unicodedata.bidirectional(character) in {"R", "AL", "AN"}
+                for character in node.text or ""
+            ):
+                return True
+    return False
+
+
+def plain_hyphens_and_marks(root: ET.Element, styles: ET.Element) -> int:
+    """Write Word's no-break hyphens as hyphens and, without right-to-left text, drop
+    left-to-right marks, in text and in image alt text; return how many changed.
+
+    Few fonts have the no-break hyphen, which text search does not match to a hyphen, and
+    Word puts left-to-right marks, which show nothing, in cross-references and caption
+    numbers; they change nothing in a document without right-to-left text or settings.
+    """
+    marks = "" if _right_to_left(root, styles) else LEFT_TO_RIGHT_MARK
+    changed = 0
+
+    def plain(text: str) -> str:
+        nonlocal changed
+        result = text.replace(NO_BREAK_HYPHEN, "-")
+        if marks:
+            result = result.replace(marks, "")
+        changed += sum(text.count(character) for character in NO_BREAK_HYPHEN + marks)
+        return result
+
+    for run in root.iter(WORD + "r"):
+        for index, child in enumerate(list(run)):
+            if child.tag == WORD + "noBreakHyphen":
+                hyphen = ET.Element(WORD + "t")
+                hyphen.text = "-"
+                run[index] = hyphen
+                changed += 1
+    for node in root.iter():
+        if node.tag == WORD + "t" and node.text:
+            node.text = plain(node.text)
+        for key in _ALT_TEXT.get(node.tag, ()):
+            value = node.get(key)
+            if value:
+                node.set(key, plain(value))
     return changed
 
 

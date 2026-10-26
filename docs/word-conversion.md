@@ -94,11 +94,13 @@ accepted.
   replaced by the PNG copy that Word keeps with it.
 - **Spaces:** no-break and other Unicode spaces become plain spaces, except
   spaces that indent a line, which stay no-break spaces so that the indent
-  shows. Zero-width spaces are dropped.
+  shows. Zero-width spaces are dropped, and so are the left-to-right marks that
+  Word puts in cross-references, unless the document has right-to-left text.
 - **Symbols:** an arrow in a symbol font, such as Wingdings, becomes the arrow
   that every font has, such as → or ↖, by its direction. Pandoc reads these
   arrows as characters that few fonts have, which PDFs and browsers show as
-  boxes.
+  boxes. A no-break hyphen, as in Word's caption numbers, becomes a hyphen,
+  which every font has and a search for `Table 2-1` finds.
 
 For example, a short document with a Title paragraph, a cross-reference to a
 bookmarked paragraph, text in a monospace font, a captioned figure, and a table

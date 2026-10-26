@@ -608,7 +608,7 @@ def test_caption_title_wins_over_word_alt_text() -> None:
             id="spaced-colon-without-the-caption-style",
         ),
         pytest.param(
-            "USB\u2011to\u2011LAN bridge",
+            "USB-to-LAN bridge",
             _caption("Figure 9", "\u2011", "13 \u2013 USB", "\u2011", "to", "\u2011", "LAN bridge"),
             id="en-dash-after-a-chapter-number",
         ),

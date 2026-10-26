@@ -895,6 +895,37 @@ def test_code_text_writes_unicode_spaces_as_spaces() -> None:
     assert _ooxml.code_text(code) == "    x = 1;"
 
 
+def _marked(*paragraphs: ET.Element) -> tuple[int, str, str]:
+    """Make the hyphens and marks of *paragraphs*, and of an image's alt text, plain; return
+    the count, the text and the alt text."""
+    body = ET.Element(W + "body")
+    body.extend(paragraphs)
+    picture = ET.SubElement(ET.SubElement(body, W + "p"), _ooxml.DRAWING_WORD + "docPr")
+    picture.set("descr", "Figure 2\u20111\u200e")
+    changed = _ooxml.plain_hyphens_and_marks(body, ET.Element(W + "styles"))
+    return changed, _ooxml.word_text(body), picture.get("descr", "")
+
+
+def test_no_break_hyphens_become_hyphens_and_left_to_right_marks_go() -> None:
+    # As Word writes a caption number and a cross-reference to a section.
+    caption = _styled(None, _run("Table \u200e2"))
+    ET.SubElement(caption[0], W + "noBreakHyphen")
+    ET.SubElement(caption[0], W + "t").text = "1, see Section \u200e3.2\u20111"
+    assert _marked(caption) == (6, "Table 2-1, see Section 3.2-1", "Figure 2-1")
+
+
+def test_left_to_right_marks_stay_beside_right_to_left_text_or_settings() -> None:
+    hebrew = _styled(None, _run("\u05e9\u05dc\u05d5\u05dd \u200e(1\u20112)"))
+    assert _marked(hebrew) == (2, "\u05e9\u05dc\u05d5\u05dd \u200e(1-2)", "Figure 2-1\u200e")
+    reversed_paragraph = _styled(None, _run("Table \u200e1"))
+    ET.SubElement(ET.SubElement(reversed_paragraph, W + "pPr"), W + "bidi")
+    assert _marked(reversed_paragraph)[1] == "Table \u200e1"
+    # A setting that is off is no right-to-left setting.
+    plain = _styled(None, _run("Table \u200e1"))
+    ET.SubElement(ET.SubElement(plain, W + "pPr"), W + "bidi", {W + "val": "0"})
+    assert _marked(plain)[1] == "Table 1"
+
+
 def _first_run(node: ET.Element) -> ET.Element:
     return next(run for run in node.iter(W + "r") if run.find(W + "t") is not None)
 

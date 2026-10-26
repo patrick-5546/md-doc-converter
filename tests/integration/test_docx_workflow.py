@@ -1296,7 +1296,7 @@ def test_simple_fields_keep_their_cached_results(convert: Converter) -> None:
     ]
     result, report, _warnings = convert.reported(body)
     # A cross-reference with \h is a hyperlink in Word, to the section that holds its bookmark.
-    for text in ("Table 2\u20111: Registers", "Figure 3: Pipeline", "See [Figure 3](#results)."):
+    for text in ("Table 2-1: Registers", "Figure 3: Pipeline", "See [Figure 3](#results)."):
         assert f"\n{text}\n" in result
     assert report.status("fields") == "applied"
     assert "  fields: applied (4 simple field(s) kept)" in report.summary()

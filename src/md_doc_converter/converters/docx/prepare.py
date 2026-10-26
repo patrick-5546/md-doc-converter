@@ -1153,6 +1153,11 @@ def prepare_document(
         report.applied("hidden-text", count=_ooxml.drop_hidden_text(root, package.styles))
     with transform(report, "spaces"):
         report.applied("spaces", count=_ooxml.plain_spaces(root, package.styles))
+        report.applied(
+            "spaces",
+            "no-break hyphen(s) and left-to-right mark(s) made plain",
+            _ooxml.plain_hyphens_and_marks(root, package.styles),
+        )
     with transform(report, "underline"):
         report.applied("underline", count=_ooxml.drop_redundant_underline(root, package.styles))
         _ooxml.single_underlines(root)

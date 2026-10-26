@@ -81,7 +81,7 @@ def _caption_title(paragraph: ET.Element) -> str | None:
             elif node.tag == WORD + "t":
                 pieces.append(node.text or "")
             elif node.tag == WORD + "noBreakHyphen":
-                pieces.append("\u2011")
+                pieces.append("-")
             elif node.tag in {WORD + "tab", WORD + "br", WORD + "cr"}:
                 pieces.append(" ")
     text = "".join(pieces)
