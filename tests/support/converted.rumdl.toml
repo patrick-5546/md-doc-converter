@@ -6,6 +6,7 @@ disable = [
     # Word paragraphs are lines of any length.
     "MD013",
     # These follow the Word document: its headings, emphasis and alt text.
+    "MD001",
     "MD024",
     "MD025",
     "MD026",

@@ -91,7 +91,7 @@ def test_word_to_html_and_pdf_next_to_the_canonical_markdown(tmp_path: Path) -> 
         path.relative_to(images): path.read_bytes() for path in images.rglob("*") if path.is_file()
     }
     assert images_before
-    assert "## 2. Status.\n" in markdown_before.decode()
+    assert "### 2. Status.\n" in markdown_before.decode()
     assert "**Step 1.**\n\nKeep" in markdown_before.decode()
     assert "- Alpha\n- Beta" in markdown_before.decode()
     assert "[Status section](#2-status)" in markdown_before.decode()

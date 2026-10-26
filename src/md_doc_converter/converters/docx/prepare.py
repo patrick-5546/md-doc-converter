@@ -45,7 +45,7 @@ MISSING_BOOKMARK = "link to a missing Word bookmark; kept as plain text"
 _EMPTY_HEADING = "Word heading has no text; omitted"
 _PICTURE_HEADING = "Word heading has only a picture; kept as a paragraph"
 _LISTED_HEADING = "Word numbers this outline-level heading as a list item; kept as a list item"
-_LEVELS_CLOSED = "heading(s) moved up to close a skipped level"
+SKIPPED_LEVEL = "Word heading skips a level; kept at its level"
 _UNLABELED_ITEMS = "Word list paragraph(s) without a number or bullet kept as paragraphs"
 _LIST_GAPS = "empty paragraph(s) inside a Word list omitted"
 # The names Word gives the bookmarks that its tables of contents and cross-references lead to.
@@ -395,9 +395,9 @@ def _prepare_headings(
     A heading by Word's outline level or style keeps its level, up to 6; one that shows no
     text, or only a picture, is a paragraph. A numbered heading by outline level, not by a
     heading style, stays the list item that Word numbers. A heading more than one level below
-    the heading it belongs to moves up, with its subheadings, as markdownlint's MD001 asks;
-    headings in tables are left out of that. Return the headings, in document order, and the
-    numbered headings that stay list items.
+    the heading before it keeps its level too, and is reported, as markdownlint's MD001 would
+    report it; headings in tables are left out of that. Return the headings, in document
+    order, and the numbered headings that stay list items.
     """
     levels: dict[ET.Element, int] = {}
     listed: list[ET.Element] = []
@@ -436,17 +436,18 @@ def _prepare_headings(
             _make_plain_paragraph(paragraph)
             continue
         levels[paragraph] = level
-    open_levels: list[tuple[int, int]] = []
+    previous: int | None = None
     for paragraph, level in levels.items():
         if in_table(paragraph):
             continue
-        while open_levels and open_levels[-1][0] >= level:
-            open_levels.pop()
-        final = open_levels[-1][1] + 1 if open_levels else level
-        open_levels.append((level, final))
-        if final != level:
-            levels[paragraph] = final
-            report.applied("headings", _LEVELS_CLOSED)
+        if previous is not None and level > previous + 1:
+            text = " ".join(_ooxml.paragraph_text(paragraph).split())
+            report.warn(
+                f"headings: Word heading {text!r}, at level {level}, follows a level "
+                f"{previous} heading; kept at its level",
+                kind=SKIPPED_LEVEL,
+            )
+        previous = level
     for paragraph, level in levels.items():
         _set_style(paragraph, styles.style("paragraph", f"heading {level}"))
         properties = paragraph.find(WORD + "pPr")

@@ -222,14 +222,14 @@ def test_default_keeps_step_and_status_labels_and_index_content(convert: Convert
             paragraph("Flow.", "Heading3"),
         ]
     )
-    # Headings keep their punctuation, as bold labels do; skipped levels close.
-    assert "# Title.\n" in result
-    assert "## Gap.\n" in result
+    # Headings keep their punctuation, as bold labels do, and their levels.
+    assert "\n# Title.\n" in f"\n{result}"
+    assert "\n#### Gap.\n" in result
     assert "**1)**\n\nDo the thing." in result
     assert "**Closed.**" in result
     assert "# Contents" in result
     assert "Original index entry" in result
-    assert result.count("## Flow.\n") == 2
+    assert result.count("\n### Flow.\n") == 2
     assert stats["qualified_headings"] == 0
     assert result.endswith("\n")
     assert not result.endswith("\n\n")
@@ -473,7 +473,7 @@ def test_headings_keep_their_trailing_punctuation(convert: Converter) -> None:
     assert report.status("checks") == "applied"
 
 
-def test_skipped_heading_levels_close_with_their_subheadings(convert: Converter) -> None:
+def test_skipped_heading_levels_are_kept_and_reported(convert: Converter) -> None:
     result, report, _warnings = convert.reported(
         [
             paragraph("Start", "Heading2"),
@@ -490,14 +490,20 @@ def test_skipped_heading_levels_close_with_their_subheadings(convert: Converter)
     assert levels == [
         ("##", "Start"),
         ("#", "One"),
-        ("##", "Three"),
-        ("###", "Four"),
-        ("##", "Three again"),
+        ("###", "Three"),
+        ("####", "Four"),
+        ("###", "Three again"),
         ("##", "Two"),
-        ("###", "Five"),
+        ("#####", "Five"),
     ]
     assert "<h4>In a cell</h4>" in result
-    assert "4 heading(s) moved up to close a skipped level" in "\n".join(report.summary())
+    # The first heading, and headings in tables, skip nothing.
+    assert [finding for finding in report.findings if finding.startswith("headings:")] == [
+        "headings: Word heading 'Three', at level 3, follows a level 1 heading; kept at its level",
+        "headings: Word heading 'Five', at level 5, follows a level 2 heading; kept at its level",
+    ]
+    assert report.kinds[_prepare.SKIPPED_LEVEL] == 2
+    assert report.sections[_prepare.SKIPPED_LEVEL] == "word"
     assert report.status("checks") == "applied"
 
 
@@ -2937,8 +2943,8 @@ def test_unnamed_and_duplicate_bookmarks_are_reported(convert: Converter) -> Non
     }
 
 
-# Headings 1, 3, and 6 become levels 1, 2, and 3; links to their bookmarks lead to them.
-def test_skipped_heading_levels_close_and_bookmark_links_follow(
+# Headings 1, 3, and 6 keep their levels; links to their bookmarks lead to them.
+def test_skipped_heading_levels_stay_and_bookmark_links_follow(
     source: Path, tmp_path: Path
 ) -> None:
     body = [
@@ -2952,7 +2958,7 @@ def test_skipped_heading_levels_close_and_bookmark_links_follow(
     write_docx(source, body)
     _pipeline.convert_docx(source, tmp_path / "guide.md")
     assert (tmp_path / "guide.md").read_text(encoding="utf-8") == (
-        "Preamble\n\n# First.\n\n[Deeper](#third)\n\n## Third.\n\n### Detail.\n\n[Up](#first)\n"
+        "Preamble\n\n# First.\n\n[Deeper](#third)\n\n### Third.\n\n###### Detail.\n\n[Up](#first)\n"
     )
 
 

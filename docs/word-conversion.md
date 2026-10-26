@@ -26,9 +26,10 @@ accepted.
 - **Headings** keep Word's levels 1 to 6; levels 7 to 9 become paragraphs. A
   paragraph in Word's Title style before the first heading becomes the only `#`
   heading, and every other heading moves down one level. A heading keeps the
-  punctuation that ends it, as in Word, though markdownlint reports it. Skipped
-  levels are closed, which markdownlint would report; a heading with no text is
-  omitted, and a line break in one becomes a space. With
+  punctuation that ends it, and its level when it skips one, such as a Heading
+  3 right after a Heading 1: markdownlint reports both, and the report names
+  each skip, to fix in Word. A heading with no text is omitted, and a line
+  break in one becomes a space. With
   `--qualify-duplicate-headings`, a repeated heading also names the
   headings of the sections that hold it: two `## Overview` headings under
   `# Block A` and `# Block B` become `## Block A - Overview` and
@@ -115,7 +116,7 @@ The controller starts after [the reset step](#reset).
 
 ## Setup
 
-### Reset
+#### Reset
 
 Hold the reset for two cycles.
 
@@ -131,8 +132,8 @@ Figure 1: Block diagram
 ```
 
 The Title paragraph is the only `#` heading, and the other headings moved down
-a level; `Reset`, a level 3 heading in a level 1 section, closes the skipped
-level. The cross-reference leads to the
+a level; `Reset`, a level 3 heading in a level 1 section, keeps its level, and
+the report names it. The cross-reference leads to the
 section that holds its bookmark, and the figure's alt text is its caption's
 title.
 
