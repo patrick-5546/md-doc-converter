@@ -87,8 +87,8 @@ is described in:
   and what makes clean output;
 - [Rendering](docs/rendering.md), for `md-to-html` and `md-to-pdf`: output
   names, folder input, how Markdown is read, images from elsewhere, Mermaid
-  diagrams, math, the page header and footer, extra stylesheets, the PDF time
-  limit and table styling;
+  diagrams, math, the page header and footer, the document language, extra
+  stylesheets, the PDF time limit and table styling;
 - [Installation](#installation) and [Toolchain](#toolchain), for `setup` and
   `doctor`.
 
@@ -118,6 +118,7 @@ Command-line options override these environment variables.
 | `MD_DOC_CONVERTER_HOME` | Toolchain directory (default `~/.local/share/md-doc-converter`, or `%LOCALAPPDATA%\md-doc-converter` on Windows) |
 | `MD_DOC_CONVERTER_HEADER` | Default `--header` text |
 | `MD_DOC_CONVERTER_FOOTER` | Default `--footer` text |
+| `MD_DOC_CONVERTER_LANG` | Default `--lang` language tag (`en`) |
 | `MD_DOC_CONVERTER_PDF_TIMEOUT` | Default `--pdf-timeout`, in seconds (600; `0` = no limit) |
 
 ## Toolchain

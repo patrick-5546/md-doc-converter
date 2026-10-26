@@ -202,6 +202,17 @@ See [margin at-rules](https://developer.mozilla.org/en-US/docs/Web/CSS/Reference
 for the other boxes, and the `counter(page)` and `counter(pages)` values, which
 an extra stylesheet can use.
 
+## Document language
+
+The HTML and the PDF declare the document's language, which screen readers
+need to read it aloud: English, `en`, unless `--lang` gives another language
+tag, such as `en-GB`, `fr-CA` or `zh-Hant-TW`. `MD_DOC_CONVERTER_LANG` sets a
+default, which the option overrides:
+
+```sh
+md-doc-converter md-to-pdf docs/spec.md --lang en-GB
+```
+
 ## Extra stylesheet
 
 `--extra-css FILE` applies a stylesheet after the shared styles and the header

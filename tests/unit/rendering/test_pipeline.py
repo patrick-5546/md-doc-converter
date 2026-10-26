@@ -321,6 +321,76 @@ def test_pdf_timeout_rejects_anything_but_whole_seconds_up_to_the_maximum(value:
         render.pdf_timeout_seconds(value)
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        pytest.param(None, render.LANG_DEFAULT, id="unset"),
+        pytest.param("", render.LANG_DEFAULT, id="empty"),
+        pytest.param("  ", render.LANG_DEFAULT, id="blank"),
+        pytest.param("de", "de", id="language"),
+        pytest.param(" en-GB ", "en-GB", id="region"),
+        pytest.param("zh-Hant-TW", "zh-Hant-TW", id="script"),
+        pytest.param("es-419", "es-419", id="numeric-region"),
+    ],
+)
+def test_language_tag_accepts_tags_and_defaults_when_blank(
+    value: str | None, expected: str
+) -> None:
+    assert render.language_tag(value) == expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param("en_US", id="underscore"),
+        pytest.param("english", id="word"),
+        pytest.param("true", id="boolean"),
+        pytest.param("e", id="short"),
+        pytest.param("en-", id="empty-subtag"),
+        pytest.param("en GB", id="space"),
+        pytest.param("de-verylongsubtag", id="long-subtag"),
+        pytest.param("\u00e9n", id="not-ascii"),
+    ],
+)
+def test_language_tag_rejects_anything_but_a_tag(value: str) -> None:
+    message = (
+        "--lang (MD_DOC_CONVERTER_LANG) must be a language tag such as en, en-GB or fr-CA: "
+        f"{value!r}"
+    )
+    with pytest.raises(render.RenderError, match=f"^{re.escape(message)}$"):
+        render.language_tag(value)
+
+
+def languages(fake: FakeRenderer) -> list[str]:
+    """The document language that Pandoc was given for each render."""
+    return [
+        argument.removeprefix("--metadata=lang=")
+        for command, _ in fake.pandoc_calls
+        for argument in command
+        if argument.startswith("--metadata=lang=")
+    ]
+
+
+def test_pandoc_gets_the_document_language(
+    fake: FakeRenderer, source: Path, tools: Toolchain
+) -> None:
+    render.render_markdown(source, FORMAT.HTML, tools=tools)
+    render.render_markdown(source, FORMAT.PDF, options=Options(lang="fr-CA"), tools=tools)
+    assert languages(fake) == [render.LANG_DEFAULT, "fr-CA"]
+
+
+def test_an_invalid_language_fails_before_rendering(
+    fake: FakeRenderer, run: mock.Mock, source: Path, tools: Toolchain
+) -> None:
+    for output_format in FORMAT:
+        with pytest.raises(render.RenderError, match=r"MD_DOC_CONVERTER_LANG"):
+            render.render_markdown(
+                source, output_format, options=Options(lang="en_US"), tools=tools
+            )
+    run.assert_not_called()
+    assert not fake.prepare_calls
+
+
 def test_embedded_image_data_goes_into_the_html_after_pandoc(
     fake: FakeRenderer, source: Path, tools: Toolchain
 ) -> None:
@@ -385,12 +455,17 @@ def test_command_line_flags_override_environment_defaults(
     monkeypatch.setenv("MD_DOC_CONVERTER_HEADER", "Header from environment")
     monkeypatch.setenv("MD_DOC_CONVERTER_FOOTER", "Footer from environment")
     monkeypatch.setenv("MD_DOC_CONVERTER_PDF_TIMEOUT", "45")
+    monkeypatch.setenv("MD_DOC_CONVERTER_LANG", "de")
     monkeypatch.setattr(render, "toolchain", installed)
     path = str(source)
     assert render.main([path], action="pdf") == 0
     assert (
         render.main(
-            [path, "--header", "Flag header", "--footer", "", "--pdf-timeout", "30"],
+            [
+                path,
+                *("--header", "Flag header", "--footer", ""),
+                *("--pdf-timeout", "30", "--lang", "fr-CA"),
+            ],
             action="pdf",
         )
         == 0
@@ -400,6 +475,7 @@ def test_command_line_flags_override_environment_defaults(
         command[command.index("--timeout-seconds") + 1] for command in fake.printer_commands
     ]
     assert timeouts == ["45", "30"]
+    assert languages(fake) == ["de", "fr-CA"]
     assert 'content: "Header from environment"' in fake.styles[0]
     assert 'content: "Footer from environment"' in fake.styles[0]
     assert 'content: "Flag header"' in fake.styles[1]

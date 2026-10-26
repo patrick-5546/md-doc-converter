@@ -57,6 +57,11 @@ PDF_TIMEOUT_MAX = 2_147_483
 HEADER_VARIABLE = "MD_DOC_CONVERTER_HEADER"
 FOOTER_VARIABLE = "MD_DOC_CONVERTER_FOOTER"
 PDF_TIMEOUT_VARIABLE = "MD_DOC_CONVERTER_PDF_TIMEOUT"
+LANG_VARIABLE = "MD_DOC_CONVERTER_LANG"
+LANG_DEFAULT = "en"
+# A BCP 47 language tag's form: a language and, optionally, script, region and other subtags.
+# Pandoc reads metadata values as YAML, which takes no such tag for a boolean or a number.
+LANGUAGE_TAG = re.compile(r"[A-Za-z]{2,3}(?:-[A-Za-z0-9]{1,8})*")
 WINDOWS = sys.platform == "win32"
 
 
@@ -83,6 +88,8 @@ class RenderOptions:
     pdf_timeout: str | None = None
     keep_intermediates: Path | None = None
     download_images: bool = False
+    # A language tag; None or blank selects the default.
+    lang: str | None = None
 
 
 def pdf_timeout_seconds(value: str | None) -> int:
@@ -96,6 +103,18 @@ def pdf_timeout_seconds(value: str | None) -> int:
             f"to {PDF_TIMEOUT_MAX}: {value!r}"
         )
     return int(text)
+
+
+def language_tag(value: str | None) -> str:
+    """Check a document language tag, such as en-GB: blank selects the default."""
+    text = (value or "").strip()
+    if not text:
+        return LANG_DEFAULT
+    if not LANGUAGE_TAG.fullmatch(text):
+        raise RenderError(
+            f"--lang ({LANG_VARIABLE}) must be a language tag such as en, en-GB or fr-CA: {value!r}"
+        )
+    return text
 
 
 def absolute_path(path: Path) -> Path:
@@ -346,6 +365,7 @@ def render_markdown(
     options = options or RenderOptions()
     pdf = output_format is OutputFormat.PDF
     timeout = pdf_timeout_seconds(options.pdf_timeout) if pdf else 0
+    lang = language_tag(options.lang)
     source = absolute_path(source)
     if not source.is_file() and not source.is_dir():
         raise RenderError(f"Input is not a file or directory: {source}")
@@ -417,6 +437,8 @@ def render_markdown(
                 "--defaults",
                 str(asset_path("pandoc-defaults.yaml")),
                 "--standalone",
+                # The HTML's language, which Chrome gives the PDF too.
+                f"--metadata=lang={lang}",
                 "--include-in-header",
                 str(styles_file),
                 "-o",
@@ -510,6 +532,11 @@ def main(argv: list[str] | None = None, *, action: Literal["html", "pdf"]) -> in
         help=f"Page footer text, bottom left (default: ${FOOTER_VARIABLE}, or none)",
     )
     parser.add_argument(
+        "--lang",
+        metavar="TAG",
+        help=f"Document language tag (default: ${LANG_VARIABLE}, or {LANG_DEFAULT})",
+    )
+    parser.add_argument(
         "--extra-css",
         type=Path,
         metavar="FILE",
@@ -559,6 +586,7 @@ def main(argv: list[str] | None = None, *, action: Literal["html", "pdf"]) -> in
         pdf_timeout=os.environ.get(PDF_TIMEOUT_VARIABLE) if pdf_timeout is None else pdf_timeout,
         keep_intermediates=arguments.keep_intermediates,
         download_images=arguments.download_images,
+        lang=os.environ.get(LANG_VARIABLE) if arguments.lang is None else arguments.lang,
     )
     console = Console(f"md-to-{action}", arguments.verbosity)
     console.note(f"rendering {shown(arguments.input)}")

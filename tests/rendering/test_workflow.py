@@ -17,7 +17,12 @@ from urllib.parse import unquote
 from tests.support.suites import poppler
 
 CLI = (sys.executable, "-m", "md_doc_converter")
-SETTINGS = {"MD_DOC_CONVERTER_HEADER", "MD_DOC_CONVERTER_FOOTER", "MD_DOC_CONVERTER_PDF_TIMEOUT"}
+SETTINGS = {
+    "MD_DOC_CONVERTER_HEADER",
+    "MD_DOC_CONVERTER_FOOTER",
+    "MD_DOC_CONVERTER_PDF_TIMEOUT",
+    "MD_DOC_CONVERTER_LANG",
+}
 
 
 def png_chunk(kind: bytes, payload: bytes) -> bytes:
@@ -39,7 +44,7 @@ def pixel_png() -> bytes:
 
 
 def command(directory: Path, *arguments: str) -> None:
-    """Run a command in *directory*, without the user's page settings; it must succeed."""
+    """Run a command in *directory*, without the user's rendering settings; it must succeed."""
     environment = {key: value for key, value in os.environ.items() if key not in SETTINGS}
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
     result = subprocess.run(
@@ -113,10 +118,13 @@ def test_word_to_html_and_pdf_next_to_the_canonical_markdown(tmp_path: Path) -> 
     assert "<link" not in rendered
     # Without math, KaTeX's stylesheet and fonts stay out.
     assert "KaTeX_Main" not in rendered
+    assert '<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">' in rendered
 
     command(tmp_path, *CLI, "md-to-pdf", relative)
     pdf = canonical.with_suffix(".pdf")
     assert pdf.read_bytes().startswith(b"%PDF-")
+    # Chrome gives the PDF the HTML's language, rather than its own locale's.
+    assert b"/Lang (en)" in pdf.read_bytes()
     review = tmp_path / "reviews" / "cache review.pdf"
     command(
         tmp_path,
@@ -125,8 +133,11 @@ def test_word_to_html_and_pdf_next_to_the_canonical_markdown(tmp_path: Path) -> 
         str(canonical),
         "-o",
         str(review.relative_to(tmp_path)),
+        "--lang",
+        "fr-CA",
     )
     assert review.read_bytes().startswith(b"%PDF-")
+    assert b"/Lang (fr-CA)" in review.read_bytes()
     assert [path.name for path in review.parent.iterdir()] == [review.name]
 
     assert canonical.read_bytes() == markdown_before
