@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import subprocess
 import threading
@@ -12,6 +13,7 @@ from unittest import mock
 import pytest
 
 from md_doc_converter import executables, pandoc
+from md_doc_converter.console import Console, activated, active
 from md_doc_converter.converters.docx import navigation, reference
 from md_doc_converter.converters.docx.models import ConversionError
 
@@ -37,6 +39,12 @@ def test_pandoc_runs_overlap_and_their_results_keep_their_order() -> None:
     assert pandoc.run_all([lambda: 3]) == [3]
     with pytest.raises(pandoc.PandocError, match="first"):
         pandoc.run_all([failing("first"), failing("second")])
+
+
+def test_overlapping_pandoc_runs_report_through_the_running_commands_console() -> None:
+    running = Console("docx-to-md", stream=io.StringIO())
+    with activated(running):
+        assert pandoc.run_all([active, active]) == [running, running]
 
 
 def test_explicit_reader_is_used_and_document_is_parsed_once(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import re
 import sys
@@ -13,6 +14,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from md_doc_converter.console import Console, activated
 from md_doc_converter.converters.docx import models as _models
 from md_doc_converter.converters.docx import reference as _reference
 from md_doc_converter.converters.docx import tables as _tables
@@ -85,14 +87,21 @@ def test_pipes_in_table_code_spans_stay_escaped_through_the_gfm_writer(pandoc: s
     assert _reference.markdown_ast(written, pandoc, "Table code test").ast == tree
 
 
-def test_run_command_shows_warnings_after_success_unless_quiet(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    command = [sys.executable, "-c", "import sys; print('out'); print('warning', file=sys.stderr)"]
-    assert _reference.run_command(command, "Probe") == "out\n"
-    assert capsys.readouterr().err == "Probe: warning\n"
-    assert _reference.run_command(command, "Probe", quiet=True) == "out\n"
-    assert capsys.readouterr().err == ""
+def test_run_command_reports_warnings_on_the_console_after_success_unless_quiet() -> None:
+    stream = io.StringIO()
+    stderr = "[WARNING] Could not convert\\n  the detail\\nAnother"
+    command = [
+        sys.executable,
+        "-c",
+        f"import sys; print('out'); print('{stderr}', file=sys.stderr)",
+    ]
+    with activated(Console("docx-to-md", stream=stream)):
+        assert _reference.run_command(command, "Probe") == "out\n"
+        assert _reference.run_command(command, "Probe", quiet=True) == "out\n"
+    assert stream.getvalue() == (
+        "docx-to-md: warning: Probe: Could not convert the detail\n"
+        "docx-to-md: warning: Probe: Another\n"
+    )
 
 
 @pytest.mark.parametrize(

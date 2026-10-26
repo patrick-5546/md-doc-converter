@@ -7,7 +7,6 @@ import json
 import re
 import string
 import subprocess
-import sys
 import unicodedata
 import urllib.parse
 from collections.abc import Callable
@@ -16,9 +15,16 @@ from typing import override
 from xml.etree import ElementTree as ET
 
 from md_doc_converter import executables
+from md_doc_converter.console import active
 from md_doc_converter.converters.docx.models import ConversionError
 from md_doc_converter.markdown.syntax import VOID_TAGS
-from md_doc_converter.pandoc import JSONValue, PandocError, ParsedMarkdown, decode_document
+from md_doc_converter.pandoc import (
+    JSONValue,
+    PandocError,
+    ParsedMarkdown,
+    decode_document,
+    messages,
+)
 
 # Without bare-URL autolinks: a URL as link text would become a link nested in the link. The
 # Markdown docx-to-md writes keeps such URLs as text, which Markdown viewers link when shown.
@@ -143,7 +149,8 @@ def run_command(
 ) -> str:
     """Run *command* and return its standard output.
 
-    Its standard error explains a failure; after success it is shown unless *quiet*.
+    Its standard error explains a failure; after success, unless *quiet*, each message in it
+    is a warning on the running command's console, which clears the status line first.
     """
     try:
         result = subprocess.run(
@@ -160,8 +167,10 @@ def run_command(
     except subprocess.CalledProcessError as error:
         detail = (error.stderr or error.stdout or "").strip()
         raise ConversionError(f"{description} failed: {detail or error}") from error
-    if result.stderr.strip() and not quiet:
-        print(f"{description}: {result.stderr.strip()}", file=sys.stderr)
+    if not quiet:
+        console = active()
+        for message in messages(result.stderr):
+            console.warning(f"{description}: {message}")
     return result.stdout
 
 

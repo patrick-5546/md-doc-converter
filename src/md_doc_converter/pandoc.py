@@ -8,6 +8,7 @@ import re
 import subprocess
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from dataclasses import dataclass
 
 from md_doc_converter import executables
@@ -44,13 +45,20 @@ def message_kind(message: str) -> str:
     return re.sub(r"\s+", " ", _SPECIFICS.sub("...", message)).strip()
 
 
+def _in_this_context[Result](call: Callable[[], Result]) -> Callable[[], Result]:
+    """*call*, made in a copy of the current context wherever it is made, such as on a thread."""
+    context = copy_context()
+    return lambda: context.run(call)
+
+
 def run_all[Result](calls: Sequence[Callable[[], Result]]) -> list[Result]:
     """The results of *calls*, made at once: each runs Pandoc, in a process of its own, so the
-    runs overlap. The first call's exception, in order, is raised."""
+    runs overlap. Each runs in a copy of the caller's context, so it reports through the running
+    command's console. The first call's exception, in order, is raised."""
     if len(calls) < 2:
         return [call() for call in calls]
     with ThreadPoolExecutor(max_workers=len(calls)) as pool:
-        futures = [pool.submit(call) for call in calls]
+        futures = [pool.submit(_in_this_context(call)) for call in calls]
         return [future.result() for future in futures]
 
 
