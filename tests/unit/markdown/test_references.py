@@ -295,7 +295,7 @@ def test_missing_reference_targets_warn_without_guessing_or_losing_titles(
         (target + "?version=1#b", "Query", "query"),
         ("https://example.test/b.md#b", "Remote", "remote"),
     ]
-    assert "heading not found in target file" in stderr
+    assert "heading or anchor not found in target file" in stderr
     assert "query parameters" in stderr
 
 

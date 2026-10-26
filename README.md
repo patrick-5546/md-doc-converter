@@ -98,7 +98,7 @@ is described in:
 over or show as written, naming the file and, when it is known, the line:
 
 ```text
-md-to-html: warning: docs/setup.md: broken anchor '#instal' (no matching heading)
+md-to-html: warning: docs/setup.md: broken anchor '#instal' (no matching heading or anchor)
 ```
 
 They show the first three warnings of each kind and count the rest. `-v`,

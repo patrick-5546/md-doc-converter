@@ -25,7 +25,7 @@ directory has a sibling ``.md`` file with the same name (e.g.
 ``topic.md`` next to ``topic/``), that file is used as the title page for
 the directory.  Cross-file ``.md`` links are resolved to internal heading
 anchors (bare links to the target's first heading, ``#fragment`` links to the
-matching heading), and unresolved ones are reported on stderr.  Heading
+matching heading or other anchor), and unresolved ones are reported on stderr.  Heading
 identifiers are the ones Pandoc gives the files' headings read as one document.
 ``prepare_markdown(folder, respect_gitignore=True)`` skips files and directories
 that git ignores.
@@ -362,13 +362,14 @@ def warn_broken_images(
 def warn_missing_anchors(
     document: MarkdownDocument, source_path: str | None, stats: Counter[str]
 ) -> None:
-    """Warn about same-file ``[text](#anchor)`` links that match no heading.
+    """Warn about same-file ``[text](#anchor)`` links that match no heading or other anchor.
 
     Computes the file's own heading anchors through Pandoc's typed AST using
-    the same reader as the renderer, then reports any in-page ``#fragment`` link
-    that does not resolve to one.
+    the same reader as the renderer, and the ids of its other elements, such as
+    an HTML ``<a id="...">``, then reports any in-page ``#fragment`` link that
+    does not resolve to one.
     """
-    anchors = {heading.identifier for heading in document.headings}
+    anchors = document.anchors
     warned: set[str] = set()
 
     def _check(target: str, image: bool) -> str:
@@ -377,8 +378,8 @@ def warn_missing_anchors(
             if decoded and decoded not in anchors and decoded not in warned:
                 warned.add(decoded)
                 active().warning(
-                    f"broken anchor '{target}' (no matching heading)",
-                    kind="broken anchor (no matching heading)",
+                    f"broken anchor '{target}' (no matching heading or anchor)",
+                    kind="broken anchor (no matching heading or anchor)",
                     where=_where(source_path),
                 )
         return target
@@ -772,6 +773,9 @@ def collect_directory(
                 file_slug_map.setdefault(item.path, identifier)
             # Pandoc reads the combined document as JSON, so it keeps these identifiers.
             header.set_identifier(identifier)
+        # Other elements, such as HTML anchors, keep their ids in the combined document.
+        for element_id in item.document.element_ids:
+            anchors.setdefault(element_id, element_id)
         file_anchor_map[item.path] = anchors
 
     resolve_file = _file_link_resolver(file_slug_map, file_anchor_map)
@@ -827,12 +831,14 @@ def _file_link_resolver(
     to ``{file-local slug: combined-document slug}`` for every heading, so a
     ``#fragment`` link is remapped to the anchor the target heading actually
     receives once duplicate slugs across the merged document are suffixed
-    (``-1``, ``-2``, ...).
+    (``-1``, ``-2``, ...); and each other element's id, such as an HTML
+    anchor's, to itself.
 
     A ``.md`` link whose target file is not among the collected files, whose
-    target has no headings, or whose ``#fragment`` does not match any heading in
-    the collected target file is left unchanged and reported once on stderr, so
-    broken cross-file links surface without silently guessing a destination.
+    target has no headings, or whose ``#fragment`` does not match any heading or
+    other anchor in the collected target file is left unchanged and reported
+    once on stderr, so broken cross-file links surface without silently guessing
+    a destination.
 
     """
     warned: set[str] = set()
@@ -874,7 +880,7 @@ def _file_link_resolver(
                     warned.add(key)
                     active().warning(
                         f"unresolved cross-file link to "
-                        f"'{file_path}#{fragment}' (heading not found in target file)",
+                        f"'{file_path}#{fragment}' (heading or anchor not found in target file)",
                         kind=_UNRESOLVED,
                     )
                 return path

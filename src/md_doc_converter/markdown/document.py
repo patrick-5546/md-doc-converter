@@ -74,6 +74,49 @@ class _HTMLTargets(HTMLParser):
         return result
 
 
+class _HTMLAnchors(HTMLParser):
+    """The ids of HTML's elements and the names of its links, but not those in comments."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.found: set[str] = set()
+
+    @override
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        for name, value in attrs:
+            if value and (name == "id" or (name == "name" and tag == "a")):
+                self.found.add(value)
+
+
+# The elements other than headings that have an id, which their content starts with.
+_IDENTIFIED = frozenset({"Code", "CodeBlock", "Div", "Figure", "Image", "Link", "Span", "Table"})
+
+
+def _element_ids(value: object, found: set[str]) -> None:
+    if isinstance(value, list):
+        for item in value:
+            _element_ids(item, found)
+    elif isinstance(value, dict):
+        tag, content = value.get("t"), value.get("c")
+        if tag in _IDENTIFIED and isinstance(content, list) and content:
+            attributes = content[0]
+            if isinstance(attributes, list) and attributes and isinstance(attributes[0], str):
+                found.add(attributes[0])
+        elif tag in {"RawInline", "RawBlock"}:
+            if (
+                isinstance(content, list)
+                and len(content) == 2
+                and content[0] == "html"
+                and isinstance(content[1], str)
+            ):
+                parser = _HTMLAnchors()
+                parser.feed(content[1])
+                parser.close()
+                found.update(parser.found)
+        for child in value.values():
+            _element_ids(child, found)
+
+
 def strip_column_widths(value: object) -> None:
     """Give every table column in Pandoc JSON *value* the default width.
 
@@ -158,6 +201,21 @@ class MarkdownDocument:
         if not isinstance(blocks, list):
             raise MarkdownError("pandoc JSON did not include a blocks list")
         return collect_headings(blocks)
+
+    @property
+    def element_ids(self) -> set[str]:
+        """The ids of elements other than headings, which links can lead to too: those that
+        Pandoc attributes give, such as `[text]{#id}`, and those of HTML, such as
+        `<a id="id"></a>`, but not of HTML in a comment."""
+        found: set[str] = set()
+        _element_ids(self.ast["blocks"], found)
+        found.discard("")
+        return found
+
+    @property
+    def anchors(self) -> set[str]:
+        """Every id that a link to this document can lead to: its headings' and other elements'."""
+        return {heading.identifier for heading in self.headings} | self.element_ids
 
     def transform_targets(self, transform: TargetTransform) -> None:
         _transform_targets(self.ast, transform)

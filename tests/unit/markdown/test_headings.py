@@ -178,6 +178,26 @@ def test_same_file_anchor_warning_uses_renderer_ids(capsys: pytest.CaptureFixtur
     assert "broken anchor '#overview'" in warnings
 
 
+def test_links_may_lead_to_html_anchors_and_element_ids(capsys: pytest.CaptureFixture[str]) -> None:
+    markdown = (
+        "[a](#ref-spec) [b](#named) [c](#span-id) [d](#div-id) [e](#in-table)\n"
+        "[f](#commented) [g](#missing)\n\n"
+        '<a id="ref-spec"></a>Spec, <a name="named">named</a>\n\n'
+        "[Text]{#span-id}\n\n"
+        "::: {#div-id}\nInside\n:::\n\n"
+        '| Cell |\n| --- |\n| <a id="in-table"></a>In a table |\n\n'
+        '<!-- <a id="commented"></a> -->\n'
+    )
+
+    preprocess.preprocess(markdown, source_path="input.md")
+
+    warnings = capsys.readouterr().err
+    assert re.findall(r"broken anchor '#([^']*)' \(no matching heading or anchor\)", warnings) == [
+        "commented",
+        "missing",
+    ]
+
+
 def test_directory_links_remap_to_combined_renderer_ids(
     tmp_path: Path, pandoc: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -231,7 +251,7 @@ def test_directory_links_remap_to_combined_renderer_ids(
     assert '<a href="#same-1">HTML self</a>' in result
     assert '`[Literal](#same)` and `<a href="#same">Literal HTML</a>`' in result
     assert re.search(r"\[old id\]\([^)]*b%20page\.md#overview\)", result)
-    assert "heading not found in target file" in stderr
+    assert "heading or anchor not found in target file" in stderr
     assert "broken anchor" not in stderr
     assert "target not found" not in stderr
 
@@ -245,3 +265,29 @@ def test_directory_links_remap_to_combined_renderer_ids(
         "résumé-1",
         "custom-id",
     ]
+
+
+def test_directory_links_lead_to_html_anchors_in_other_files(
+    tmp_path: Path, pandoc: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "a.md").write_text(
+        "# A\n[spec](b.md#ref-spec) [span](b.md#span-id) [gone](b.md#gone)\n", encoding="utf-8"
+    )
+    (docs / "b.md").write_text(
+        '# B\n[self](#ref-spec)\n\n| Reference |\n| --- |\n| <a id="ref-spec"></a>Spec |\n\n'
+        "[Text]{#span-id}\n",
+        encoding="utf-8",
+    )
+
+    result = documents.markdown(pandoc, preprocess.collect_directory(docs, defaultdict(Counter)))
+
+    stderr = capsys.readouterr().err
+    assert "[spec](#ref-spec)" in result
+    assert "[span](#span-id)" in result
+    assert "[self](#ref-spec)" in result
+    assert re.search(r"\[gone\]\([^)]*b\.md#gone\)", result)
+    assert "/b.md#gone' (heading or anchor not found in target file)" in stderr
+    assert "ref-spec" not in stderr
+    assert "span-id" not in stderr

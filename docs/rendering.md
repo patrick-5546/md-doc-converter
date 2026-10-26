@@ -60,7 +60,7 @@ or a link to a heading that does not exist:
 
 ```text
 md-to-html: rendering docs
-md-to-html: warning: docs/setup.md: broken anchor '#instal' (no matching heading)
+md-to-html: warning: docs/setup.md: broken anchor '#instal' (no matching heading or anchor)
 md-to-html: warning: docs/notes.md:12: Duplicate note reference '1'
 rendered docs -> docs/docs.html
 ```
@@ -91,7 +91,9 @@ as GitHub shows it:
 
 - Heading IDs are GitHub's, the same that Word conversion writes. In a folder,
   links between files lead to the right heading of the combined document, even
-  among repeated headings; a link to a heading that does not exist is reported.
+  among repeated headings. A link can also lead to an HTML anchor, such as
+  `<a id="ref-spec"></a>`, or another element's ID; a link to a heading or
+  anchor that does not exist is reported.
 - Each file's link references, footnotes and lists are its own: a label used in
   two files keeps each file's definition, and a list that ends one file does not
   continue into the next.
