@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import html
 import re
+import unicodedata
 import urllib.parse
 from collections import Counter, defaultdict
 from collections.abc import Collection
@@ -323,6 +324,9 @@ _BBOX = re.compile(rf"^\s*/BBox \[({_NUMBER}) ({_NUMBER}) ({_NUMBER}) ({_NUMBER}
 _XHTML = "{http://www.w3.org/1999/xhtml}"
 # Characters that XML cannot hold, which a PDF may still map a glyph to.
 _NOT_XML = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]")
+# The Unicode categories of characters that no font draws: private use, such as the codes of
+# Word's Symbol and Wingdings fonts, unassigned, and surrogates.
+_UNDRAWN = frozenset({"Co", "Cn", "Cs"})
 
 
 def _figure_frame(structure: str, view_box: str | None) -> Frame | str:
@@ -464,13 +468,19 @@ def _text_layer(words: str) -> str:
     page finds and selects them where they show. A line's box spans its font's ascent and
     descent: the baseline is about a fifth of the way from the descent's side, and the font's
     size about 85% of the box across the line. A vertical line turns to read up the page, or
-    down when its words go down.
+    down when its words go down. Characters that no font draws are left out: a PDF of the page
+    would show a missing glyph for each.
     """
     group = ET.Element("g", {"fill-opacity": "0", "font-family": "sans-serif"})
     for line in ET.fromstring(_NOT_XML.sub("", words)).iter(_XHTML + "line"):
         boxes: list[tuple[float, float, float, float, str]] = []
         for word in line.iter(_XHTML + "word"):
-            text = " ".join((word.text or "").split())
+            drawn = "".join(
+                character
+                for character in word.text or ""
+                if unicodedata.category(character) not in _UNDRAWN
+            )
+            text = " ".join(drawn.split())
             try:
                 left, top, right, bottom = (
                     float(word.get(edge, "")) for edge in ("xMin", "yMin", "xMax", "yMax")

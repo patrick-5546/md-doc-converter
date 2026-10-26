@@ -426,6 +426,22 @@ def test_layer_text_is_escaped_and_unusable_words_are_dropped() -> None:
     assert ">a&lt;b&amp;c<" in layer
 
 
+def test_characters_that_no_font_draws_are_left_out_of_the_layer() -> None:
+    # Word's Symbol bullet and Wingdings arrow are private-use codes, and U+0380 is unassigned: a
+    # PDF would show a missing glyph for each. A letter in the wrong place is still a letter.
+    words = words_page(
+        [
+            (100.0, 100.0, 110.0, 110.0, "\uf0b7"),
+            (111.0, 100.0, 120.0, 110.0, "a\uf0e0b"),
+            (121.0, 100.0, 130.0, 110.0, "\u0380x"),
+            (131.0, 100.0, 140.0, 110.0, "\u03ec"),
+        ]
+    )
+    layer = ET.fromstring(_media._text_layer(words))
+    assert [span.text for span in layer.iter("tspan")] == ["ab", "x", "\u03ec"]
+    assert _media._text_layer(words_page([(100.0, 100.0, 110.0, 110.0, "\uf0b7")])) == ""
+
+
 def test_a_drawing_s_notes_are_reported_by_kind(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

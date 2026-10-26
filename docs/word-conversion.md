@@ -77,10 +77,11 @@ accepted.
   pasted from Visio and other programs, become SVG, cropped to the drawing:
   LibreOffice draws each as a PDF, which Poppler turns into SVG. Its text is
   drawn as shapes, so that it looks the same everywhere, with an invisible copy
-  of the words that a search of a PDF of the page still finds. LibreOffice
-  before 7.4 cannot report the drawing's frame, so its whole page is kept, and
-  reported. An SVG image that contains a script is replaced by the PNG copy that
-  Word keeps with it.
+  of the words that a search of a PDF of the page still finds; symbols that no
+  font has, such as Word's Wingdings arrows, are left out of the copy.
+  LibreOffice before 7.4 cannot report the drawing's frame, so its whole page is
+  kept, and reported. An SVG image that contains a script is replaced by the
+  PNG copy that Word keeps with it.
 - **Spaces:** no-break and other Unicode spaces become plain spaces, except
   spaces that indent a line, which stay no-break spaces so that the indent
   shows. Zero-width spaces are dropped.
