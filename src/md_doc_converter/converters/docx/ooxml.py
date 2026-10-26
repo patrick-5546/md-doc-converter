@@ -86,48 +86,6 @@ def paragraph_text(paragraph: ET.Element) -> str:
     return word_text(paragraph).strip()
 
 
-# The punctuation markdownlint's MD026 reports at the end of a heading.
-_TRAILING_PUNCTUATION = frozenset(".,;:!\u3002\uff0c\uff1b\uff1a\uff01")
-_ENTITY_START = re.compile(r"&#?[A-Za-z0-9]+$")
-
-
-def _without_trailing_punctuation(text: str) -> str:
-    """*text* without the punctuation and spaces that end it; a semicolon that ends
-    entity-like text, as in "&copy;", belongs to that text."""
-    end = len(text)
-    while end:
-        character = text[end - 1]
-        if not character.isspace():
-            if character not in _TRAILING_PUNCTUATION:
-                break
-            if character == ";" and _ENTITY_START.search(text, 0, end - 1):
-                break
-        end -= 1
-    return text[:end]
-
-
-def trim_trailing_punctuation(paragraph: ET.Element) -> bool:
-    """Remove the punctuation that ends *paragraph*'s text; return whether any went.
-
-    Only . , ; : ! and their full-width forms go, the characters markdownlint's MD026
-    reports, not ? or closing brackets. Nothing changes when nothing else would be left.
-    """
-    texts = list(scoped_iter(paragraph, WORD + "t"))
-    visible = "".join(node.text or "" for node in texts)
-    trimmed = _without_trailing_punctuation(visible)
-    if trimmed == visible.rstrip() or not trimmed.strip():
-        return False
-    excess = len(visible) - len(trimmed)
-    for node in reversed(texts):
-        text = node.text or ""
-        cut = min(excess, len(text))
-        node.text = text[: len(text) - cut]
-        excess -= cut
-        if not excess:
-            break
-    return True
-
-
 def word_flag(element: ET.Element | None) -> bool:
     return element is not None and element.get(WORD + "val", "1").casefold() not in {
         "0",

@@ -766,26 +766,6 @@ def test_document_defaults_apply_and_field_characters_stay() -> None:
     assert next(body.iter(W + "fldChar"), None) is not None
 
 
-@pytest.mark.parametrize(
-    ("parts", "expected"),
-    [
-        pytest.param(("Overview", ":"), "Overview", id="colon-in-its-own-run"),
-        pytest.param(("Notes", " .", ": "), "Notes", id="spaced-marks-across-runs"),
-        pytest.param(("Why?",), "Why?", id="question-mark-stays"),
-        pytest.param(("<Mode> &copy;", "."), "<Mode> &copy;", id="named-entity-stays"),
-        pytest.param(("A &#169;;",), "A &#169;", id="numeric-entity-stays"),
-        pytest.param(("\u6982\u8981\uff1a",), "\u6982\u8981", id="full-width-colon"),
-        pytest.param(("...",), "...", id="nothing-else-left"),
-    ],
-)
-def test_trailing_punctuation_goes_across_runs(parts: tuple[str, ...], expected: str) -> None:
-    node = ET.Element(W + "p")
-    node.extend(_ooxml.word_run(part) for part in parts)
-    changed = _ooxml.trim_trailing_punctuation(node)
-    assert _ooxml.word_text(node) == expected
-    assert changed == (expected != "".join(parts))
-
-
 def _fonts(**attributes: str) -> ET.Element:
     """Run properties with a w:rFonts of *attributes*, such as ascii="Consolas"."""
     properties = ET.Element(W + "rPr")

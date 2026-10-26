@@ -222,14 +222,14 @@ def test_default_keeps_step_and_status_labels_and_index_content(convert: Convert
             paragraph("Flow.", "Heading3"),
         ]
     )
-    # Headings lose trailing punctuation and skipped levels; bold labels keep theirs.
-    assert "# Title\n" in result
-    assert "## Gap\n" in result
+    # Headings keep their punctuation, as bold labels do; skipped levels close.
+    assert "# Title.\n" in result
+    assert "## Gap.\n" in result
     assert "**1)**\n\nDo the thing." in result
     assert "**Closed.**" in result
     assert "# Contents" in result
     assert "Original index entry" in result
-    assert result.count("## Flow\n") == 2
+    assert result.count("## Flow.\n") == 2
     assert stats["qualified_headings"] == 0
     assert result.endswith("\n")
     assert not result.endswith("\n\n")
@@ -447,7 +447,7 @@ def test_numbered_outline_level_heading_stays_a_list_item(convert: Converter) ->
     assert "lists:" not in warnings
 
 
-def test_headings_lose_trailing_punctuation_that_list_items_keep(convert: Converter) -> None:
+def test_headings_keep_their_trailing_punctuation(convert: Converter) -> None:
     outlined = numbered("Gamma.")
     properties = outlined.find(W + "pPr")
     assert properties is not None
@@ -463,15 +463,13 @@ def test_headings_lose_trailing_punctuation_that_list_items_keep(convert: Conver
         ],
         extras={"word/numbering.xml": numbering_xml()},
     )
-    assert "# Overview\n" in result
+    assert "# Overview:\n" in result
     assert "## Why?\n" in result
-    assert "## Steps\n" in result
+    assert "## Steps.\n" in result
     assert re.search(r"7\.\s+Alpha\.\n+8\.\s+Gamma\.", result)
+    # A heading's ID has no punctuation.
     assert "[Back to the steps](#steps)" in result
-    assert (
-        "  headings: partial (3 applied, 2 heading(s) with trailing punctuation trimmed, "
-        "1 not applied)" in report.summary()
-    )
+    assert "  headings: partial (3 applied, 1 not applied)" in report.summary()
     assert report.status("checks") == "applied"
 
 
@@ -1029,7 +1027,7 @@ def test_bookmark_and_parenthesized_identity(convert: Converter) -> None:
     )
     assert "<a " not in result
     assert "[See it](#destination)" in result
-    assert "### Destination\n" in result
+    assert "### Destination.\n" in result
     assert stats["bookmarks"] == 1
 
 
@@ -2954,7 +2952,7 @@ def test_skipped_heading_levels_close_and_bookmark_links_follow(
     write_docx(source, body)
     _pipeline.convert_docx(source, tmp_path / "guide.md")
     assert (tmp_path / "guide.md").read_text(encoding="utf-8") == (
-        "Preamble\n\n# First\n\n[Deeper](#third)\n\n## Third\n\n### Detail\n\n[Up](#first)\n"
+        "Preamble\n\n# First.\n\n[Deeper](#third)\n\n## Third.\n\n### Detail.\n\n[Up](#first)\n"
     )
 
 
@@ -2968,8 +2966,8 @@ def test_duplicate_qualification_is_opt_in(convert: Converter) -> None:
         ],
         qualify=True,
     )
-    assert "### Same - occurrence 1" in result
-    assert "### Same - occurrence 2" in result
+    assert "### Same. - occurrence 1" in result
+    assert "### Same. - occurrence 2" in result
     assert "<a " not in result
     assert "[First](#same---occurrence-1)" in result
     assert "[Second](#same---occurrence-2)" in result
@@ -3041,7 +3039,7 @@ def test_toc_page_reference_fields_are_dropped_from_their_links(
         ("#second", "Second"),
     ]
     assert report.records["fields"].applied["table-of-contents page number(s) dropped"] == 2
-    assert "## Second\n" in result
+    assert "## Second.\n" in result
 
 
 def test_word_table_of_contents_keeps_entry_numbers_and_links_without_pages(
@@ -3102,8 +3100,7 @@ def test_literal_word_placeholders_entities_and_tables_keep_their_text(
     assert not list(parsed.iter("speeds"))
     assert not list(parsed.iter("blockquote"))
     assert _validation.collect_references(parsed).links == ["#mode-copy"]
-    # The heading loses its period, not the semicolon of its entity-like text.
-    assert "".join(next(parsed.iter("h3")).itertext()) == "<Mode> &copy;"
+    assert "".join(next(parsed.iter("h3")).itertext()) == "<Mode> &copy;."
 
 
 def test_urls_as_link_text_stay_one_link(convert: Converter, pandoc: str) -> None:
@@ -3228,7 +3225,7 @@ def test_custom_style_outline_level_is_preserved(convert: Converter) -> None:
     ET.SubElement(properties, W + "outlineLvl", {W + "val": "4"})
     source.insert(0, properties)
     result, _stats = convert([source])
-    assert "##### Custom heading\n" in result
+    assert "##### Custom heading.\n" in result
 
 
 def test_an_encrypted_or_word_97_document_is_refused_before_conversion(

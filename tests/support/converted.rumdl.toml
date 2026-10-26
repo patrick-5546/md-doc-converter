@@ -8,6 +8,7 @@ disable = [
     # These follow the Word document: its headings, emphasis and alt text.
     "MD024",
     "MD025",
+    "MD026",
     "MD036",
     "MD041",
     "MD045",
@@ -18,12 +19,6 @@ disable = [
     "MD051",
     "MD057",
 ]
-
-[MD026]
-# Conversion trims the punctuation that markdownlint reports at the end of a heading, but keeps
-# a semicolon that ends entity-like text, as in "\&copy;", which markdownlint accepts and rumdl
-# would report. rumdl's default would also miss the full-width forms.
-punctuation = ".,:!。，；：！"
 
 [MD033]
 # Tables that Markdown cannot write are minimal HTML; underline, highlights, subscripts,

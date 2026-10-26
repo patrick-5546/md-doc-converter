@@ -45,7 +45,6 @@ MISSING_BOOKMARK = "link to a missing Word bookmark; kept as plain text"
 _EMPTY_HEADING = "Word heading has no text; omitted"
 _PICTURE_HEADING = "Word heading has only a picture; kept as a paragraph"
 _LISTED_HEADING = "Word numbers this outline-level heading as a list item; kept as a list item"
-_PUNCTUATION_TRIMMED = "heading(s) with trailing punctuation trimmed"
 _LEVELS_CLOSED = "heading(s) moved up to close a skipped level"
 _UNLABELED_ITEMS = "Word list paragraph(s) without a number or bullet kept as paragraphs"
 _LIST_GAPS = "empty paragraph(s) inside a Word list omitted"
@@ -436,8 +435,6 @@ def _prepare_headings(
             report.skipped("headings", reason, f"paragraph {index + 1}: {reason}")
             _make_plain_paragraph(paragraph)
             continue
-        if _ooxml.trim_trailing_punctuation(paragraph):
-            report.applied("headings", _PUNCTUATION_TRIMMED)
         levels[paragraph] = level
     open_levels: list[tuple[int, int]] = []
     for paragraph, level in levels.items():
