@@ -224,8 +224,8 @@ newer push to a pull request cancels its run in progress. Actions are pinned by
 commit SHA, checkouts keep no credentials, and each job has a time limit. The
 jobs:
 
-- `lint-and-core`: lint, then the core suite, with the pinned Pandoc cached;
-- `core-windows`: the same on Windows, with make from Chocolatey;
+- `lint-and-core`: on Linux and Windows, lint, then the core suite, with the
+  pinned Pandoc cached, and on Windows make from Chocolatey;
 - `render`: installs Node.js, LibreOffice and Poppler, runs `setup` (cached)
   and the render suite;
 - `render-windows`: the same on Windows, with make, LibreOffice and Poppler from

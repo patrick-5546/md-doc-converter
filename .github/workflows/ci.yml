@@ -19,44 +19,27 @@ env:
 
 jobs:
   lint-and-core:
-    name: Lint and core tests
-    runs-on: ubuntu-26.04
-    timeout-minutes: 15
+    name: Lint and core tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-26.04, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       # uv installs the Python that .python-version names.
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
-      - name: Cache Pandoc
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .toolchain/bin/pandoc
-          key: pandoc-${{ runner.os }}-${{ hashFiles('src/md_doc_converter/toolchain/install.py') }}
-      - name: Lint
-        env:
-          # zizmor's online audits check the pinned actions against GitHub.
-          GH_TOKEN: ${{ github.token }}
-        run: make lint
-      - name: Core tests
-        # Installs the pinned Pandoc first (setup --no-render), unless it is cached.
-        run: make test
-
-  core-windows:
-    name: Lint and core tests (Windows)
-    runs-on: windows-2025
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
       - name: Install make
+        if: runner.os == 'Windows'
         run: choco install --yes --no-progress make
       - name: Cache Pandoc
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: .toolchain/bin/pandoc.exe
+          # Pandoc alone: setup --no-render installs nothing else in bin/.
+          path: .toolchain/bin
           key: pandoc-${{ runner.os }}-${{ hashFiles('src/md_doc_converter/toolchain/install.py') }}
       - name: Lint
         env:
