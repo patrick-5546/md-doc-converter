@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -173,3 +174,13 @@ def test_a_diagram_with_a_fence_line_renders_on_its_own(
     batch, alone = mmdc_calls(fake_tools)
     assert "--artefacts" in batch
     assert "--artefacts" not in alone
+
+
+def test_diagram_labels_use_the_text_fonts() -> None:
+    # Mermaid's own font, which each diagram would embed, prints in Chrome's PDFs without the
+    # text of some of its letters, so that diagram labels could not be found or copied.
+    css = asset_path("style-overrides.css").read_text(encoding="utf-8")
+    body = re.search(r"^html,\n\.markdown-body \{\n  font-family: ([^;]+);$", css, re.MULTILINE)
+    assert body is not None
+    config = json.loads(asset_path("mermaid-config.json").read_text(encoding="utf-8"))
+    assert config["fontFamily"] == config["themeVariables"]["fontFamily"] == body[1]

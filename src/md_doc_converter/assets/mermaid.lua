@@ -3,8 +3,8 @@
 -- mermaid-cli renders all of a document's diagrams in one run, with one browser. Each block
 -- becomes a paragraph holding an image of its diagram, embedded as a data URI and tagged with
 -- the mermaid-diagram class that style-overrides.css scales. Mermaid's defaults apply,
--- including its theme and layout for each diagram type; a diagram can choose others in its
--- front matter.
+-- including its theme and layout for each diagram type, except that mermaid-config.json gives
+-- labels the text's fonts; a diagram can choose others in its front matter.
 --
 -- MD_DOC_CONVERTER_MMDC names mermaid-cli's script, which MD_DOC_CONVERTER_NODE, Node.js, runs,
 -- and MD_DOC_CONVERTER_MERMAID_CONFIG an optional Mermaid configuration file.

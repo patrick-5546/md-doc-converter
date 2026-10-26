@@ -132,9 +132,11 @@ is printed with JavaScript off, and the browser loads nothing but the HTML.
 Each `mermaid` code block becomes an image of its diagram, drawn by
 [mermaid-cli](https://github.com/mermaid-js/mermaid-cli) in one run for the
 whole render and embedded in the HTML. Diagrams use Mermaid's defaults, such as
-the ELK layout for flowcharts and state, class and ER diagrams. A diagram can
-choose others in its front matter, for example the dagre layout of earlier
-Mermaid versions:
+the ELK layout for flowcharts and state, class and ER diagrams, except that
+their labels use the text's sans-serif fonts, so that a PDF's diagram text can
+be found and copied. A diagram can choose others in its front matter, for
+example the dagre layout of earlier Mermaid versions, or another font with
+`fontFamily`:
 
 ````markdown
 ```mermaid

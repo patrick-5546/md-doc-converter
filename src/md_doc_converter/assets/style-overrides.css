@@ -48,7 +48,7 @@ Overrides for the pandoc rendering pipeline:
 }
 
 /* Page-margin boxes inherit the root font, outside .markdown-body. Linux fonts come first, then
-   Windows's. */
+   Windows's. mermaid-config.json gives Mermaid diagrams' labels the same fonts. */
 html,
 .markdown-body {
   font-family: "Noto Sans", "Liberation Sans", "DejaVu Sans", "Segoe UI", Arial, sans-serif;

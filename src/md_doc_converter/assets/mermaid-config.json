@@ -1,4 +1,8 @@
 {
+  "fontFamily": "\"Noto Sans\", \"Liberation Sans\", \"DejaVu Sans\", \"Segoe UI\", Arial, sans-serif",
+  "themeVariables": {
+    "fontFamily": "\"Noto Sans\", \"Liberation Sans\", \"DejaVu Sans\", \"Segoe UI\", Arial, sans-serif"
+  },
   "flowchart": { "useMaxWidth": false },
   "sequence": { "useMaxWidth": false },
   "class": { "useMaxWidth": false },
