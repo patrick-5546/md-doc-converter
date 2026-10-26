@@ -470,6 +470,36 @@ def test_numbered_lists_need_levels() -> None:
     assert _ooxml.numbered_lists(numbering) == {"3"}
 
 
+def test_unlabeled_lists_show_nothing_at_any_level() -> None:
+    def levels(*texts: str | None, extra: str = "") -> str:
+        return "".join(
+            f'<w:lvl w:ilvl="{index}">'
+            + ("" if text is None else f'<w:lvlText w:val="{text}"/>')
+            + extra
+            + "</w:lvl>"
+            for index, text in enumerate(texts)
+        )
+
+    def override(text: str) -> str:
+        return (
+            '<w:lvlOverride w:ilvl="0">'
+            f'<w:lvl w:ilvl="0"><w:lvlText w:val="{text}"/></w:lvl></w:lvlOverride>'
+        )
+
+    numbering = _numbering(
+        _abstract("1", levels("", "")),
+        _abstract("2", levels("%1.", "")),
+        _abstract("3", levels("", "", extra='<w:lvlPicBulletId w:val="0"/>')),
+        # Without a level text, the level keeps Pandoc's numbering, as before.
+        _abstract("4", levels(None, "")),
+        *(_instance(identity, identity) for identity in "1234"),
+        _instance("5", "1", override("%1.")),
+        _instance("6", "2", override("")),
+    )
+
+    assert _ooxml.unlabeled_lists(numbering) == {"1", "6"}
+
+
 def _list_styles(number: str) -> dict[str, ET.Element]:
     """ListBullet, which numbers its paragraphs in list *number*, and Point, based on it."""
     return {

@@ -546,6 +546,42 @@ def test_numbering_off_paragraphs_stay_with_the_list_item_before_them(convert: C
     assert "lists:" not in warnings
 
 
+def test_paragraphs_of_lists_that_show_no_number_are_paragraphs(convert: Converter) -> None:
+    # Word uses a list whose levels show no number or bullet to indent paragraphs.
+    numbering = ET.fromstring(numbering_xml())
+    abstract = ET.Element(W + "abstractNum", {W + "abstractNumId": "2"})
+    for index in range(3):
+        level = ET.SubElement(abstract, W + "lvl", {W + "ilvl": str(index)})
+        ET.SubElement(level, W + "numFmt", {W + "val": "decimal"})
+        ET.SubElement(level, W + "lvlText", {W + "val": ""})
+    numbering.insert(1, abstract)
+    instance = ET.SubElement(numbering, W + "num", {W + "numId": "2"})
+    ET.SubElement(instance, W + "abstractNumId", {W + "val": "2"})
+    result, report, warnings = convert.reported(
+        [
+            paragraph("Intro"),
+            numbered("Alpha"),
+            numbered("Indented under alpha", number="2"),
+            paragraph("Middle"),
+            numbered("Indented alone", number="2"),
+            paragraph("Noted", "Note"),
+            table(row(cell(numbered("In a cell", number="2"))), columns=1),
+        ],
+        extras={"word/numbering.xml": _ooxml.word_xml_bytes(numbering)},
+        styles=(word_style("Note", number="2"),),
+    )
+    assert re.search(
+        r"Intro\n\n7\.\s+Alpha\n+ {3}Indented under alpha\n\nMiddle\n\n"
+        r"Indented alone\n\nNoted\n",
+        result,
+    )
+    assert "| In a cell |" in result
+    assert "4 Word list paragraph(s) without a number or bullet kept as paragraphs" in "\n".join(
+        report.summary()
+    )
+    assert "lists:" not in warnings
+
+
 def test_paragraphs_pandoc_reads_as_headings_are_not_list_items(convert: Converter) -> None:
     contents = word_style("TOCHeading", based_on="Heading1", number="1")
     properties = contents.find(W + "pPr")

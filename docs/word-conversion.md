@@ -35,7 +35,9 @@ accepted.
 - **Lists** use `-` for bullets and keep Word's numbers; a lettered or Roman
   level is numbered with digits, the only numbering Markdown has. An empty
   bullet is omitted, and so is an empty numbered item at the start or end of
-  its list.
+  its list. A paragraph of a list that shows no number or bullet at any level,
+  which Word uses to indent paragraphs, is a paragraph, in the list item before
+  it if there is one.
 - **Line breaks** are Markdown hard line breaks, a backslash at the end of the
   line; two in a row start a new paragraph. In a table cell they are `<br>`.
 - **Tables** are Markdown tables, with Word's first row as the header, or

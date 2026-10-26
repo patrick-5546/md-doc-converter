@@ -47,6 +47,7 @@ _PICTURE_HEADING = "Word heading has only a picture; kept as a paragraph"
 _LISTED_HEADING = "Word numbers this outline-level heading as a list item; kept as a list item"
 _PUNCTUATION_TRIMMED = "heading(s) with trailing punctuation trimmed"
 _LEVELS_CLOSED = "heading(s) moved up to close a skipped level"
+_UNLABELED_ITEMS = "Word list paragraph(s) without a number or bullet kept as paragraphs"
 # The names Word gives the bookmarks that its tables of contents and cross-references lead to.
 _FIELD_BOOKMARKS = ("_Toc", "_Ref")
 DRIFTED_BOOKMARK = (
@@ -330,20 +331,42 @@ def _keep_metadata_in_body(root: ET.Element, styles: _Styles, numbered: Collecti
 
 def _list_numbering(
     package: WordPackage, styles: _Styles, report: TransformReport
-) -> tuple[frozenset[str], bytes | None]:
-    """Word's numbered lists, and the numbering part rewritten if list-style links changed it."""
+) -> tuple[frozenset[str], frozenset[str], bytes | None]:
+    """Word's numbered lists, those of them that show no number or bullet, and the numbering
+    part rewritten if list-style links changed it."""
     data = package.parts.get(package.numbering_part)
     if data is None:
-        return frozenset(), None
+        return frozenset(), frozenset(), None
     try:
         numbering = ET.fromstring(data)
     except ET.ParseError as error:
         report.failed("lists", ConversionError(f"Cannot read Word numbering: {error}"))
-        return frozenset(), None
+        return frozenset(), frozenset(), None
     linked = _ooxml.link_numbering_styles(numbering, styles.definitions)
-    return _ooxml.numbered_lists(numbering), (
-        _ooxml.word_xml_bytes(numbering, data) if linked else None
+    return (
+        _ooxml.numbered_lists(numbering),
+        _ooxml.unlabeled_lists(numbering),
+        _ooxml.word_xml_bytes(numbering, data) if linked else None,
     )
+
+
+def _unnumber_unlabeled(root: ET.Element, styles: _Styles, unlabeled: Collection[str]) -> int:
+    """Turn off the numbering of the paragraphs of lists that show no number or bullet, which
+    Pandoc would number; return how many.
+
+    Word uses such a list to indent its paragraphs, which it shows as plain paragraphs. Pandoc
+    keeps one after a list item in that item, and makes the others paragraphs.
+    """
+    count = 0
+    for paragraph in root.iter(WORD + "p"):
+        try:
+            number = _ooxml.numbering_reference(paragraph, styles.definitions)
+        except ConversionError:
+            continue
+        if number in unlabeled:
+            _ooxml.turn_off_numbering(paragraph)
+            count += 1
+    return count
 
 
 def _style_heading_level(paragraph: ET.Element, styles: _Styles) -> int | None:
@@ -1111,9 +1134,11 @@ def prepare_document(
     _prepare_tables(root, report)
     _text_boxes_after_paragraphs(root, report)
     title = document_title(root)
-    numbered, numbering = _list_numbering(package, styles, report)
+    numbered, unlabeled, numbering = _list_numbering(package, styles, report)
     if numbering is not None:
         modified[package.numbering_part] = numbering
+    with transform(report, "lists"):
+        report.applied("lists", _UNLABELED_ITEMS, _unnumber_unlabeled(root, styles, unlabeled))
     parents = {child: parent for parent in root.iter() for child in parent}
 
     def in_table(node: ET.Element) -> bool:

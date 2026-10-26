@@ -652,17 +652,20 @@ def _join_paragraphs(root: ET.Element, joined: list[ET.Element]) -> None:
                 following.insert(start + offset, node)
             container.remove(paragraph)
         elif not shows_content(paragraph):
-            properties = paragraph.find(WORD + "pPr")
-            if properties is None:
-                properties = ET.Element(WORD + "pPr")
-                paragraph.insert(0, properties)
-            numbering = properties.find(WORD + "numPr")
-            if numbering is not None:
-                properties.remove(numbering)
-            # numId 0 also turns off numbering that a list style gives the paragraph.
-            numbering = ET.Element(WORD + "numPr")
-            ET.SubElement(numbering, WORD + "numId", {WORD + "val": "0"})
-            properties.insert(1 if properties.find(WORD + "pStyle") is not None else 0, numbering)
+            turn_off_numbering(paragraph)
+
+
+def turn_off_numbering(paragraph: ET.Element) -> None:
+    """Give *paragraph* numId 0, which also turns off numbering that a list style gives it."""
+    properties = paragraph.find(WORD + "pPr")
+    if properties is None:
+        properties = ET.Element(WORD + "pPr")
+        paragraph.insert(0, properties)
+    for numbering in properties.findall(WORD + "numPr"):
+        properties.remove(numbering)
+    numbering = ET.Element(WORD + "numPr")
+    ET.SubElement(numbering, WORD + "numId", {WORD + "val": "0"})
+    properties.insert(1 if properties.find(WORD + "pStyle") is not None else 0, numbering)
 
 
 def _accept_changes(parent: ET.Element) -> None:
@@ -1361,6 +1364,35 @@ def numbered_lists(numbering: ET.Element) -> frozenset[str]:
         if (abstract is not None and abstract.find(WORD + "lvl") is not None) or instance.find(
             f"./{WORD}lvlOverride/{WORD}lvl"
         ) is not None:
+            result.add(instance.get(WORD + "numId", ""))
+    return frozenset(result)
+
+
+def unlabeled_lists(numbering: ET.Element) -> frozenset[str]:
+    """The numIds whose every level shows no number or bullet: an empty level text and no
+    picture bullet, as a list that Word uses only to indent its paragraphs has."""
+    abstracts = {
+        node.get(WORD + "abstractNumId", ""): node
+        for node in numbering.findall(WORD + "abstractNum")
+    }
+    result: set[str] = set()
+    for instance in numbering.findall(WORD + "num"):
+        reference = instance.find(WORD + "abstractNumId")
+        abstract = None if reference is None else abstracts.get(reference.get(WORD + "val", ""))
+        levels = {
+            level.get(WORD + "ilvl", ""): level
+            for level in ([] if abstract is None else abstract.findall(WORD + "lvl"))
+        }
+        for override in instance.findall(WORD + "lvlOverride"):
+            level = override.find(WORD + "lvl")
+            if level is not None:
+                levels[override.get(WORD + "ilvl", "")] = level
+        if levels and all(
+            (text := level.find(WORD + "lvlText")) is not None
+            and not text.get(WORD + "val")
+            and level.find(WORD + "lvlPicBulletId") is None
+            for level in levels.values()
+        ):
             result.add(instance.get(WORD + "numId", ""))
     return frozenset(result)
 
