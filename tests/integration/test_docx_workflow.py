@@ -872,8 +872,8 @@ def test_a_blank_header_row_goes_and_the_next_row_leads(convert: Converter, pand
         ]
     )
     assert "<table" not in result
-    # The row that leads is the header, whose paragraphs become spaces.
-    assert r"| A \| B | first second |" in result
+    # The row that leads is the table's only row, which keeps its lines.
+    assert r"| A \| B | first<br><br>second |" in result
     parsed = _reference.pandoc_html(result, pandoc)
     actual = next(parsed.iter("table"))
     assert len(_tables.html_rows(actual)) == 1

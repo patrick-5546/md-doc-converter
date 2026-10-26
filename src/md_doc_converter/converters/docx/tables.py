@@ -560,8 +560,8 @@ def _pipe_table(root: ET.Element) -> tuple[str | None, str | None]:
         return None, "zero-cell row"
     rendered_rows: list[list[str]] = []
     for row in source_rows:
-        # The first row is the pipe table's header.
-        header = not rendered_rows
+        # The first row is the pipe table's header; a table's only row is content.
+        header = not rendered_rows and len(source_rows) > 1
         if row.attrib or len(row) != expected:
             return None, "unequal or structurally annotated rows"
         rendered_cells: list[str] = []

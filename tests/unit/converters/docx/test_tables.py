@@ -193,6 +193,17 @@ def test_header_breaks_are_spaces_and_cells_lose_empty_edge_lines() -> None:
     )
 
 
+def test_the_only_row_keeps_its_lines() -> None:
+    # A table of one row holds content, not column titles narrowed by line breaks.
+    assert (
+        pipe_table(
+            "<table><tbody><tr><td><p>one</p><p>two</p></td><td>a<br />\nb</td></tr>"
+            "</tbody></table>"
+        )
+        == "| one<br>two | a<br>b |\n| --- | --- |\n"
+    )
+
+
 def test_inline_code_uses_markdown_and_preserves_pipes_and_backticks(pandoc: str) -> None:
     source = (
         "<table><tbody><tr><td>Code</td></tr>"

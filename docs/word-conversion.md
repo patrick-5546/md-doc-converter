@@ -44,7 +44,9 @@ accepted.
 - **Tables** are Markdown tables, with Word's first row as the header, or
   minimal HTML where Markdown cannot hold them, such as merged cells, a nested
   table, or a heading or nested list in a cell. In a cell, line breaks,
-  paragraphs and a one-level list become lines separated by `<br>`. Rows that
+  paragraphs and a one-level list become lines separated by `<br>`; in the
+  header, whose line breaks usually narrow a column, they become spaces, unless
+  the table has only that row. Rows that
   show nothing are omitted, except the first after the header, such as a
   template's row to fill in. Column widths, colors, borders and cell alignment
   are not kept.
