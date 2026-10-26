@@ -15,7 +15,8 @@ writes the files that the real tool would:
   displayed; and otherwise writes a placeholder PDF, as the PDF printer would;
 - npm installs the package files that rendering reads, with the scripts of mermaid-cli's mmdc
   and Puppeteer's command line;
-- mmdc writes each diagram's text as its SVG, and fails on a diagram that contains ``FAIL``;
+- mmdc writes each diagram's text as its SVG, or a diagram that is SVG as it is, and fails on a
+  diagram that contains ``FAIL``;
 - puppeteer installs a browser executable.
 
 Setting ``FAKE_TOOL_FAIL`` to a tool's name makes that tool exit with status 3.
@@ -100,7 +101,9 @@ def _mmdc(arguments: list[str], record: dict[str, object]) -> int:
         sys.stderr.write("Error: Parse error on line 2\n    at parse (file:///mermaid.mjs:1:1)\n")
         return 1
     for diagram, image in zip(diagrams, images, strict=True):
-        image.write_text(f"<svg>{diagram}</svg>", encoding="utf-8")
+        # A diagram that is already SVG, such as one that names its type, is its own image.
+        svg = diagram if diagram.startswith("<svg") else f"<svg>{diagram}</svg>"
+        image.write_text(svg, encoding="utf-8")
     return 0
 
 

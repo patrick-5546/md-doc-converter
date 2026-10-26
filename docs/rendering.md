@@ -153,6 +153,21 @@ Diagrams are shown at 75% of their natural size, and no wider than the page. A
 diagram that Mermaid cannot draw stops the render with Mermaid's message and
 the diagram's position, such as `Mermaid diagram 2 of 3 (flowchart LR)`.
 
+A diagram's alt text, which screen readers read and the PDF keeps, is its
+accessible title and description, given with `accTitle` and `accDescr`; or else
+the title in its front matter; or else its type, such as `Flowchart`:
+
+````markdown
+```mermaid
+flowchart LR
+  accTitle: Request path
+  accDescr: A request reaches the worker through the queue.
+  Client --> Queue --> Worker
+```
+````
+
+`accDescr { ... }` holds a description over several lines.
+
 ## Math
 
 TeX math between `$` signs, or between `$$` for display math, is rendered with

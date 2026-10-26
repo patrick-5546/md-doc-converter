@@ -1,7 +1,7 @@
 """The Mermaid Lua filter, which renders every diagram with mermaid-cli into an inline SVG image.
 
 The tests run the pinned Pandoc with the filter and a fake mmdc, which writes each diagram's text
-as its SVG and fails on a diagram that contains FAIL.
+as its SVG, or a diagram that is SVG as it is, and fails on a diagram that contains FAIL.
 """
 
 from __future__ import annotations
@@ -23,18 +23,24 @@ DATA_URI = "data:image/svg+xml;base64,"
 Convert = Callable[[str, Path], subprocess.CompletedProcess[str]]
 
 
+def plain(inlines: object) -> str:
+    """The text of Pandoc JSON inlines of words and spaces."""
+    assert isinstance(inlines, list)
+    return "".join(inline["c"] if inline["t"] == "Str" else " " for inline in inlines)
+
+
 def images(document: object) -> list[dict[str, object]]:
-    """Every Pandoc JSON Image in document order, as id, classes and decoded SVG."""
+    """Every Pandoc JSON Image in document order, as id, classes, alt text and decoded SVG."""
     found: list[dict[str, object]] = []
 
     def visit(node: object) -> None:
         if isinstance(node, dict):
             if node.get("t") == "Image":
-                [identifier, classes, _], _, [source, _] = node["c"]
+                [identifier, classes, _], alt, [source, _] = node["c"]
                 assert isinstance(source, str)
                 assert source.startswith(DATA_URI), source
                 svg = base64.b64decode(source.removeprefix(DATA_URI)).decode()
-                found.append({"id": identifier, "classes": classes, "svg": svg})
+                found.append({"id": identifier, "classes": classes, "alt": plain(alt), "svg": svg})
             for value in node.values():
                 visit(value)
         elif isinstance(node, list):
@@ -100,10 +106,16 @@ def test_all_diagrams_render_in_one_run_and_keep_their_place(
     assert result.returncode == 0, result.stderr
     document = json.loads(result.stdout)
     assert images(document) == [
-        {"id": "", "classes": ["mermaid-diagram"], "svg": "<svg>flowchart LR\n  A --> B</svg>"},
+        {
+            "id": "",
+            "classes": ["mermaid-diagram"],
+            "alt": "Mermaid diagram",
+            "svg": "<svg>flowchart LR\n  A --> B</svg>",
+        },
         {
             "id": "sequence",
             "classes": ["mermaid-diagram"],
+            "alt": "Mermaid diagram",
             "svg": "<svg>sequenceDiagram\n  A->>B: Hi</svg>",
         },
     ]
@@ -174,6 +186,68 @@ def test_a_diagram_with_a_fence_line_renders_on_its_own(
     batch, alone = mmdc_calls(fake_tools)
     assert "--artefacts" in batch
     assert "--artefacts" not in alone
+
+
+@pytest.mark.parametrize(
+    ("diagram", "alt"),
+    [
+        pytest.param(
+            "flowchart LR\n  accTitle: Order & pipeline <v2>\n"
+            "  accDescr: Requests reach the worker.\n  A --> B",
+            "Order & pipeline <v2>. Requests reach the worker.",
+            id="title-and-description",
+        ),
+        pytest.param(
+            "sequenceDiagram\n  accTitle: Login handshake?\n  accDescr {\n"
+            "    The client asks,\n    and the server answers.\n  }\n  A->>B: Hi",
+            "Login handshake? The client asks, and the server answers.",
+            id="description-over-lines",
+        ),
+        pytest.param(
+            "flowchart LR\n  accDescr { One line }\n  A --> B",
+            "One line",
+            id="description-in-braces",
+        ),
+        pytest.param(
+            "flowchart LR\n  accTitle :  Spaced   title \n  A --> B",
+            "Spaced title",
+            id="title-only",
+        ),
+        pytest.param(
+            '---\ntitle: "Titled: pie"\n---\npie\n  "A" : 1',
+            "Titled: pie",
+            id="front-matter-title",
+        ),
+        pytest.param(
+            "---\ntitle: Shown\n---\nflowchart LR\n  accTitle: Accessible\n  A --> B",
+            "Accessible",
+            id="accessible-title-first",
+        ),
+        pytest.param(
+            '<svg aria-roledescription="stateDiagram" role="graphics-document document"/>',
+            "State diagram",
+            id="type",
+        ),
+        pytest.param(
+            '<svg aria-roledescription="flowchart-v2"><title>Tooltip</title></svg>',
+            "Flowchart",
+            id="type-not-a-tooltip",
+        ),
+        pytest.param(
+            "flowchart LR\n  %% accTitle: a comment\n  A --> B",
+            "Mermaid diagram",
+            id="comment",
+        ),
+        pytest.param(
+            '<svg aria-roledescription="unknown-kind"/>', "Mermaid diagram", id="unknown-type"
+        ),
+    ],
+)
+def test_images_have_alt_text(convert: Convert, mmdc: Path, diagram: str, alt: str) -> None:
+    result = convert(f"```mermaid\n{diagram}\n```\n", mmdc)
+    assert result.returncode == 0, result.stderr
+    [image] = images(json.loads(result.stdout))
+    assert image["alt"] == alt
 
 
 def test_diagram_labels_use_the_text_fonts() -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import html
 import re
 import subprocess
 import sys
@@ -21,16 +22,25 @@ DIAGRAMS = """# Diagrams
 
 ```mermaid
 flowchart LR
+  accTitle: Request path & queue
+  accDescr: A client's request reaches a worker.
   A[Client label] --> B{Pipe 0} -->|all| C[Worker 1]
 ```
 
 ```mermaid
 sequenceDiagram
+  accDescr {
+    The client logs in,
+    and the server answers.
+  }
   Client->>Server: login all
   Server-->>Client: token 0
 ```
 
 ```mermaid
+---
+title: Pools
+---
 classDiagram
   class Pool
   Pool <|-- SmallPool
@@ -52,6 +62,12 @@ LABELS = [
     "Idle",
     "load 0",
 ]
+ALT_TEXTS = [
+    "Request path & queue. A client's request reaches a worker.",
+    "The client logs in, and the server answers.",
+    "Pools",
+    "State diagram",
+]
 
 
 @dataclass(frozen=True)
@@ -71,6 +87,27 @@ def svgs(html: str) -> list[str]:
             base64.b64decode(data).decode("utf-8") if header.endswith(";base64") else unquote(data)
         )
     return images
+
+
+def alt_texts(page: str) -> list[str]:
+    """The alt text of each Mermaid diagram in the HTML *page*."""
+    return [
+        html.unescape(re.findall(r'\salt="([^"]*)"', tag)[0])
+        for tag in re.findall(r"<img\s[^>]*>", page)
+        if 'class="mermaid-diagram"' in tag
+    ]
+
+
+def figure_alt_texts(pdf: Path) -> list[str]:
+    """The alt text in *pdf*, which Chrome writes as a literal string, or in hex as UTF-16."""
+    found: list[str] = []
+    pattern = rb"/Alt\s*(?:\(((?:\\.|[^\\)])*)\)|<([0-9A-Fa-f]*)>)"
+    for literal, hexadecimal in re.findall(pattern, pdf.read_bytes()):
+        if hexadecimal:
+            found.append(bytes.fromhex(hexadecimal.decode("ascii")).decode("utf-16"))
+        else:
+            found.append(re.sub(rb"\\(.)", rb"\1", literal).decode("latin-1"))
+    return found
 
 
 def diagrams(markdown: str, directory: Path) -> list[str]:
@@ -118,6 +155,12 @@ def test_diagram_labels_are_text_in_the_pdf(printed: Printed) -> None:
     assert not [svg for svg in images if "@font-face" in svg]
     text = pdf_text(printed.pdf)
     assert [label for label in LABELS if label not in text] == []
+
+
+def test_diagrams_have_alt_text_in_the_html_and_the_pdf(printed: Printed) -> None:
+    assert alt_texts(printed.html) == ALT_TEXTS
+    # Chrome gives each image's figure its alt text.
+    assert sorted(figure_alt_texts(printed.pdf)) == sorted(ALT_TEXTS)
 
 
 def test_math_in_a_diagram_is_drawn_with_katex(tmp_path: Path) -> None:
