@@ -252,6 +252,21 @@ def test_gitignore_filtering_is_automatic_inside_git_work_trees(
     assert "Ignored" in str(fake_tools.calls("pandoc")[-1]["input"])
 
 
+def test_a_folder_that_git_ignores_is_filtered_only_on_request(
+    run_cli: CommandLine, fake_tools: FakeTools, workspace: Path
+) -> None:
+    (workspace / ".gitignore").write_text("/docs/\n", encoding="utf-8")
+    subprocess.run(["git", "init", "--quiet"], cwd=workspace, check=True)
+    run_cli("md-to-html", "docs")
+    assert "Example" in str(fake_tools.calls("pandoc")[-1]["input"])
+    filtered = run_cli("md-to-html", "docs", "--respect-gitignore", check=False)
+    assert filtered.returncode == 1
+    assert (
+        ": no Markdown to render once Git-ignored files are skipped; "
+        "--no-respect-gitignore includes them"
+    ) in filtered.stderr
+
+
 def test_respect_gitignore_outside_a_git_work_tree_warns_only_when_requested(
     run_cli: CommandLine, tmp_path: Path
 ) -> None:

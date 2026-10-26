@@ -620,6 +620,19 @@ def in_git_work_tree(directory: Path) -> bool:
     return proc.returncode == 0 and proc.stdout.strip() == "true"
 
 
+def ignored_by_git(directory: Path) -> bool:
+    """Return True if git ignores *directory* itself, by a rule for it or for a parent.
+
+    Asked from inside *directory*, its own repository answers: the top of a work tree is never
+    ignored, even when an enclosing repository ignores it.
+    """
+    # Named from its parent: git would test "." as "docs/", say, which a rule for the folder's
+    # entries, such as "docs/*", also matches. git works in the folder that a symbolic link
+    # leads to, so the name is that folder's.
+    path = f"../{directory.resolve().name}"
+    return path in _git_ignored([path], directory)
+
+
 def _git_ignored(names: list[str], directory: Path) -> set[str]:
     """Return the subset of *names* (entries of *directory*) that git ignores.
 
@@ -668,6 +681,10 @@ def collect_directory(
     blocks, in order.  Headings get the identifiers that Pandoc gives them
     in one document of all the files, and cross-file ``.md`` links are
     resolved to them when the target file is part of the collection.
+
+    Raises MarkdownError when no file has any content, naming
+    --no-respect-gitignore if Git-ignore filtering left out Markdown files or
+    folders.
     """
     if respect_gitignore and not in_git_work_tree(root):
         active().warning(
@@ -682,11 +699,21 @@ def collect_directory(
     # punctuation, explicit attributes and duplicate suffixes.
     file_slug_map: dict[str, str] = {}
     file_anchor_map: dict[str, dict[str, str]] = {}
+    # The Markdown files and folders that Git-ignore filtering left out.
+    left_out: set[Path] = set()
+
+    def _leave_out(path: Path) -> None:
+        if path not in left_out:
+            left_out.add(path)
+            active().detail(f"skipping {shown(path)}, which Git ignores")
 
     def _is_ignored(file_path: Path) -> bool:
         if not respect_gitignore:
             return False
-        return file_path.name in _git_ignored([file_path.name], file_path.parent)
+        if file_path.name in _git_ignored([file_path.name], file_path.parent):
+            _leave_out(file_path)
+            return True
+        return False
 
     def _ordered_entries(directory: Path) -> list[str]:
         """Return directory entries ordered by .order file if present."""
@@ -696,6 +723,11 @@ def collect_directory(
         if respect_gitignore:
             ignored = _git_ignored(entries, directory)
             entries = [e for e in entries if e not in ignored]
+            for e in sorted(ignored):
+                if not e.startswith(".") and (
+                    e.lower().endswith(".md") or (directory / e).is_dir()
+                ):
+                    _leave_out(directory / e)
 
         if order_file.is_file():
             lines = order_file.read_text(encoding="utf-8").splitlines()
@@ -773,11 +805,16 @@ def collect_directory(
 
     collected = _collect(root, title_content)
     pages = [item for item in collected if item.document.ast["blocks"]]
+    if not pages:
+        reason = "no Markdown to render"
+        if left_out:
+            reason += " once Git-ignored files are skipped; --no-respect-gitignore includes them"
+        raise MarkdownError(reason)
     headers = [header_blocks(_blocks(item.document)) for item in pages]
     combined = combined_identifiers(
         headers,
         reader=_RENDERER_READER,
-        api=pages[0].document.ast["pandoc-api-version"] if pages else [],
+        api=pages[0].document.ast["pandoc-api-version"],
     )
 
     index = 0
@@ -815,8 +852,6 @@ def collect_directory(
     for item in pages:
         _remap_links(item)
         blocks.extend(_blocks(item.document))
-    if not pages:
-        return {"pandoc-api-version": [], "meta": {}, "blocks": []}
     # The first page's metadata, such as a title block, is the document's.
     first = pages[0].document.ast
     return {

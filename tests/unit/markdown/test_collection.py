@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from md_doc_converter.markdown import preprocess
+from md_doc_converter.markdown.document import MarkdownError
 from md_doc_converter.markdown.headings import collect_headings
 
 
@@ -87,6 +88,25 @@ def test_unordered_directory_leads_with_its_first_file(tmp_path: Path) -> None:
     )
 
     assert collected_titles(docs) == ["Readme", "Nested", "Last"]
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        pytest.param({}, id="no-files"),
+        pytest.param({"notes.txt": "# Not Markdown\n", "sub/blank.md": "\n"}, id="blank-pages"),
+    ],
+)
+def test_a_folder_with_no_markdown_to_render_is_an_error(
+    files: dict[str, str], tmp_path: Path
+) -> None:
+    # Pandoc would fail on the empty document, saying only that its API version is missing.
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    write_tree(docs, files)
+
+    with pytest.raises(MarkdownError, match=r"^no Markdown to render$"):
+        preprocess.collect_directory(docs, defaultdict(Counter))
 
 
 def test_a_list_that_ends_a_page_does_not_run_on_into_the_next(tmp_path: Path) -> None:

@@ -44,13 +44,14 @@ class FakeRenderer:
     """Prepares Markdown, and finds and runs git, pandoc and the PDF printer, recording what
     they get.
 
-    Each program is found at /found/<name>. git reports whether the input is in a work tree.
-    pandoc records the metadata of the prepared document it gets, writes *html*, or fails with
-    status 7; the PDF printer records the HTML it gets and writes a placeholder PDF. Any other
-    command fails the test.
+    Each program is found at /found/<name>. git reports whether the input is in a work tree,
+    and whether it ignores the input. pandoc records the metadata of the prepared document it
+    gets, writes *html*, or fails with status 7; the PDF printer records the HTML it gets and
+    writes a placeholder PDF. Any other command fails the test.
     """
 
     git_work_tree: bool = False
+    git_ignored: bool = False
     pandoc_fails: bool = False
     preparation: preprocess.PreparedDocument = field(
         default_factory=lambda: preprocess.PreparedDocument(
@@ -83,6 +84,9 @@ class FakeRenderer:
     def run(self, command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         program = Path(command[0]).stem
         if program == "git":
+            if "check-ignore" in command:
+                ignored = f"{kwargs['input']}\0" if self.git_ignored else ""
+                return subprocess.CompletedProcess(command, 0 if ignored else 1, ignored, "")
             stdout = "true\n" if self.git_work_tree else ""
             return subprocess.CompletedProcess(command, 0 if stdout else 128, stdout, "")
         if command[0] == found("pandoc"):
@@ -778,6 +782,27 @@ def test_gitignore_filtering_defaults_to_folders_in_git_work_trees(
         selected, FORMAT.HTML, options=Options(respect_gitignore=choice), tools=tools
     )
     assert fake.prepare_calls[-1] == (selected, expected, False)
+
+
+@pytest.mark.parametrize(
+    ("choice", "expected"),
+    [
+        pytest.param(None, False, id="by-default"),
+        pytest.param(True, True, id="on-request"),
+    ],
+)
+def test_a_folder_that_git_ignores_is_filtered_only_on_request(
+    choice: bool | None, expected: bool, fake: FakeRenderer, tmp_path: Path, tools: Toolchain
+) -> None:
+    folder = tmp_path / "scratch"
+    folder.mkdir()
+    (folder / "page.md").write_text("# Page\n", encoding="utf-8")
+    fake.git_work_tree = True
+    fake.git_ignored = True
+    render.render_markdown(
+        folder, FORMAT.HTML, options=Options(respect_gitignore=choice), tools=tools
+    )
+    assert fake.prepare_calls[-1] == (folder, expected, False)
 
 
 def test_images_are_downloaded_only_with_the_flag(

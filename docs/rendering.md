@@ -69,9 +69,10 @@ md-to-html: warning: docs/notes.md:12: Duplicate note reference '1'
 rendered docs -> docs/docs.html
 ```
 
-`--verbose` also lists the files that a folder render reads, and what
-preparing them changed, such as the wiki macro lines it dropped. See
-[Messages](../README.md#messages) for the options that choose what is shown.
+`--verbose` also lists the files that a folder render reads, and the Git-ignored
+ones it skips, and what preparing them changed, such as the wiki macro lines it
+dropped. See [Messages](../README.md#messages) for the options that choose what
+is shown.
 
 ## Folder input
 
@@ -84,9 +85,12 @@ them. Without `.order`, entries are sorted by name, except that the first
 Markdown file leads when the folder has no title page. Entries whose names
 begin with `.` are skipped.
 
-When the folder is inside a Git work tree, Git-ignored files are skipped.
-`--no-respect-gitignore` includes them; `--respect-gitignore` requests
-filtering explicitly and warns when it has no effect.
+When the folder is inside a Git work tree, Git-ignored files are skipped,
+unless Git ignores the folder itself, as it might a scratch folder of local
+documents: every file in it is ignored. `--no-respect-gitignore` includes
+Git-ignored files; `--respect-gitignore` skips them even in an ignored folder,
+and warns when it has no effect. A folder with no Markdown to render is an
+error.
 
 ## How Markdown is read
 

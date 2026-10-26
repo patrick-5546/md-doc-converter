@@ -307,9 +307,10 @@ def _filter_gitignored(choice: bool | None, source: Path) -> bool:
     if not source.is_dir():
         return False
     # Imported here so command-line help does not load the Markdown toolchain.
-    from md_doc_converter.markdown.preprocess import in_git_work_tree
+    from md_doc_converter.markdown.preprocess import ignored_by_git, in_git_work_tree
 
-    return in_git_work_tree(source)
+    # Filtering a folder that Git ignores would skip every file in it.
+    return in_git_work_tree(source) and not ignored_by_git(source)
 
 
 def _prepare_markdown(
@@ -570,7 +571,10 @@ def main(argv: list[str] | None = None, *, action: Literal["html", "pdf"]) -> in
         "--respect-gitignore",
         action=argparse.BooleanOptionalAction,
         default=None,
-        help="Skip Git-ignored files in a folder input (default: when it is in a Git work tree)",
+        help=(
+            "Skip Git-ignored files in a folder input (default: when it is in a Git work tree, "
+            "unless Git ignores the folder)"
+        ),
     )
     parser.add_argument(
         "--keep-intermediates",
