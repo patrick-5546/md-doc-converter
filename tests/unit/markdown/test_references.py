@@ -412,16 +412,40 @@ def test_wiki_macros_go_without_moving_lines_or_blank_lines_in_code(convert: Con
     assert "pass\n\n\n" in re.sub(r"<[^>]+>", "", html)
 
 
+def test_html_comments_are_left_out_but_code_and_preformatted_text_keep_theirs(
+    convert: Convert,
+) -> None:
+    source = (
+        "<!-- A note\nover lines -->\n\n"
+        "Text <!-- inline --> more.\n\n"
+        "<table><tr><td><!-- in a cell -->Cell</td></tr></table>\n\n"
+        "| Head |\n| --- |\n| <!-- in a pipe table --> Row |\n\n"
+        "- Item <!-- in a list -->\n\n"
+        "<pre>Kept <!-- in pre --></pre>\n\n"
+        "`<!-- in code -->`\n\n"
+        "```html\n<!-- in a code block -->\n```\n"
+    )
+
+    html = convert(preprocess.preprocess(source, "page.md"), "html5")
+
+    assert re.findall(r"<!--.*?-->", html, re.DOTALL) == ["<!-- in pre -->"]
+    assert "&lt;!-- in code --&gt;" in html
+    assert "&lt;!-- in a code block --&gt;" in html
+    for text in ("Text", "more.", "Cell", "Row", "Item", "Kept"):
+        assert text in html
+
+
 def test_verbose_counts_what_preparing_the_markdown_changed(tmp_path: Path) -> None:
     source = tmp_path / "page.md"
-    source.write_text("[[_TOC_]]\n\n# Page\n\n- [1:0]: Mode\n", encoding="utf-8")
+    source.write_text("[[_TOC_]]\n\n<!-- A note -->\n\n# Page\n\n- [1:0]: Mode\n", encoding="utf-8")
     stream = io.StringIO()
 
     with activated(Console("md-to-html", "verbose", stream=stream)):
         preprocess.prepare_markdown(source)
 
     assert stream.getvalue() == (
-        "md-to-html: prepared the Markdown (macros removed: 1, bit-range definitions defused: 1)\n"
+        "md-to-html: prepared the Markdown (macros removed: 1, bit-range definitions defused: 1, "
+        "comments removed: 1)\n"
     )
 
 

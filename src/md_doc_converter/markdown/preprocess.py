@@ -2,7 +2,8 @@
 Markdown preprocessor that prepares files for pandoc ingestion.
 
 Per-file text cleanup removes Azure DevOps macros and defuses accidental
-bit-notation reference definitions. Pandoc then resolves inline, full, collapsed
+bit-notation reference definitions, and HTML comments are removed from the
+parsed document. Pandoc then resolves inline, full, collapsed
 and shortcut links/images with the renderer's reader. Targets are checked and
 made source-relative in each file's parsed document. The result is a Pandoc
 document, not Markdown, so a folder's files are combined as document trees:
@@ -70,6 +71,18 @@ from md_doc_converter.media_types import IMAGE_TYPES
 # records how much it changed (e.g. ``stats["paths resolved"] += 1``); check-only
 # transforms leave it empty. Transforms are registered by phase below.
 # ---------------------------------------------------------------------------
+
+
+def remove_html_comments(
+    document: MarkdownDocument, source_path: str | None, stats: Counter[str]
+) -> None:
+    """Remove HTML comments, which GitHub and Azure DevOps leave out of their pages too.
+
+    A comment in the text of an element such as ``<pre>`` stays, as raw HTML is not edited.
+    """
+    removed = document.remove_comments()
+    if removed:
+        stats["comments removed"] += removed
 
 
 def resolve_relative_paths(
@@ -528,7 +541,12 @@ TEXT_TRANSFORMS = [
     escape_bit_ranges,
     warn_undefined_references,
 ]
-TARGET_TRANSFORMS = [warn_broken_images, resolve_relative_paths, warn_missing_anchors]
+TARGET_TRANSFORMS = [
+    remove_html_comments,
+    warn_broken_images,
+    resolve_relative_paths,
+    warn_missing_anchors,
+]
 
 
 def _prepare_document(

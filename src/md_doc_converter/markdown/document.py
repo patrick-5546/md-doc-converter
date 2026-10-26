@@ -117,6 +117,38 @@ def _element_ids(value: object, found: set[str]) -> None:
             _element_ids(child, found)
 
 
+# Raw HTML that is only comments. Pandoc reads each comment as raw HTML of its own, except in the
+# text of an element such as <pre> or <style>, where `<!--` may not start one.
+_COMMENTS = re.compile(r"\s*(?:<!--.*?-->\s*)+", re.DOTALL)
+
+
+def _is_comment(value: object) -> bool:
+    if not isinstance(value, dict) or value.get("t") not in {"RawInline", "RawBlock"}:
+        return False
+    content = value.get("c")
+    return (
+        isinstance(content, list)
+        and len(content) == 2
+        and content[0] == "html"
+        and isinstance(content[1], str)
+        and _COMMENTS.fullmatch(content[1]) is not None
+    )
+
+
+def _remove_comments(value: object) -> int:
+    removed = 0
+    if isinstance(value, list):
+        kept = [item for item in value if not _is_comment(item)]
+        removed = len(value) - len(kept)
+        value[:] = kept
+        for item in value:
+            removed += _remove_comments(item)
+    elif isinstance(value, dict):
+        for child in value.values():
+            removed += _remove_comments(child)
+    return removed
+
+
 def strip_column_widths(value: object) -> None:
     """Give every table column in Pandoc JSON *value* the default width.
 
@@ -219,3 +251,7 @@ class MarkdownDocument:
 
     def transform_targets(self, transform: TargetTransform) -> None:
         _transform_targets(self.ast, transform)
+
+    def remove_comments(self) -> int:
+        """Remove the raw HTML that is only comments; return how many elements were removed."""
+        return _remove_comments(self.ast["blocks"])

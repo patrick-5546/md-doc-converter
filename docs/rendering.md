@@ -105,6 +105,8 @@ as GitHub shows it:
   because Pandoc drops the rest of the cell; write the cell's lines with
   `<br>`, or make the table HTML.
 - Azure DevOps Wiki's `[[_TOC_]]` and `[[_TOSP_]]` macro lines are dropped.
+- HTML comments are left out of the HTML, as GitHub and Azure DevOps leave them
+  out of their pages.
 
 Unlike GitHub, bit-field notation that would define a link reference, such as
 `[1:0]: Mode` at the start of a line, renders as text.
