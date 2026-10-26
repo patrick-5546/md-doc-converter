@@ -133,13 +133,11 @@ def _convert_in_work(
         else:
             report.not_requested("duplicate-headings", "--qualify-duplicate-headings")
         markdown = _normalization.normalize_final_newline(markdown)
-        pages = {Path(paths.output.name): markdown}
-        report.console.status("checking links and pages")
-        with _diagnostics.transform(report, "pages"):
-            pages = _navigation.split_markdown_pages(
+        report.console.status("checking links")
+        with _diagnostics.transform(report, "links"):
+            markdown = _navigation.resolve_links(
                 markdown,
                 paths.output,
-                paths.split_depth,
                 title,
                 pandoc,
                 source=navigation,
@@ -147,13 +145,12 @@ def _convert_in_work(
                 math=math,
             )
         with _diagnostics.transform(report, "cleanup"):
-            for page, content in list(pages.items()):
-                pages[page], removed = _normalization.drop_unneeded_escapes(content, pandoc)
-                report.applied("cleanup", "unneeded escape(s) removed", removed)
+            markdown, removed = _normalization.drop_unneeded_escapes(markdown, pandoc)
+            report.applied("cleanup", "unneeded escape(s) removed", removed)
         report.console.status("checking the Markdown")
         with _diagnostics.transform(report, "checks"):
             issues = _validation.validate_outputs(
-                pages,
+                markdown,
                 paths,
                 stager.root,
                 pandoc,
@@ -167,24 +164,13 @@ def _convert_in_work(
                 "qualified_headings": len(changes),
                 "bookmarks": len(navigation.bookmarks),
                 "unique_images": stager.count,
-                "pages": len(pages),
             }
         )
         staged_markdown = work / "final.md"
-        staged_markdown.write_text(pages[Path(paths.output.name)], encoding="utf-8", newline="\n")
-        staged_pages: Path | None = None
-        if paths.split_depth:
-            staged_pages = work / "final-pages"
-            staged_pages.mkdir()
-            for page, content in pages.items():
-                if page == Path(paths.output.name):
-                    continue
-                destination = staged_pages / page.relative_to(paths.output.stem)
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                destination.write_text(content, encoding="utf-8", newline="\n")
+        staged_markdown.write_text(markdown, encoding="utf-8", newline="\n")
         if not dry_run:
             report.console.status("writing the files")
-            _publication.publish_outputs(staged_markdown, stager.root, paths, staged_pages)
+            _publication.publish_outputs(staged_markdown, stager.root, paths)
         return stats
     except ConversionError:
         raise
@@ -210,10 +196,7 @@ def _scratch_parent(paths: ConversionPaths) -> Path:
         parent = candidate.resolve()
         if not parent.is_dir() or not os.access(parent, os.W_OK | os.X_OK):
             continue
-        if any(
-            parent == directory or directory in parent.parents
-            for directory in (paths.images, paths.pages)
-        ):
+        if parent == paths.images or paths.images in parent.parents:
             continue
         return parent
     raise ConversionError("No writable scratch location outside the generated destinations")
@@ -223,7 +206,6 @@ def convert_docx(
     input_path: Path,
     output_path: Path | None = None,
     *,
-    split_depth: int = 0,
     qualify_duplicate_headings: bool = False,
     dry_run: bool = False,
     replace_generated: bool = False,
@@ -236,7 +218,6 @@ def convert_docx(
     paths = _publication.validate_paths(
         input_path,
         output_path,
-        split_depth=split_depth,
         replace_generated=replace_generated,
         keep_intermediates=keep_intermediates,
     )
@@ -259,7 +240,6 @@ def convert_docx(
                 paths.source_entry,
                 paths.output,
                 paths.images,
-                paths.pages,
             )
         ):
             raise ConversionError("Private scratch overlaps a protected conversion path")

@@ -78,7 +78,7 @@ CONVERTED_MARKDOWN_RULES = Path(__file__).parents[1] / "support" / "converted.ru
 def linted[**Options](
     convert: Callable[Options, dict[str, int]],
 ) -> Callable[Options, dict[str, int]]:
-    """*convert*, then a check of the pages it published against markdownlint's rules."""
+    """*convert*, then a check of the Markdown it published against markdownlint's rules."""
     signature = inspect.signature(convert)
     rumdl = Path(sysconfig.get_path("scripts")) / "rumdl"
 
@@ -89,8 +89,6 @@ def linted[**Options](
         options = call.arguments
         if not options["dry_run"]:
             published = _publication.requested_output(options["input_path"], options["output_path"])
-            folder = published.with_suffix("")
-            pages = sorted(folder.rglob("*.md")) if options["split_depth"] else []
             result = subprocess.run(
                 [
                     rumdl,
@@ -101,7 +99,6 @@ def linted[**Options](
                     "--output-format",
                     "concise",
                     published,
-                    *pages,
                 ],
                 capture_output=True,
                 text=True,
@@ -115,7 +112,7 @@ def linted[**Options](
 
 @pytest.fixture(autouse=True)
 def lint_converted_markdown(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Check every page that a conversion in these tests publishes, including combinations
+    """Check the Markdown that each conversion in these tests publishes, including combinations
     that no expected output covers."""
     monkeypatch.setattr(_pipeline, "convert_docx", linted(_pipeline.convert_docx))
 
@@ -136,7 +133,6 @@ class Converter:
         body: list[ET.Element],
         *,
         output: Path | None = None,
-        split_depth: int = 0,
         qualify: bool = False,
         relations: Relations = (),
         media: dict[str, bytes] | None = None,
@@ -151,7 +147,6 @@ class Converter:
         stats = _pipeline.convert_docx(
             self.source,
             output,
-            split_depth=split_depth,
             qualify_duplicate_headings=qualify,
             report=report,
         )
@@ -240,9 +235,7 @@ def test_default_keeps_step_and_status_labels_and_index_content(convert: Convert
     assert not result.endswith("\n\n")
 
 
-def test_ordered_list_start_and_nesting_survive_conversion_and_splitting(
-    source: Path, tmp_path: Path, pandoc: str
-) -> None:
+def test_ordered_list_start_and_nesting_survive_conversion(source: Path, pandoc: str) -> None:
     write_docx(
         source,
         [
@@ -254,8 +247,8 @@ def test_ordered_list_start_and_nesting_survive_conversion_and_splitting(
         ],
         extras={"word/numbering.xml": numbering_xml()},
     )
-    _pipeline.convert_docx(source, split_depth=1)
-    content = (tmp_path / "Synthetic Guide" / "01-numbers.md").read_text(encoding="utf-8")
+    _pipeline.convert_docx(source)
+    content = source.with_suffix(".md").read_text(encoding="utf-8")
     shape = list_shape(_reference.pandoc_html(content, pandoc))
     assert shape == [("ol", "1", 7, 2), ("ol", "1", 7, 2)]
 
@@ -874,18 +867,14 @@ def test_signal_identifiers_are_readable_in_prose_and_table_cells(convert: Conve
     assert r"\_ctl_s_ready" not in result
 
 
-def test_an_all_empty_table_keeps_its_first_row_after_splitting(
-    convert: Converter, tmp_path: Path, pandoc: str
-) -> None:
-    convert(
+def test_an_all_empty_table_keeps_its_first_row(convert: Converter, pandoc: str) -> None:
+    result, _stats = convert(
         [
             paragraph("Tables.", "Heading1"),
             table(row(cell(""), cell("")), row(cell(""), cell("")), row(cell(""), cell(""))),
-        ],
-        split_depth=6,
+        ]
     )
-    content = (tmp_path / "Synthetic Guide" / "01-tables.md").read_text(encoding="utf-8")
-    assert len(list(_reference.pandoc_html(content, pandoc).iter("tr"))) == 1
+    assert len(list(_reference.pandoc_html(result, pandoc).iter("tr"))) == 1
 
 
 def test_rows_and_tables_without_cells_are_omitted(convert: Converter) -> None:
@@ -977,23 +966,20 @@ def test_bookmark_and_parenthesized_identity(convert: Converter) -> None:
 
 
 def test_bookmark_matching_its_heading_id_needs_no_html_workaround(
-    convert: Converter, tmp_path: Path, pandoc: str
+    convert: Converter, pandoc: str
 ) -> None:
     result, _stats = convert(
         [
             bookmark("title", "Title", "Heading1"),
             hyperlink("Go", anchor="title"),
-        ],
-        split_depth=1,
+        ]
     )
-    assert "Title" in result
-    child = (tmp_path / "Synthetic Guide" / "01-title.md").read_text(encoding="utf-8")
-    parsed = _validation.collect_references(_reference.pandoc_html(child, pandoc))
+    parsed = _validation.collect_references(_reference.pandoc_html(result, pandoc))
     assert parsed.anchors.count("title") == 1
-    assert "# Title" in child
-    assert "[Go](#title)" in child
-    assert "<h1" not in child
-    assert "<a " not in child
+    assert "# Title" in result
+    assert "[Go](#title)" in result
+    assert "<h1" not in result
+    assert "<a " not in result
 
 
 def test_word_bookmark_wins_over_a_different_heading_id(convert: Converter, pandoc: str) -> None:
@@ -1085,13 +1071,7 @@ def test_complex_table_bookmarks_use_section_links_without_anchor_wrappers(
     assert "<span" not in result
 
 
-@pytest.mark.parametrize(
-    "depth", [pytest.param(0, id="one-page"), pytest.param(1, id="split-pages")]
-)
-def test_preamble_bookmark_targets_document_top_across_split_pages(
-    depth: int, convert: Converter, tmp_path: Path
-) -> None:
-    output = tmp_path / "guide.md"
+def test_preamble_bookmark_targets_document_top(convert: Converter, tmp_path: Path) -> None:
     result, _stats = convert(
         [
             bookmark("_Before", "Opening text"),
@@ -1099,17 +1079,12 @@ def test_preamble_bookmark_targets_document_top_across_split_pages(
             paragraph("Body", "Heading1"),
             hyperlink("Top", anchor="_Before"),
         ],
-        output=output,
-        split_depth=depth,
+        output=tmp_path / "guide.md",
     )
     assert "[Opening](#)" in result
     assert "<a " not in result
-    if depth:
-        child = (tmp_path / "guide" / "01-body.md").read_text(encoding="utf-8")
-        assert "[Top](../guide.md)" in child
-    else:
-        assert "[Top](#)" in result
-        assert result.startswith("Opening text")
+    assert "[Top](#)" in result
+    assert result.startswith("Opening text")
 
 
 def test_only_referenced_nonheading_bookmarks_report_retargeting(
@@ -1140,41 +1115,8 @@ def test_only_referenced_nonheading_bookmarks_report_retargeting(
     assert "[Preamble](#)" in result
 
 
-@pytest.mark.parametrize(
-    ("depth", "links"),
-    [
-        pytest.param(
-            0,
-            [
-                ("guide.md", "[Second target](#2-same--detail-1)"),
-                ("guide.md", "[First target](#2-same--detail)"),
-            ],
-            id="one-page",
-        ),
-        pytest.param(
-            1,
-            [
-                ("guide/01-first.md", "[Second target](02-second.md#2-same--detail)"),
-                ("guide/02-second.md", "[First target](01-first.md#2-same--detail)"),
-            ],
-            id="pages-at-level-1",
-        ),
-        pytest.param(
-            2,
-            [
-                (
-                    "guide/01-first/01-2-same-detail.md",
-                    "[Second target](../02-second/01-2-same-detail.md#2-same--detail)",
-                )
-            ],
-            id="pages-at-level-2",
-        ),
-    ],
-)
-def test_duplicate_heading_links_use_final_page_local_ids(
-    depth: int, links: list[tuple[str, str]], convert: Converter, tmp_path: Path
-) -> None:
-    convert(
+def test_links_to_repeated_headings_use_their_final_ids(convert: Converter, tmp_path: Path) -> None:
+    result, _stats = convert(
         [
             paragraph("First", "Heading1"),
             bookmark("_One", "2. Same & Detail", "Heading2"),
@@ -1184,10 +1126,9 @@ def test_duplicate_heading_links_use_final_page_local_ids(
             hyperlink("First target", anchor="_One"),
         ],
         output=tmp_path / "guide.md",
-        split_depth=depth,
     )
-    for page, link in links:
-        assert link in (tmp_path / page).read_text(encoding="utf-8")
+    assert "[Second target](#2-same--detail-1)" in result
+    assert "[First target](#2-same--detail)" in result
 
 
 def test_markdown_caption_does_not_change_word_section_mapping(
@@ -1248,7 +1189,6 @@ def test_cross_references_to_missing_bookmarks_are_kept_as_text(convert: Convert
         "link to a missing Word bookmark; kept as plain text": 3
     }
     assert "links: cross-reference to missing Word bookmark '_Gone'; kept as plain text" in warnings
-    assert report.status("pages") == "applied"
     assert report.status("checks") == "applied"
 
 
@@ -1356,10 +1296,7 @@ def test_word_line_breaks_are_hard_line_breaks(convert: Converter) -> None:
     assert not report.records["checks"].skipped
 
 
-@pytest.mark.parametrize("split", [pytest.param(0, id="one-page"), pytest.param(1, id="pages")])
-def test_lines_of_dashes_or_equals_signs_stay_text(
-    split: int, convert: Converter, tmp_path: Path
-) -> None:
+def test_lines_of_dashes_or_equals_signs_stay_text(convert: Converter) -> None:
     # Pandoc writes them as they are, which Markdown reads as a rule or a heading underline.
     def broken(*texts: str) -> ET.Element:
         result = ET.Element(W + "p")
@@ -1382,15 +1319,9 @@ def test_lines_of_dashes_or_equals_signs_stay_text(
             broken("Lead", "---"),
             rule,
             paragraph("End"),
-        ],
-        split_depth=split,
+        ]
     )
-    page = (
-        (tmp_path / "Synthetic Guide" / "01-section.md").read_text(encoding="utf-8")
-        if split
-        else result
-    )
-    assert page.endswith("\\---\n\nLead\\\n\\===\n\nLead\\\n\\---\n\n---\n\nEnd\n")
+    assert result.endswith("\\---\n\nLead\\\n\\===\n\nLead\\\n\\---\n\n---\n\nEnd\n")
 
 
 def test_line_breaks_at_block_ends_leave_no_backslash(convert: Converter) -> None:
@@ -1514,14 +1445,8 @@ def test_a_footnote_keeps_its_link(convert: Converter) -> None:
         pytest.param("dollars", "$x + 1$", "$$x + 1$$", id="dollars"),
     ],
 )
-@pytest.mark.parametrize("split", [pytest.param(0, id="one-page"), pytest.param(1, id="pages")])
 def test_equations_are_written_in_the_chosen_syntax(
-    math: Literal["github", "dollars"],
-    inline: str,
-    display: str,
-    split: int,
-    source: Path,
-    tmp_path: Path,
+    math: Literal["github", "dollars"], inline: str, display: str, source: Path
 ) -> None:
     def equation(*, alone: bool = False) -> ET.Element:
         formula = ET.Element(M + "oMath")
@@ -1553,10 +1478,8 @@ def test_equations_are_written_in_the_chosen_syntax(
         relations=(("notes", "footnotes", "footnotes.xml", "Internal"),),
         extras={"word/footnotes.xml": _ooxml.word_xml_bytes(notes)},
     )
-    _pipeline.convert_docx(source, split_depth=split, math=math)
-    page = (
-        (tmp_path / "Synthetic Guide" / "01-section.md") if split else source.with_suffix(".md")
-    ).read_text(encoding="utf-8")
+    _pipeline.convert_docx(source, math=math)
+    page = source.with_suffix(".md").read_text(encoding="utf-8")
     assert f"Inline {inline}.\n\n{display}\n" in page
     assert f"| a | {inline} |" in page
     assert f"[^1]: See {inline}\n" in page
@@ -1871,11 +1794,9 @@ def test_list_markers_take_one_space_and_lines_have_no_trailing_whitespace(
     assert report.status("checks") == "applied"
 
 
-def test_empty_headings_are_omitted_and_do_not_prevent_splitting(
-    convert: Converter, tmp_path: Path
-) -> None:
+def test_empty_headings_are_omitted(convert: Converter) -> None:
     report = _diagnostics.TransformReport()
-    convert(
+    result, _stats = convert(
         [
             paragraph("One", "Heading1"),
             paragraph("", "Heading2"),
@@ -1884,21 +1805,15 @@ def test_empty_headings_are_omitted_and_do_not_prevent_splitting(
             paragraph("\u00a0", "Heading2"),
             paragraph("End"),
         ],
-        split_depth=1,
         qualify=True,
         report=report,
     )
-    assert report.status("pages") == "applied"
     assert report.status("duplicate-headings") == "not needed"
     assert "    not applied (2): Word heading has no text; omitted" in report.summary()
-    pages = tmp_path / "Synthetic Guide"
-    assert (pages / "01-one.md").read_text(encoding="utf-8") == "# One\n\nText\n"
-    assert (pages / "02-two.md").read_text(encoding="utf-8") == "# Two\n\nEnd\n"
+    assert result == "# One\n\nText\n\n# Two\n\nEnd\n"
 
 
-def test_each_footnote_is_defined_on_the_page_that_refers_to_it(
-    convert: Converter, tmp_path: Path
-) -> None:
+def test_footnotes_are_numbered_in_order_and_defined_at_the_end(convert: Converter) -> None:
     def noted(text: str, number: int) -> ET.Element:
         result = paragraph(text)
         ET.SubElement(
@@ -1910,7 +1825,7 @@ def test_each_footnote_is_defined_on_the_page_that_refers_to_it(
     for number, text in ((1, "First note"), (2, "Cell note"), (3, "Second note")):
         note = ET.SubElement(notes, W + "footnote", {W + "id": str(number)})
         note.append(paragraph(text))
-    convert(
+    result, _stats = convert(
         [
             paragraph("One", "Heading1"),
             noted("Text", 1),
@@ -1918,18 +1833,12 @@ def test_each_footnote_is_defined_on_the_page_that_refers_to_it(
             paragraph("Two", "Heading1"),
             noted("More", 3),
         ],
-        split_depth=1,
         relations=(("notes", "footnotes", "footnotes.xml", "Internal"),),
         extras={"word/footnotes.xml": _ooxml.word_xml_bytes(notes)},
     )
-    # Each page numbers its notes from 1 and defines them at its end.
-    pages = tmp_path / "Synthetic Guide"
-    assert (pages / "01-one.md").read_text(encoding="utf-8") == (
+    assert result == (
         "# One\n\nText[^1]\n\n| Cell[^2] | x |\n| --- | --- |\n| a | b |\n\n"
-        "[^1]: First note\n\n[^2]: Cell note\n"
-    )
-    assert (pages / "02-two.md").read_text(encoding="utf-8") == (
-        "# Two\n\nMore[^1]\n\n[^1]: Second note\n"
+        "# Two\n\nMore[^3]\n\n[^1]: First note\n\n[^2]: Cell note\n\n[^3]: Second note\n"
     )
 
 
@@ -2053,25 +1962,6 @@ def test_word_title_stays_a_paragraph_when_headings_cannot_move_down(
     assert result.startswith("Guide Title\n\n# ")
     assert f"    not applied (1): {reason}" in report.summary()
     assert "Word title 'Guide Title'" in warnings
-
-
-def test_split_root_page_does_not_repeat_the_word_title(convert: Converter, tmp_path: Path) -> None:
-    report = _diagnostics.TransformReport()
-    convert(
-        [
-            paragraph("Guide Title", "Title"),
-            paragraph("Date: today"),
-            paragraph("One", "Heading1"),
-            paragraph("Text"),
-        ],
-        split_depth=1,
-        report=report,
-        styles=(word_style("Title"),),
-    )
-    assert (tmp_path / "Synthetic Guide.md").read_text(
-        encoding="utf-8"
-    ) == "# Guide Title\n\nDate: today\n\n## Sections\n\n- [One](Synthetic%20Guide/01-one.md)\n"
-    assert "  title: applied (1 repeated title paragraph(s) removed)" in report.summary()
 
 
 def test_images_in_table_cells_keep_a_markdown_table(convert: Converter) -> None:
@@ -2346,19 +2236,6 @@ def test_legacy_picture_with_a_text_box_keeps_each_once(convert: Converter) -> N
     assert result.count("Caption text") == 1
 
 
-def test_split_images_remain_relative_to_derived_namespace(
-    convert: Converter, tmp_path: Path
-) -> None:
-    convert(
-        [paragraph("Chapter.", "Heading1"), paragraph("Deep.", "Heading3"), image()],
-        split_depth=3,
-        relations=(("image", "image", "media/image.png", "Internal"),),
-        media={"image.png": PNG},
-    )
-    child = tmp_path / "Synthetic Guide" / "01-chapter" / "01-deep.md"
-    assert "../../.images/Synthetic%20Guide/image.png" in child.read_text(encoding="utf-8")
-
-
 def test_emf_svg_publication_collision_gets_a_distinct_name(
     convert: Converter, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2627,9 +2504,7 @@ def test_dry_run_has_no_final_writes_and_retains_only_requested_bundle(
     write_docx(source, [paragraph("Title.", "Heading1")])
     output = tmp_path / "new" / "document.md"
     intermediates = tmp_path / "intermediates"
-    _pipeline.convert_docx(
-        source, output, split_depth=1, dry_run=True, keep_intermediates=intermediates
-    )
+    _pipeline.convert_docx(source, output, dry_run=True, keep_intermediates=intermediates)
     assert not output.parent.exists()
     assert (intermediates / "prepared.docx").is_file()
     assert (intermediates / "final.md").is_file()
@@ -2687,13 +2562,9 @@ def test_dry_run_with_replacement_permission_preserves_existing_batch(
     images = tmp_path / ".images" / "Synthetic Guide"
     images.mkdir(parents=True)
     (images / "old.png").write_bytes(PNG)
-    pages = tmp_path / "Synthetic Guide"
-    pages.mkdir()
-    (pages / "old.md").write_text("old page", encoding="utf-8")
-    _pipeline.convert_docx(source, split_depth=2, dry_run=True, replace_generated=True)
+    _pipeline.convert_docx(source, dry_run=True, replace_generated=True)
     assert output.read_text(encoding="utf-8") == "old markdown"
     assert (images / "old.png").read_bytes() == PNG
-    assert (pages / "old.md").read_text(encoding="utf-8") == "old page"
 
 
 def test_explicit_markdown_replacement_is_normal_without_directory_content(
@@ -2976,50 +2847,9 @@ def test_unnamed_and_duplicate_bookmarks_are_reported(convert: Converter) -> Non
     }
 
 
-# Every page that splitting the document writes, the deepest at split depth 3 or more.
-ALL_PAGES = [
-    "guide.md",
-    "guide/01-first.md",
-    "guide/01-first/01-third.md",
-    "guide/01-first/01-third/01-detail.md",
-]
-
-
-# The page of the level-3 heading at split depth 3 or more, and its link up.
-DETAIL_PAGE = ("guide/01-first/01-third/01-detail.md", "# Detail\n\n[Up](../../01-first.md#first)")
-
-
-# Headings 1, 3, and 6 become levels 1, 2, and 3, and each depth splits at them.
-@pytest.mark.parametrize(
-    ("depth", "pages"),
-    [
-        pytest.param(
-            0,
-            [("guide.md", "# First\n\n[Deeper](#third)\n\n## Third\n\n### Detail\n\n[Up](#first)")],
-            id="depth-0",
-        ),
-        pytest.param(
-            1, [("guide/01-first.md", "## Third\n\n### Detail\n\n[Up](#first)")], id="depth-1"
-        ),
-        pytest.param(
-            2,
-            [
-                ("guide/01-first.md", "[Deeper](01-first/01-third.md#third)"),
-                (
-                    "guide/01-first/01-third.md",
-                    "# Third\n\n## Detail\n\n[Up](../01-first.md#first)",
-                ),
-            ],
-            id="depth-2",
-        ),
-        pytest.param(3, [DETAIL_PAGE], id="depth-3"),
-        pytest.param(4, [DETAIL_PAGE], id="depth-4"),
-        pytest.param(5, [DETAIL_PAGE], id="depth-5"),
-        pytest.param(6, [DETAIL_PAGE], id="depth-6"),
-    ],
-)
-def test_split_depths_follow_closed_heading_levels_and_bookmark_links(
-    depth: int, pages: list[tuple[str, str]], source: Path, tmp_path: Path
+# Headings 1, 3, and 6 become levels 1, 2, and 3; links to their bookmarks lead to them.
+def test_skipped_heading_levels_close_and_bookmark_links_follow(
+    source: Path, tmp_path: Path
 ) -> None:
     body = [
         paragraph("Preamble"),
@@ -3030,21 +2860,10 @@ def test_split_depths_follow_closed_heading_levels_and_bookmark_links(
         hyperlink("Up", anchor="_A"),
     ]
     write_docx(source, body)
-    stats = _pipeline.convert_docx(source, tmp_path / "guide.md", split_depth=depth)
-    for page, text in pages:
-        assert text in (tmp_path / page).read_text(encoding="utf-8")
-    # The document's page, then one for each heading the depth splits at: First, Third, Detail.
-    written = sorted(page.relative_to(tmp_path).as_posix() for page in tmp_path.rglob("*.md"))
-    assert written == ALL_PAGES[: min(depth, 3) + 1]
-    assert stats["pages"] == len(written)
-
-
-def test_depth_zero_preserves_previous_page_tree(convert: Converter, tmp_path: Path) -> None:
-    old = tmp_path / "Synthetic Guide"
-    old.mkdir()
-    (old / "old.md").write_text("old", encoding="utf-8")
-    convert([paragraph("New text")])
-    assert (old / "old.md").read_text(encoding="utf-8") == "old"
+    _pipeline.convert_docx(source, tmp_path / "guide.md")
+    assert (tmp_path / "guide.md").read_text(encoding="utf-8") == (
+        "Preamble\n\n# First\n\n[Deeper](#third)\n\n## Third\n\n### Detail\n\n[Up](#first)\n"
+    )
 
 
 def test_duplicate_qualification_is_opt_in(convert: Converter) -> None:
@@ -3065,7 +2884,7 @@ def test_duplicate_qualification_is_opt_in(convert: Converter) -> None:
     assert stats["qualified_headings"] == 2
 
 
-def test_generated_toc_results_are_retained(convert: Converter, tmp_path: Path) -> None:
+def test_generated_toc_results_are_retained(convert: Converter) -> None:
     index = ET.Element(W + "p")
     field = ET.SubElement(index, W + "fldSimple", {W + "instr": 'TOC \\o "1-3" \\h'})
     field.append(_ooxml.word_run("Cached contents entry"))
@@ -3074,12 +2893,9 @@ def test_generated_toc_results_are_retained(convert: Converter, tmp_path: Path) 
             paragraph("Contents", "Heading1"),
             index,
             paragraph("Body", "Heading1"),
-        ],
-        split_depth=1,
+        ]
     )
-    assert "Contents" in result
-    contents = tmp_path / "Synthetic Guide" / "01-contents.md"
-    assert "Cached contents entry" in contents.read_text(encoding="utf-8")
+    assert "# Contents\n\nCached contents entry\n" in result
 
 
 def test_complex_toc_field_results_and_blank_rows_survive(convert: Converter, pandoc: str) -> None:
@@ -3196,25 +3012,6 @@ def test_literal_word_placeholders_entities_and_tables_keep_their_text(
     assert _validation.collect_references(parsed).links == ["#mode-copy"]
     # The heading loses its period, not the semicolon of its entity-like text.
     assert "".join(next(parsed.iter("h3")).itertext()) == "<Mode> &copy;"
-
-
-def test_rich_table_heading_is_not_a_split_page_heading(
-    convert: Converter, tmp_path: Path, pandoc: str
-) -> None:
-    convert(
-        [
-            paragraph("Chapter.", "Heading1"),
-            table(row(cell(paragraph("In-cell heading.", "Heading1"))), columns=1),
-        ],
-        split_depth=2,
-    )
-    child = tmp_path / "Synthetic Guide" / "01-chapter.md"
-    content = child.read_text(encoding="utf-8")
-    assert "<h1>In-cell heading</h1>" in content
-    assert (
-        _validation.collect_references(_reference.pandoc_html(content, pandoc)).headings.count(1)
-        == 1
-    )
 
 
 def test_urls_as_link_text_stay_one_link(convert: Converter, pandoc: str) -> None:
@@ -3669,46 +3466,11 @@ def test_source_local_hyperlink_is_rebased_and_validated(
     assert "../Other%20File.txt" in result
 
 
-def test_replaced_page_tree_cannot_supply_stale_link_targets(
-    source: Path,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    output = tmp_path / "guide.md"
-    output.write_text("# Old root\n", encoding="utf-8")
-    old_pages = tmp_path / "guide"
-    old_pages.mkdir()
-    old_page = old_pages / "old.md"
-    old_page.write_text("# Old page\n", encoding="utf-8")
-    images = tmp_path / ".images" / "guide"
-    images.mkdir(parents=True)
-    (images / "old.svg").write_bytes(SVG)
-    write_docx(
-        source,
-        [paragraph("New", "Heading1"), hyperlink("Stale", relation="local")],
-        relations=(("local", "hyperlink", "guide/old.md", "External"),),
-    )
-    publish = mock.Mock(wraps=_publication.publish_outputs)
-    monkeypatch.setattr(_publication, "publish_outputs", publish)
-
-    report = _diagnostics.TransformReport()
-    _pipeline.convert_docx(source, output, split_depth=1, replace_generated=True, report=report)
-
-    publish.assert_called_once()
-    assert "a link into the page tree has no prepared page" in report.records["checks"].skipped
-    assert "Link into the replaced page tree has no prepared page" in capsys.readouterr().err
-    assert not old_page.exists()
-    assert (old_pages / "01-new.md").is_file()
-
-
-def test_prepared_page_replaces_stale_content_for_fragment_validation(
+def test_prepared_markdown_replaces_stale_content_for_fragment_validation(
     source: Path, tmp_path: Path
 ) -> None:
-    pages = tmp_path / "guide"
-    pages.mkdir()
-    child = pages / "01-new.md"
-    child.write_text("# Old content\n", encoding="utf-8")
+    output = tmp_path / "guide.md"
+    output.write_text("# Old content\n", encoding="utf-8")
     outside = tmp_path / "outside.md"
     outside.write_text("# Outside\n", encoding="utf-8")
     write_docx(
@@ -3719,33 +3481,38 @@ def test_prepared_page_replaces_stale_content_for_fragment_validation(
             hyperlink("Outside", relation="outside"),
         ],
         relations=(
-            ("fresh", "hyperlink", "guide/01-new.md#new", "External"),
+            ("fresh", "hyperlink", "guide.md#new", "External"),
             ("outside", "hyperlink", "outside.md#outside", "External"),
         ),
     )
 
-    _pipeline.convert_docx(source, tmp_path / "guide.md", split_depth=1, replace_generated=True)
+    report = _diagnostics.TransformReport()
+    _pipeline.convert_docx(source, output, replace_generated=True, report=report)
 
-    assert "# New" in child.read_text(encoding="utf-8")
-    assert "_Fresh" not in child.read_text(encoding="utf-8")
+    result = output.read_text(encoding="utf-8")
+    assert "# New" in result
+    assert "[Fresh](#new)" in result
+    assert "_Fresh" not in result
+    assert report.status("checks") == "applied"
+    assert not report.records["checks"].skipped
     assert outside.read_text(encoding="utf-8") == "# Outside\n"
 
 
-def test_depth_zero_allows_links_to_retained_old_pages(source: Path, tmp_path: Path) -> None:
-    old_pages = tmp_path / "guide"
-    old_pages.mkdir()
-    old_page = old_pages / "old.md"
-    old_page.write_text("# Old\n", encoding="utf-8")
+def test_links_to_other_markdown_files_are_kept(source: Path, tmp_path: Path) -> None:
+    folder = tmp_path / "guide"
+    folder.mkdir()
+    other = folder / "other.md"
+    other.write_text("# Other\n", encoding="utf-8")
     write_docx(
         source,
-        [hyperlink("Retained", relation="old")],
-        relations=(("old", "hyperlink", "guide/old.md#old", "External"),),
+        [hyperlink("Other", relation="other")],
+        relations=(("other", "hyperlink", "guide/other.md#other", "External"),),
     )
 
     _pipeline.convert_docx(source, tmp_path / "guide.md")
 
-    assert old_page.read_text(encoding="utf-8") == "# Old\n"
-    assert "guide/old.md#old" in (tmp_path / "guide.md").read_text(encoding="utf-8")
+    assert other.read_text(encoding="utf-8") == "# Other\n"
+    assert "guide/other.md#other" in (tmp_path / "guide.md").read_text(encoding="utf-8")
 
 
 def test_replaced_image_tree_cannot_supply_stale_link_targets(

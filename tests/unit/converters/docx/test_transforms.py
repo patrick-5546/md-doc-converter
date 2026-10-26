@@ -305,7 +305,7 @@ def test_lists_lose_empty_items_and_are_tight_when_they_can_be(
     assert gfm(blocks, api, pandoc) == markdown
 
 
-def test_notes_are_numbered_in_order_and_defined_after_their_block(pandoc: str) -> None:
+def test_notes_are_numbered_in_order_and_defined_at_the_end(pandoc: str) -> None:
     def note(*paragraphs: str) -> JSONValue:
         return _tree.element(
             "Note", [_tree.element("Para", [_tree.string(text)]) for text in paragraphs]
@@ -323,7 +323,7 @@ def test_notes_are_numbered_in_order_and_defined_after_their_block(pandoc: str) 
     notes = _transforms.extract_notes(blocks, TransformReport())
     _transforms.define_notes(blocks, notes, pandoc, api, "github")
     markdown = notes.references(gfm(blocks, api, pandoc))
-    assert markdown == ("First[^1]\n\n[^1]: One\n\nPlain\n\n- Item[^2]\n\n[^2]: Two\n\n    More\n")
+    assert markdown == ("First[^1]\n\nPlain\n\n- Item[^2]\n\n[^1]: One\n\n[^2]: Two\n\n    More\n")
     assert not re.search(notes.token, markdown)
 
 

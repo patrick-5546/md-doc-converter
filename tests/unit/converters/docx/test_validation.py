@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from xml.etree import ElementTree as ET
@@ -11,36 +10,22 @@ import pytest
 
 from md_doc_converter.converters.docx import publication as _publication
 from md_doc_converter.converters.docx import validation as _validation
-from md_doc_converter.converters.docx.models import DocumentNavigation, SectionTarget
+from md_doc_converter.converters.docx.models import DocumentNavigation
 
 SVG = '<svg xmlns="http://www.w3.org/2000/svg"><g id="layer"/></svg>'
 
 
 @dataclass(frozen=True)
 class Validator:
-    """Validates pages as published next to guide.md; returns the reasons it reports."""
+    """Validates Markdown as published to guide.md; returns the reasons it reports."""
 
     root: Path
     staged: Path
     pandoc: str
 
-    def __call__(
-        self,
-        pages: Mapping[str, str],
-        source: DocumentNavigation | None = None,
-        *,
-        split_depth: int = 0,
-    ) -> list[str]:
-        paths = _publication.validate_paths(
-            self.root / "input.docx", self.root / "guide.md", split_depth=split_depth
-        )
-        issues = _validation.validate_outputs(
-            {Path(page): content for page, content in pages.items()},
-            paths,
-            self.staged,
-            self.pandoc,
-            source,
-        )
+    def __call__(self, markdown: str, source: DocumentNavigation | None = None) -> list[str]:
+        paths = _publication.validate_paths(self.root / "input.docx", self.root / "guide.md")
+        issues = _validation.validate_outputs(markdown, paths, self.staged, self.pandoc, source)
         return [reason for reason, _detail in issues]
 
     def stage(self, name: str, content: str) -> None:
@@ -98,14 +83,12 @@ PAGE_PROBLEMS = [
 def test_each_page_check_reports_its_problem(
     validate: Validator, markdown: str, reason: str
 ) -> None:
-    assert validate({"guide.md": markdown}) == [reason]
+    assert validate(markdown) == [reason]
 
 
 def test_every_problem_on_a_page_is_reported(validate: Validator) -> None:
     page = "\n".join(str(problem.values[0]) for problem in PAGE_PROBLEMS)
-    assert sorted(validate({"guide.md": page})) == sorted(
-        str(problem.values[1]) for problem in PAGE_PROBLEMS
-    )
+    assert sorted(validate(page)) == sorted(str(problem.values[1]) for problem in PAGE_PROBLEMS)
 
 
 @pytest.mark.parametrize("kind", ["empty", "symbolic-link"])
@@ -117,7 +100,7 @@ def test_an_empty_or_linked_image_file_is_missing(
     else:
         (tmp_path / "real.png").write_text("png", encoding="utf-8")
         (validate.staged / "pic.png").symlink_to(tmp_path / "real.png")
-    assert validate({"guide.md": "![x](.images/guide/pic.png)\n"}) == ["an image file is missing"]
+    assert validate("![x](.images/guide/pic.png)\n") == ["an image file is missing"]
 
 
 def test_a_valid_page_reports_nothing(validate: Validator) -> None:
@@ -126,7 +109,7 @@ def test_a_valid_page_reports_nothing(validate: Validator) -> None:
         "# Overview\n\n![x](.images/guide/pic.png)\n\n[Top](#overview) "
         "[Web](https://example.test/) [Picture](.images/guide/pic.png)\n"
     )
-    assert validate({"guide.md": markdown}) == []
+    assert validate(markdown) == []
 
 
 @pytest.mark.parametrize(
@@ -142,7 +125,7 @@ def test_image_fragments_must_name_an_svg_element(
     validate: Validator, staged: str, target: str, reasons: list[str]
 ) -> None:
     validate.stage(target.partition("#")[0], staged)
-    assert validate({"guide.md": f"![x](.images/guide/{target})\n"}) == reasons
+    assert validate(f"![x](.images/guide/{target})\n") == reasons
 
 
 @pytest.mark.parametrize(
@@ -158,7 +141,7 @@ def test_links_to_images_check_their_fragments_too(
     validate: Validator, staged: str, target: str, reasons: list[str]
 ) -> None:
     validate.stage(target.partition("#")[0], staged)
-    assert validate({"guide.md": f"[x](.images/guide/{target})\n"}) == reasons
+    assert validate(f"[x](.images/guide/{target})\n") == reasons
 
 
 @pytest.mark.parametrize(
@@ -182,40 +165,18 @@ def test_fragments_into_local_files_are_checked_in_the_file(
     (validate.root / "notes.html").write_text('<h2 id="part">Part</h2>', encoding="utf-8")
     (validate.root / "notes.txt").write_text("part", encoding="utf-8")
     # A second link to the same file reuses its anchors, and reports its own problem.
-    assert validate({"guide.md": f"[x]({target}) [y]({target})\n"}) == 2 * reasons
-
-
-def test_split_pages_with_one_title_each_report_nothing(validate: Validator) -> None:
-    pages = {"guide.md": "# Guide\n\n[A](guide/a.md#a)\n", "guide/a.md": "# A\n"}
-    assert validate(pages, split_depth=1) == []
-    # A document that splitting leaves as one page needs no title.
-    assert validate({"guide.md": "Text\n"}, split_depth=1) == []
-
-
-def test_split_pages_need_one_title_and_links_need_their_page(validate: Validator) -> None:
-    pages = {
-        "guide.md": "# Guide\n\n[Missing](guide/missing.md) [Present](guide/a.md#a)\n",
-        "guide/a.md": "# A\n\n# B\n",
-    }
-    assert validate(pages, split_depth=1) == [
-        "a split page does not contain exactly one H1",
-        "a link into the page tree has no prepared page",
-    ]
+    assert validate(f"[x]({target}) [y]({target})\n") == 2 * reasons
 
 
 def test_word_bookmarks_must_become_sections(validate: Validator) -> None:
+    # A bookmark leads to its section's heading, or with no fragment to the document top.
     source = DocumentNavigation(
         bookmarks={"_Ref1", "_Ref2", "_Ref3", "_Ref4"},
-        bookmark_targets={
-            "_Ref2": SectionTarget(Path("guide.md"), "missing"),
-            "_Ref3": SectionTarget(Path("gone.md")),
-            "_Ref4": SectionTarget(Path("guide.md"), "overview"),
-        },
+        bookmark_targets={"_Ref2": "missing", "_Ref3": "", "_Ref4": "overview"},
     )
     markdown = '# Overview\n\n<a id="_Ref1"></a>Text\n'
-    assert validate({"guide.md": markdown}, source) == [
+    assert validate(markdown, source) == [
         "Word bookmark markup remains",
-        "a Word bookmark has no valid section destination",
         "a Word bookmark has no valid section destination",
     ]
 

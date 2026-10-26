@@ -31,7 +31,7 @@ tests/
 reads the Word package, `prepare.py` writes the copy that Pandoc reads,
 `tree.py` reads it into Pandoc's document tree and writes GFM, `transforms.py`,
 `bookmarks.py`, `tables.py` and `media.py` rewrite the tree and publish the
-images, `navigation.py` settles heading IDs, links and pages, `validation.py`
+images, `navigation.py` settles heading IDs and links, `validation.py`
 checks the result, and `publication.py` and `diagnostics.py` write the outputs
 and the report. `rendering/pipeline.py` renders: `markdown/preprocess.py`
 prepares the Markdown, Pandoc writes the HTML with `assets/pandoc-defaults.yaml`

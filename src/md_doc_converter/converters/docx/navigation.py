@@ -1,4 +1,4 @@
-"""Qualify headings, split Wiki pages, and preserve section destinations."""
+"""Qualify headings, and lead links to the final headings and Word bookmarks to their sections."""
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ import difflib
 import html
 import os
 import re
-import unicodedata
 import urllib.parse
 import uuid
 from collections import defaultdict
@@ -15,7 +14,6 @@ from functools import partial
 from pathlib import Path
 
 from md_doc_converter.converters.docx import diagnostics as _diagnostics
-from md_doc_converter.converters.docx import media as _media
 from md_doc_converter.converters.docx import normalization as _normalization
 from md_doc_converter.converters.docx import reference as _reference
 from md_doc_converter.converters.docx import transforms as _transforms
@@ -26,9 +24,7 @@ from md_doc_converter.converters.docx.models import (
     ConversionError,
     DocumentNavigation,
     HeadingChange,
-    SectionTarget,
     SourceHeading,
-    WikiPage,
 )
 from md_doc_converter.converters.docx.tree import MathSyntax
 from md_doc_converter.markdown import syntax as _syntax
@@ -89,12 +85,6 @@ def qualify_duplicate_headings(markdown: str) -> tuple[str, list[HeadingChange]]
             changes.append(HeadingChange(index + 1, original, title, ancestry[index]))
     ending = "\n" if markdown.endswith("\n") else ""
     return "\n".join(lines) + ending, changes
-
-
-def wiki_page_slug(title: str) -> str:
-    visible = html.unescape(re.sub(r"<[^>]+>", "", title))
-    normalized = unicodedata.normalize("NFKD", visible).encode("ascii", "ignore").decode()
-    return re.sub(r"[^a-z0-9]+", "-", normalized.casefold()).strip("-") or "page"
 
 
 def _rewrite_ast(value: JSONValue, rewrite: Callable[[str], str]) -> None:
@@ -200,11 +190,10 @@ def _link_bare_addresses(value: JSONValue) -> int:
     return linked
 
 
-def rewrite_page_references(
+def rewrite_references(
     markdown: str,
-    page: Path,
     output: Path,
-    anchors: dict[str, SectionTarget],
+    anchors: dict[str, str],
     pandoc: str,
     *,
     parsed: ParsedMarkdown | None = None,
@@ -212,7 +201,9 @@ def rewrite_page_references(
     linked: list[int] | None = None,
     math: MathSyntax = "github",
 ) -> str:
-    """Retarget links for *page*; with *unresolved*, problem targets are kept and listed.
+    """Retarget the links of *markdown*, written to *output*: a fragment of the document's own
+    to the one that *anchors* gives for it, and a local file relative to *output*'s folder.
+    With *unresolved*, problem targets are kept and listed.
 
     Bare web and e-mail addresses become autolinks; *linked*, if given, gets their number.
     Equations are written in the *math* syntax.
@@ -236,30 +227,17 @@ def rewrite_page_references(
         )
         if original_path == output and fragment:
             if fragment not in anchors:
-                message = f"No unique split destination for fragment {'#' + fragment!r}"
+                message = f"No heading or Word bookmark for fragment {'#' + fragment!r}"
                 if unresolved is None:
                     raise ConversionError(message)
                 unresolved.append(message)
                 return target
-            destination = anchors[fragment]
-            target_page = destination.page
-            fragment = urllib.parse.quote(destination.fragment, safe="")
-            relative = (
-                ""
-                if target_page == page
-                else Path(os.path.relpath(target_page, page.parent)).as_posix()
-            )
+            relative = ""
+            fragment = urllib.parse.quote(anchors[fragment], safe="")
         elif original_path == output and not parsed.path:
-            relative = (
-                ""
-                if page == Path(output.name)
-                else Path(os.path.relpath(Path(output.name), page.parent)).as_posix()
-            )
-            fragment = ""
+            relative = ""
         else:
-            relative = Path(
-                os.path.relpath(original_path, (output.parent / page).parent)
-            ).as_posix()
+            relative = Path(os.path.relpath(original_path, output.parent)).as_posix()
             fragment = parsed.fragment
         return (
             urllib.parse.urlunsplit(
@@ -275,7 +253,7 @@ def rewrite_page_references(
         )
 
     if parsed is None:
-        parsed = _reference.markdown_ast(markdown, pandoc, "Split-page reference parsing")
+        parsed = _reference.markdown_ast(markdown, pandoc, "Reference parsing")
     try:
         data = parsed.copy_ast(markdown, _reference.DOCX_READER)
     except PandocError as error:
@@ -285,7 +263,7 @@ def rewrite_page_references(
     if linked is not None:
         linked.append(count)
     if isinstance(data, dict):
-        # The page is written by Pandoc again, which needs the same help as the first time.
+        # The Markdown is written by Pandoc again, which needs the same help as the first time.
         blocks = _reference.json_list(data.get("blocks"))
         _transforms.escape_rules_and_underlines(blocks)
         _transforms.short_rules(blocks)
@@ -297,7 +275,7 @@ def rewrite_page_references(
             "--wrap=none",
             "--markdown-headings=atx",
         ],
-        "Split-page reference rendering",
+        "Reference rendering",
         input_text=_reference.gfm_input(data),
     )
     spaced, spacing = _normalization.normalize_ordered_list_spacing(result)
@@ -313,97 +291,6 @@ def rewrite_page_references(
     result = _normalization.trim_trailing_whitespace(result)[0]
     result = _normalization.normalize_final_newline(_normalization.compact_markdown_tables(result))
     return _normalization.simplify_identifier_escapes(result, pandoc)
-
-
-def _split_sections(
-    markdown: str,
-    output: Path,
-    split_depth: int,
-    title: str | None,
-    headings: dict[int, tuple[int, str]],
-) -> tuple[dict[Path, str], dict[Path, list[int | None]]]:
-    ordinals = {line: index for index, line in enumerate(headings)}
-    if split_depth == 0:
-        return (
-            {Path(output.name): _normalization.normalize_final_newline(markdown)},
-            {Path(output.name): list(range(len(headings)))},
-        )
-    lines = markdown.splitlines()
-    selected = [
-        (index, level, heading)
-        for index, (level, heading) in headings.items()
-        if level <= split_depth
-    ]
-    root_title = _media.escape_image_alt_text(title or output.stem)
-    trailing_hashes = re.search(r"(?<!\\)(#+)$", root_title)
-    if trailing_hashes is not None:
-        root_title = root_title[: trailing_hashes.start()] + trailing_hashes[0].replace("#", r"\#")
-    pages = [WikiPage(root_title, 1, None, Path(output.name), heading_indices=[None])]
-    stack: list[int] = []
-    boundaries: dict[int, int] = {}
-    children: dict[int, list[int]] = defaultdict(list)
-    selected_lines = {index for index, _level, _heading in selected}
-    for line_index, level, heading in selected:
-        while stack and pages[stack[-1]].source_level >= level:
-            stack.pop()
-        parent = stack[-1] if stack else 0
-        page_index = len(pages)
-        pages.append(WikiPage(heading, level, parent, Path()))
-        children[parent].append(page_index)
-        stack.append(page_index)
-        boundary = line_index
-        while (
-            boundary > 0 and boundary - 1 not in selected_lines and not lines[boundary - 1].strip()
-        ):
-            boundary -= 1
-        if boundary in boundaries:
-            raise ConversionError("Page sections overlap")
-        boundaries[boundary] = page_index
-
-    def assign_paths(parent: int) -> None:
-        siblings = children.get(parent, [])
-        width = max(2, len(str(len(siblings))))
-        directory = (
-            Path(output.stem) if parent == 0 else pages[parent].relative_path.with_suffix("")
-        )
-        for ordinal, child in enumerate(siblings, 1):
-            pages[child].relative_path = directory / (
-                f"{ordinal:0{width}d}-{wiki_page_slug(pages[child].title)}.md"
-            )
-            assign_paths(child)
-
-    assign_paths(0)
-    current = 0
-    for index, line in enumerate(lines):
-        if index in boundaries:
-            current = boundaries[index]
-        if index in headings:
-            pages[current].heading_indices.append(ordinals[index])
-            if current:
-                level, heading = headings[index]
-                shifted = level - pages[current].source_level + 1
-                if not 1 <= shifted <= 6:
-                    raise ConversionError(
-                        "A heading would lose its level relative to its page's heading"
-                    )
-                line = "#" * shifted + " " + heading
-        pages[current].lines.append(line)
-    pages[0].lines[0:0] = ["# " + pages[0].title, ""]
-    raw: dict[Path, str] = {}
-    identities: dict[Path, list[int | None]] = {}
-    for index, page in enumerate(pages):
-        content = "\n".join(page.lines).strip("\n")
-        child_indexes = children.get(index, [])
-        if child_indexes:
-            page.heading_indices.append(None)
-            content += "\n\n## Sections\n\n" + "\n".join(
-                f"- [{_media.escape_image_alt_text(pages[child].title)}]("
-                f"{urllib.parse.quote(pages[child].relative_path.as_posix(), safe='/')})"
-                for child in child_indexes
-            )
-        raw[page.relative_path] = _normalization.normalize_final_newline(content)
-        identities[page.relative_path] = page.heading_indices
-    return raw, identities
 
 
 def _heading_mapping(body: list[SourceHeading], rendered: list[Heading]) -> dict[str, int]:
@@ -433,11 +320,12 @@ def _heading_mapping(body: list[SourceHeading], rendered: list[Heading]) -> dict
 def _map_bookmarks(
     source: DocumentNavigation,
     rendered: list[Heading],
-    section_targets: dict[int, SectionTarget],
-    anchors: dict[str, SectionTarget],
+    anchors: dict[str, str],
     output: Path,
     report: TransformReport | None,
 ) -> None:
+    """Lead each Word bookmark to the ID of the *rendered* heading of its section, or to the
+    document top, in *source* and *anchors*."""
     body = [heading for heading in source.headings if not heading.in_table]
     mapping = _heading_mapping(body, rendered)
     order = {heading.key: index for index, heading in enumerate(body)}
@@ -456,7 +344,6 @@ def _map_bookmarks(
             )
         ):
             used_bookmarks.add(urllib.parse.unquote(parsed.fragment))
-    top = SectionTarget(Path(output.name))
     mapped = 0
     for name, section in list(source.bookmark_sections.items()):
         lost = section.heading is not None and section.heading not in mapping
@@ -478,14 +365,12 @@ def _map_bookmarks(
             source.bookmark_sections[name] = section
         elif name in source.bookmarks:
             mapped += 1
-        target = top if section.heading is None else section_targets[mapping[section.heading]]
+        target = "" if section.heading is None else rendered[mapping[section.heading]].identifier
         source.bookmark_targets[name] = target
         anchors[name] = target
         if name not in used_bookmarks or section.exact:
             continue
-        destination = (
-            f"its containing section #{target.fragment}" if target.fragment else "the document top"
-        )
+        destination = f"its containing section #{target}" if target else "the document top"
         message = f"Word bookmark {name!r} now links to {destination}, not its exact position"
         if lost and report is not None:
             report.skipped(
@@ -513,12 +398,12 @@ _TITLE_TOO_DEEP = (
 _TITLE_CHANGES_IDS = "the title as a heading would change other heading IDs; it stays a paragraph"
 
 
-def _title_line(lines: list[str], start: int, end: int, title: str, pandoc: str) -> int | None:
-    """The first one-line paragraph from *start* to *end* that shows the Word title."""
+def _title_line(lines: list[str], end: int, title: str, pandoc: str) -> int | None:
+    """The first one-line paragraph before line *end* that shows the Word title."""
     prose = _syntax.markdown_prose_lines("\n".join(lines))
     candidates = [
         index
-        for index in range(start, min(end, len(lines)))
+        for index in range(min(end, len(lines)))
         if index in prose
         and lines[index].strip()
         and (index == 0 or not lines[index - 1].strip())
@@ -548,10 +433,10 @@ def _title_line(lines: list[str], start: int, end: int, title: str, pandoc: str)
 
 
 def _title_heading(markdown: str, title: str, pandoc: str, report: TransformReport) -> str:
-    """Make the Word title the page's only H1 and move every heading down one level."""
+    """Make the Word title the document's only H1 and move every heading down one level."""
     lines = markdown.split("\n")
     headings = _normalization.markdown_heading_lines(markdown)
-    line = _title_line(lines, 0, min(headings, default=len(lines)), title, pandoc)
+    line = _title_line(lines, min(headings, default=len(lines)), title, pandoc)
     if line is None:
         report.skipped(
             "title",
@@ -595,132 +480,52 @@ def _title_heading(markdown: str, title: str, pandoc: str, report: TransformRepo
     return result
 
 
-def _without_repeated_title(markdown: str, title: str, pandoc: str, report: TransformReport) -> str:
-    """The root page of a split document has the title as its H1; drop its Word paragraph."""
-    lines = markdown.split("\n")
-    later = [index for index in _normalization.markdown_heading_lines(markdown) if index]
-    line = _title_line(lines, 1, min(later, default=len(lines)), title, pandoc)
-    if line is None:
-        return markdown
-    end = line + 1
-    if end < len(lines) and not lines[end].strip():
-        end += 1
-    del lines[line:end]
-    report.applied("title", "repeated title paragraph(s) removed")
-    return "\n".join(lines)
-
-
-def split_markdown_pages(
+def resolve_links(
     markdown: str,
     output: Path,
-    split_depth: int,
     title: str | None,
     pandoc: str,
     *,
     source: DocumentNavigation | None = None,
     report: TransformReport | None = None,
     math: MathSyntax = "github",
-) -> dict[Path, str]:
-    """Split at *split_depth*; without a report every problem is an error."""
-    if not 0 <= split_depth <= 6:
-        raise ConversionError(f"Split depth must be between 0 and 6, got {split_depth}")
-    parsed_pages: dict[str, ParsedMarkdown] = {}
+) -> str:
+    """Lead the links of *markdown*, written to *output*, to the final heading IDs, and Word
+    bookmarks to their sections; with a report, the Word *title* becomes the only H1.
 
-    def parse_page(content: str) -> ParsedMarkdown:
-        if content not in parsed_pages:
-            parsed_pages[content] = _reference.markdown_ast(
-                content, pandoc, "Section heading and reference parsing"
-            )
-        return parsed_pages[content]
-
-    def headings_of(content: str) -> list[Heading]:
-        try:
-            return collect_headings(parse_page(content).blocks)
-        except HeadingError as error:
-            raise ConversionError(f"Cannot derive section heading identities: {error}") from error
-
-    Pages = tuple[dict[Path, str], dict[int, SectionTarget], list[Heading]]
-
-    def single_page() -> Pages:
-        page = Path(output.name)
-        content = _normalization.normalize_final_newline(markdown)
-        found = headings_of(content)
-        targets = {index: SectionTarget(page, item.identifier) for index, item in enumerate(found)}
-        return {page: content}, targets, found
-
-    def split_pages() -> Pages:
-        line_headings = _normalization.markdown_heading_lines(markdown)
-        found = headings_of(markdown)
-        if len(found) != len(line_headings) or any(
-            heading.level != level
-            for heading, (level, _title) in zip(found, line_headings.values(), strict=True)
-        ):
-            raise ConversionError("Cannot align Markdown heading locations with rendered headings")
-        raw, identities = _split_sections(markdown, output, split_depth, title, line_headings)
-        targets: dict[int, SectionTarget] = {}
-        for page, content in raw.items():
-            rendered = headings_of(content)
-            if len(rendered) != len(identities[page]):
-                raise ConversionError(f"Section heading identities changed while splitting {page}")
-            for heading, index in zip(rendered, identities[page], strict=True):
-                if index is not None:
-                    targets[index] = SectionTarget(page, heading.identifier)
-        return raw, targets, found
-
-    split = False
-    if not split_depth:
-        raw, section_targets, original = single_page()
-    else:
-        try:
-            raw, section_targets, original = split_pages()
-            split = True
-        except ConversionError as error:
-            if report is None:
-                raise
-            report.skipped(
-                "pages",
-                "the document could not be split into pages; it is written as one page",
-                f"split at depth {split_depth}: {_diagnostics.describe(error)}; "
-                "it is written as one page",
-            )
-            raw, section_targets, original = single_page()
-    anchors = {
-        heading.identifier: section_targets[index]
-        for index, heading in enumerate(original)
-        if heading.identifier
-    }
+    Without a report, every problem is an error.
+    """
+    markdown = _normalization.normalize_final_newline(markdown)
+    parsed = _reference.markdown_ast(markdown, pandoc, "Section heading and reference parsing")
+    try:
+        headings = collect_headings(parsed.blocks)
+    except HeadingError as error:
+        raise ConversionError(f"Cannot derive section heading identities: {error}") from error
+    anchors = {heading.identifier: heading.identifier for heading in headings if heading.identifier}
     if source is not None:
-        _map_bookmarks(source, original, section_targets, anchors, output, report)
+        _map_bookmarks(source, headings, anchors, output, report)
     problems: list[str] | None = [] if report is not None else None
     linked: list[int] = []
-    pages = {
-        path: rewrite_page_references(
-            content,
-            path,
-            output,
-            anchors,
-            pandoc,
-            parsed=parse_page(content),
-            unresolved=problems,
-            linked=linked,
-            math=math,
+    result = rewrite_references(
+        markdown,
+        output,
+        anchors,
+        pandoc,
+        parsed=parsed,
+        unresolved=problems,
+        linked=linked,
+        math=math,
+    )
+    if report is None:
+        return result
+    for problem in problems or []:
+        report.skipped(
+            "links",
+            _diagnostics.category(problem) + "; kept as written",
+            problem + "; kept as written",
         )
-        for path, content in raw.items()
-    }
-    if report is not None:
-        for problem in problems or []:
-            report.skipped(
-                "pages",
-                _diagnostics.category(problem) + "; kept as written",
-                problem + "; kept as written",
-            )
-        report.applied("pages", count=len(pages))
-        report.applied("links", "bare web or e-mail address(es) linked", sum(linked))
-        if title:
-            root = Path(output.name)
-            with _diagnostics.transform(report, "title"):
-                if split:
-                    pages[root] = _without_repeated_title(pages[root], title, pandoc, report)
-                else:
-                    pages[root] = _title_heading(pages[root], title, pandoc, report)
-    return pages
+    report.applied("links", "bare web or e-mail address(es) linked", sum(linked))
+    if title:
+        with _diagnostics.transform(report, "title"):
+            result = _title_heading(result, title, pandoc, report)
+    return result

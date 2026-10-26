@@ -1,4 +1,4 @@
-"""Markdown parsed once by Pandoc, and reused by the DOCX page rewriter without changing it."""
+"""Markdown parsed once by Pandoc, and reused by the DOCX link rewriter without changing it."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import pytest
 
 from md_doc_converter import executables, pandoc
 from md_doc_converter.converters.docx import navigation, reference
-from md_doc_converter.converters.docx.models import ConversionError, SectionTarget
+from md_doc_converter.converters.docx.models import ConversionError
 
 
 def test_pandoc_runs_overlap_and_their_results_keep_their_order() -> None:
@@ -98,8 +98,8 @@ def test_docx_rewriter_rejects_a_stale_parse_before_running_tools(
     run = mock.Mock()
     monkeypatch.setattr(subprocess, "run", run)
     with pytest.raises(ConversionError, match=r"different content or reader"):
-        navigation.rewrite_page_references(
-            "# Changed", Path("out.md"), Path("/docs/out.md"), {}, "pandoc", parsed=parsed
+        navigation.rewrite_references(
+            "# Changed", Path("/docs/out.md"), {}, "pandoc", parsed=parsed
         )
     run.assert_not_called()
 
@@ -110,25 +110,20 @@ def test_docx_headings_and_link_rewriting_share_one_parse(
     source = "# Top\n\n[Self](#top)\n"
     run = mock.Mock(wraps=subprocess.run)
     monkeypatch.setattr(subprocess, "run", run)
-    pages = navigation.split_markdown_pages(source, Path("/docs/out.md"), 0, None, "pandoc")
+    result = navigation.resolve_links(source, Path("/docs/out.md"), None, "pandoc")
     reads = [call for call in run.call_args_list if "--to=json" in call.args[0]]
     assert len(reads) == 1
-    assert "[Self](#top)" in pages[Path("out.md")]
+    assert "[Self](#top)" in result
 
 
 def test_rewriting_does_not_mutate_the_parse_used_for_heading_identity() -> None:
     source = "# Top\n\n[Self](#top)\n"
     parsed = pandoc.parse_markdown(source, reader=reference.DOCX_READER)
     before = json.dumps(parsed.ast)
-    result = navigation.rewrite_page_references(
-        source,
-        Path("guide/first.md"),
-        Path("/docs/guide.md"),
-        {"top": SectionTarget(Path("guide/second.md"), "top")},
-        "pandoc",
-        parsed=parsed,
+    result = navigation.rewrite_references(
+        source, Path("/docs/guide.md"), {"top": "renamed"}, "pandoc", parsed=parsed
     )
-    assert "(second.md#top)" in result
+    assert "[Self](#renamed)" in result
     assert json.dumps(parsed.ast) == before
 
 
@@ -141,8 +136,8 @@ def test_bare_addresses_in_prose_become_autolinks_and_nothing_else_changes() -> 
         "    https://indented.example\n"
     )
     linked: list[int] = []
-    result = navigation.rewrite_page_references(
-        source, Path("page.md"), Path("/docs/page.md"), {}, "pandoc", linked=linked
+    result = navigation.rewrite_references(
+        source, Path("/docs/page.md"), {}, "pandoc", linked=linked
     )
     assert linked == [5]
     assert "# About <https://a.example>\n" in result

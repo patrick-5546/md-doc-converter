@@ -48,29 +48,13 @@ def test_existing_derived_markdown_needs_permission_even_when_empty(source: Path
     _publication.validate_paths(source, source.with_suffix(".md"))
 
 
-@pytest.mark.parametrize(
-    ("target", "split_depth"),
-    [pytest.param(".images/output", 0, id="images"), pytest.param("output", 1, id="pages")],
-)
-def test_nonempty_images_and_pages_require_replace_flag(
-    target: str, split_depth: int, source: Path, tmp_path: Path
-) -> None:
-    directory = tmp_path / target
+def test_nonempty_images_require_replace_flag(source: Path, tmp_path: Path) -> None:
+    directory = tmp_path / ".images" / "output"
     directory.mkdir(parents=True)
     (directory / "old").write_text("old", encoding="utf-8")
     with pytest.raises(_models.ConversionError, match="requires --replace-generated"):
-        _publication.validate_paths(source, tmp_path / "output.md", split_depth=split_depth)
-    _publication.validate_paths(
-        source, tmp_path / "output.md", split_depth=split_depth, replace_generated=True
-    )
-
-
-def test_depth_zero_does_not_claim_old_page_tree(source: Path, tmp_path: Path) -> None:
-    old = tmp_path / "input"
-    old.mkdir()
-    (old / "old.md").write_text("old", encoding="utf-8")
-    _publication.validate_paths(source, None)
-    assert (old / "old.md").read_text(encoding="utf-8") == "old"
+        _publication.validate_paths(source, tmp_path / "output.md")
+    _publication.validate_paths(source, tmp_path / "output.md", replace_generated=True)
 
 
 def test_hardlinked_markdown_source_alias_is_rejected(source: Path, tmp_path: Path) -> None:
@@ -103,24 +87,16 @@ def test_image_parent_symlink_cannot_escape_containment(
         _publication.validate_paths(source, None, replace_generated=True)
 
 
-@pytest.mark.parametrize("depth", [-1, 7])
-def test_split_depth_is_from_0_to_6(source: Path, depth: int) -> None:
-    with pytest.raises(
-        _models.ConversionError, match=f"^Split depth must be between 0 and 6, got {depth}$"
-    ):
-        _publication.validate_paths(source, None, split_depth=depth)
-
-
 def test_output_must_be_markdown(source: Path, tmp_path: Path) -> None:
     with pytest.raises(_models.ConversionError, match=r"filename ending in \.md"):
         _publication.validate_paths(source, tmp_path / "output.txt")
 
 
-def test_a_mount_point_is_protected_as_page_tree(
+def test_a_mount_point_is_protected_as_image_folder(
     source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    mounted = tmp_path / "mounted"
-    mounted.mkdir()
+    mounted = tmp_path / ".images" / "mounted"
+    mounted.mkdir(parents=True)
     real_is_mount = Path.is_mount
 
     def is_mount(path: Path) -> bool:
@@ -130,9 +106,7 @@ def test_a_mount_point_is_protected_as_page_tree(
     with pytest.raises(
         _models.ConversionError, match="protected filesystem, home, or repository root"
     ):
-        _publication.validate_paths(
-            source, tmp_path / "mounted.md", split_depth=1, replace_generated=True
-        )
+        _publication.validate_paths(source, tmp_path / "mounted.md", replace_generated=True)
 
 
 def test_output_types_are_checked_before_mutation(source: Path, tmp_path: Path) -> None:
@@ -149,26 +123,22 @@ def test_incompatible_parent_is_rejected(source: Path, tmp_path: Path) -> None:
         _publication.validate_paths(source, parent / "output.md")
 
 
-def test_source_inside_selected_page_tree_is_rejected(tmp_path: Path) -> None:
-    directory = tmp_path / "selected"
-    directory.mkdir()
+def test_source_inside_selected_image_folder_is_rejected(tmp_path: Path) -> None:
+    directory = tmp_path / ".images" / "selected"
+    directory.mkdir(parents=True)
     source = directory / "source.docx"
     source.write_bytes(b"source")
     with pytest.raises(_models.ConversionError, match="contains the source"):
-        _publication.validate_paths(
-            source, tmp_path / "selected.md", split_depth=1, replace_generated=True
-        )
+        _publication.validate_paths(source, tmp_path / "selected.md", replace_generated=True)
 
 
 def test_source_alias_entry_inside_selected_tree_is_rejected(source: Path, tmp_path: Path) -> None:
-    directory = tmp_path / "selected"
-    directory.mkdir()
+    directory = tmp_path / ".images" / "selected"
+    directory.mkdir(parents=True)
     alias = directory / "alias.docx"
     alias.symlink_to(source)
     with pytest.raises(_models.ConversionError, match="contains the source"):
-        _publication.validate_paths(
-            alias, tmp_path / "selected.md", split_depth=1, replace_generated=True
-        )
+        _publication.validate_paths(alias, tmp_path / "selected.md", replace_generated=True)
 
 
 def test_hardlink_alias_inside_generated_tree_is_rejected(source: Path, tmp_path: Path) -> None:
@@ -190,22 +160,20 @@ def test_child_symlink_inside_generated_tree_is_rejected(
         _publication.validate_paths(source, tmp_path / "output.md", replace_generated=True)
 
 
-def test_repository_root_is_protected_as_page_tree(source: Path, tmp_path: Path) -> None:
-    directory = tmp_path / "repository"
+def test_repository_root_is_protected_as_image_folder(source: Path, tmp_path: Path) -> None:
+    directory = tmp_path / ".images" / "repository"
     (directory / ".git").mkdir(parents=True)
     with pytest.raises(
         _models.ConversionError, match="protected filesystem, home, or repository root"
     ):
-        _publication.validate_paths(
-            source, tmp_path / "repository.md", split_depth=1, replace_generated=True
-        )
+        _publication.validate_paths(source, tmp_path / "repository.md", replace_generated=True)
 
 
-def test_a_system_folder_is_protected_as_page_tree(
+def test_a_system_folder_is_protected_as_image_folder(
     source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    system = tmp_path / "system"
-    system.mkdir()
+    system = tmp_path / ".images" / "system"
+    system.mkdir(parents=True)
     # Windows names its folders, such as ProgramData, in the environment.
     if sys.platform == "win32":
         monkeypatch.setenv("ProgramData", str(system))
@@ -214,9 +182,7 @@ def test_a_system_folder_is_protected_as_page_tree(
     with pytest.raises(
         _models.ConversionError, match="protected filesystem, home, or repository root"
     ):
-        _publication.validate_paths(
-            source, tmp_path / "system.md", split_depth=1, replace_generated=True
-        )
+        _publication.validate_paths(source, tmp_path / "system.md", replace_generated=True)
 
 
 def test_repository_nested_inside_generated_directory_is_protected(
@@ -228,20 +194,12 @@ def test_repository_nested_inside_generated_directory_is_protected(
 
 
 @pytest.mark.parametrize("kind", FOLDER_LINKS)
-@pytest.mark.parametrize(
-    ("leaf", "split_depth"),
-    [pytest.param(".images/output", 0, id="images"), pytest.param("output", 1, id="pages")],
-)
-def test_image_leaf_and_page_leaf_symlinks_are_rejected(
-    leaf: str, split_depth: int, kind: str, source: Path, tmp_path: Path
-) -> None:
-    link = tmp_path / leaf
-    link.parent.mkdir(exist_ok=True)
+def test_image_leaf_symlink_is_rejected(kind: str, source: Path, tmp_path: Path) -> None:
+    link = tmp_path / ".images" / "output"
+    link.parent.mkdir()
     link_folder(kind, link, tmp_path / "elsewhere")
     with pytest.raises(_models.ConversionError, match="destination symlink"):
-        _publication.validate_paths(
-            source, tmp_path / "output.md", split_depth=split_depth, replace_generated=True
-        )
+        _publication.validate_paths(source, tmp_path / "output.md", replace_generated=True)
 
 
 def test_incompatible_image_parent_is_rejected(source: Path, tmp_path: Path) -> None:
@@ -264,7 +222,6 @@ def test_intermediates_cannot_be_source_hardlink(source: Path, tmp_path: Path) -
         pytest.param("output.md", id="markdown"),
         pytest.param(".images", id="image-parent"),
         pytest.param(".images/output/debug", id="inside-images"),
-        pytest.param("output/debug", id="inside-pages"),
     ],
 )
 def test_intermediates_reject_all_destination_overlaps(

@@ -32,17 +32,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--split-depth",
-        type=int,
-        choices=range(7),
-        default=0,
-        metavar="0..6",
-        help=(
-            "Write a page for each heading of levels 1 to this, in a folder named like the "
-            "output, which lists them (default: 0, one file)"
-        ),
-    )
-    parser.add_argument(
         "--qualify-duplicate-headings",
         action="store_true",
         help=(
@@ -53,14 +42,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Convert and check without writing the Markdown, images or pages",
+        help="Convert and check without writing the Markdown or images",
     )
     parser.add_argument(
         "--replace-generated",
         action="store_true",
         help=(
-            "Allow replacing an existing Markdown file at the default output, and nonempty "
-            "images and pages folders"
+            "Allow replacing an existing Markdown file at the default output, and a nonempty "
+            "images folder"
         ),
     )
     parser.add_argument(
@@ -99,7 +88,6 @@ def main(argv: list[str] | None = None) -> int:
             stats = _pipeline.convert_docx(
                 args.input,
                 args.output,
-                split_depth=args.split_depth,
                 qualify_duplicate_headings=args.qualify_duplicate_headings,
                 dry_run=args.dry_run,
                 replace_generated=args.replace_generated,
@@ -117,7 +105,6 @@ def main(argv: list[str] | None = None) -> int:
     console.finish(counted=True)
     output = _publication.requested_output(args.input, args.output)
     counts = (
-        plural(stats["pages"], "page"),
         plural(stats["tables"], "table"),
         plural(stats["image_occurrences"], "image reference"),
         plural(stats["bookmarks"], "Word bookmark"),

@@ -62,8 +62,8 @@ accepted.
 - **Fields** keep the text Word shows, such as caption numbers, and a check box
   shows ☐ or ☒. Page numbers stay text. A table of contents keeps each entry's
   link, number and title, but not its page number.
-- **Footnotes and endnotes** become footnotes, `[^1]`, defined at the end of the
-  page that refers to them, numbered in order. VS Code's Markdown preview shows
+- **Footnotes and endnotes** become footnotes, `[^1]`, numbered in order and
+  defined at the end of the Markdown. VS Code's Markdown preview shows
   them only with the [Markdown Footnotes](https://marketplace.visualstudio.com/items?itemName=bierner.markdown-footnotes)
   extension; GitHub, GitLab and `md-to-html` show them.
 - **Equations** are TeX: `` $`x`$ `` inline and a ```` ```math ```` block on
@@ -153,7 +153,7 @@ docx-to-md: to check in Word:
 docx-to-md: expected in Markdown:
   5  table kept as HTML: merged cells
 docx-to-md: --verbose shows every warning
-converted spec.docx -> spec.md: 1 page, 25 tables, 16 image references, 40 Word bookmarks
+converted spec.docx -> spec.md: 25 tables, 16 image references, 40 Word bookmarks
 ```
 
 The summary quotes nothing from the document: to report a problem without
@@ -169,30 +169,12 @@ refuses the document, Pandoc cannot read it, a path is invalid, an earlier
 output needs `--replace-generated`, or the output cannot be written; and 2 when
 an option is invalid.
 
-## Pages
-
-With `--split-depth 1`, `Example.docx` becomes `Example.md`, which lists the
-pages, and a page per section in `Example/`:
-
-```markdown
-# Example
-
-## Sections
-
-- [Introduction](Example/01-introduction.md)
-- [Setup](Example/02-setup.md)
-```
-
-Each page's headings move together so that its first is `#`, and links between
-pages lead to the final page and heading.
-
 ## Converting again
 
 An earlier conversion's output is replaced only with permission: a Markdown
 file at the default output needs `-o` naming it or `--replace-generated`, and a
-nonempty images or pages folder always needs `--replace-generated`. A document
-without images gets no images folder, and converting it again removes an
-earlier one. `--split-depth 0` does not remove an earlier split's pages.
+nonempty images folder always needs `--replace-generated`. A document without
+images gets no images folder, and converting it again removes an earlier one.
 
 Every output is prepared and checked before any is replaced. If replacing one
 fails, the earlier outputs are restored; if that fails too, the message names

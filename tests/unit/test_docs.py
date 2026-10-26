@@ -22,7 +22,7 @@ from md_doc_converter.toolchain.environment import NODE_MINIMUM, PANDOC_VERSION
 from tests.support.project import PROJECT_ROOT
 
 VERSION = r"\d+(?:\.\d+)*"
-# An option, such as -o or --split-depth, but not a word with a hyphen in it.
+# An option, such as -o or --pdf-timeout, but not a word with a hyphen in it.
 OPTION = re.compile(r"(?<![\w-])(--?[a-z][a-z0-9-]*)")
 # An example command line: the word after md-doc-converter, and its arguments up to a comment.
 COMMAND_LINE = re.compile(r"md-doc-converter ([^\s`]+)([^`\n#]*)")

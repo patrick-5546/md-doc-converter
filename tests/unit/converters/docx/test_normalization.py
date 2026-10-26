@@ -218,11 +218,6 @@ def test_qualification_skips_empty_headings_and_their_titles() -> None:
     assert len(changes) == 2
 
 
-def test_wiki_slug() -> None:
-    assert _navigation.wiki_page_slug("Module (Data Flow) / RTL") == "module-data-flow-rtl"
-    assert _navigation.wiki_page_slug("***") == "page"
-
-
 def test_brackets_and_cell_numbers_lose_their_escapes(pandoc: str) -> None:
     text = (
         r"Bits \[3:0\] of reg\[7\], an \[ alone, and \[e\]: mid-line." + "\n\n"

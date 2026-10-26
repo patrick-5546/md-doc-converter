@@ -23,14 +23,13 @@ OnReplace = Callable[[ReplaceHook], None]
 
 @dataclass(frozen=True)
 class Staged:
-    """The new outputs, staged outside the destination: Markdown, images and pages."""
+    """The new outputs, staged outside the destination: Markdown and images."""
 
     markdown: Path
     images: Path
-    pages: Path
 
     def publish(self, paths: _models.ConversionPaths) -> None:
-        _publication.publish_outputs(self.markdown, self.images, paths, self.pages)
+        _publication.publish_outputs(self.markdown, self.images, paths)
 
 
 @pytest.fixture
@@ -42,27 +41,23 @@ def source(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def paths(source: Path, tmp_path: Path) -> _models.ConversionPaths:
-    """Destinations of a document split into pages, which hold the previous outputs."""
+    """Destinations that hold the previous outputs."""
     paths = _publication.validate_paths(
-        source, tmp_path / "output" / "document.md", split_depth=2, replace_generated=True
+        source, tmp_path / "output" / "document.md", replace_generated=True
     )
     paths.output.parent.mkdir()
     paths.output.write_text("old markdown", encoding="utf-8")
     paths.images.mkdir(parents=True)
     (paths.images / "old.svg").write_bytes(SVG)
-    paths.pages.mkdir()
-    (paths.pages / "01-old.md").write_text("old page", encoding="utf-8")
     return paths
 
 
 @pytest.fixture
 def staged(tmp_path: Path) -> Staged:
-    batch = Staged(tmp_path / "staged.md", tmp_path / "staged-images", tmp_path / "staged-pages")
+    batch = Staged(tmp_path / "staged.md", tmp_path / "staged-images")
     batch.markdown.write_text("new markdown", encoding="utf-8")
     batch.images.mkdir()
     (batch.images / "new.svg").write_bytes(SVG)
-    batch.pages.mkdir()
-    (batch.pages / "01-new.md").write_text("new page", encoding="utf-8")
     return batch
 
 
@@ -116,9 +111,7 @@ def assert_old(paths: _models.ConversionPaths) -> None:
     """The previous outputs are in place, and none of the new ones."""
     assert paths.output.read_text(encoding="utf-8") == "old markdown"
     assert (paths.images / "old.svg").read_bytes() == SVG
-    assert (paths.pages / "01-old.md").read_text(encoding="utf-8") == "old page"
     assert not (paths.images / "new.svg").exists()
-    assert not (paths.pages / "01-new.md").exists()
 
 
 def assert_no_transfers(paths: _models.ConversionPaths) -> None:
@@ -133,8 +126,7 @@ def test_complete_batch_replaces_only_selected_artifacts(
     staged.publish(paths)
     assert paths.output.read_text(encoding="utf-8") == "new markdown"
     assert (paths.images / "new.svg").is_file()
-    assert (paths.pages / "01-new.md").is_file()
-    assert not (paths.pages / "01-old.md").exists()
+    assert not (paths.images / "old.svg").exists()
     assert unrelated.read_text(encoding="utf-8") == "mine"
     assert_no_transfers(paths)
 
@@ -153,7 +145,6 @@ def test_without_images_the_previous_image_directory_and_its_parent_go(
 ) -> None:
     without_images.publish(paths)
     assert paths.output.read_text(encoding="utf-8") == "new markdown"
-    assert (paths.pages / "01-new.md").is_file()
     assert not paths.images.parent.exists()
 
 
@@ -168,15 +159,13 @@ def test_without_images_other_image_directories_stay(
     assert [path.name for path in paths.images.parent.iterdir()] == ["other"]
 
 
-# Three backups, then two publications: nothing replaces the image directory.
+# Two backups, then one publication: nothing replaces the image directory.
 @pytest.mark.parametrize(
     "step",
     [
         pytest.param(1, id="backing-up-markdown"),
         pytest.param(2, id="backing-up-images"),
-        pytest.param(3, id="backing-up-pages"),
-        pytest.param(4, id="publishing-markdown"),
-        pytest.param(5, id="publishing-pages"),
+        pytest.param(3, id="publishing-markdown"),
     ],
 )
 def test_without_images_a_failure_restores_the_previous_image_directory(
@@ -195,10 +184,8 @@ def test_without_images_a_failure_restores_the_previous_image_directory(
     [
         pytest.param(1, id="backing-up-markdown"),
         pytest.param(2, id="backing-up-images"),
-        pytest.param(3, id="backing-up-pages"),
-        pytest.param(4, id="publishing-markdown"),
-        pytest.param(5, id="publishing-images"),
-        pytest.param(6, id="publishing-pages"),
+        pytest.param(3, id="publishing-markdown"),
+        pytest.param(4, id="publishing-images"),
     ],
 )
 def test_every_backup_and_publish_failure_restores_whole_batch(
@@ -211,20 +198,12 @@ def test_every_backup_and_publish_failure_restores_whole_batch(
     assert_no_transfers(paths)
 
 
-@pytest.mark.parametrize("step", [pytest.param(1, id="images"), pytest.param(2, id="pages")])
-def test_each_directory_preparation_failure_cleans_staging(
-    step: int, staged: Staged, paths: _models.ConversionPaths, monkeypatch: pytest.MonkeyPatch
+def test_directory_preparation_failure_cleans_staging(
+    staged: Staged, paths: _models.ConversionPaths, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    original = shutil.copytree
-    calls = 0
-
     def fail_copy(source: Path, destination: Path) -> Path:
-        nonlocal calls
-        calls += 1
-        if calls == step:
-            destination.mkdir()
-            raise OSError("partial directory copy")
-        return Path(original(source, destination))
+        destination.mkdir()
+        raise OSError("partial directory copy")
 
     monkeypatch.setattr(shutil, "copytree", fail_copy)
     with pytest.raises(_models.ConversionError, match="preparation failed"):
@@ -270,9 +249,9 @@ def test_failed_restore_retains_exact_backups_and_reports_both_errors(
     staged: Staged, paths: _models.ConversionPaths, on_replace: OnReplace
 ) -> None:
     def fail_restore(source: Path, target: Path) -> None:
-        if source.name == "prepared" and target == paths.pages:
+        if source.name == "prepared" and target == paths.images:
             raise OSError("original publication error")
-        if source.name == "backup" and target == paths.images:
+        if source.name == "backup" and target == paths.output:
             raise OSError("original recovery error")
 
     on_replace(fail_restore)
@@ -281,32 +260,32 @@ def test_failed_restore_retains_exact_backups_and_reports_both_errors(
     message = str(raised.value)
     assert "original publication error" in message
     assert "original recovery error" in message
-    roots = transfers(paths.images.parent)
+    roots = transfers(paths.output.parent)
     assert len(roots) == 1
     backup = roots[0] / "backup"
     assert str(backup) in message
-    assert (backup / "old.svg").read_bytes() == SVG
-    assert (roots[0] / "recovery-new" / "new.svg").is_file()
-    assert paths.output.read_text(encoding="utf-8") == "old markdown"
+    assert backup.read_text(encoding="utf-8") == "old markdown"
+    assert (roots[0] / "recovery-new").read_text(encoding="utf-8") == "new markdown"
+    assert (paths.images / "old.svg").read_bytes() == SVG
 
 
 def test_failed_vacate_also_retains_recoverable_backup(
     staged: Staged, paths: _models.ConversionPaths, on_replace: OnReplace
 ) -> None:
     def fail_vacate(source: Path, target: Path) -> None:
-        if source.name == "prepared" and target == paths.pages:
+        if source.name == "prepared" and target == paths.images:
             raise OSError("publish failed")
-        if source == paths.images and target.name == "recovery-new":
+        if source == paths.output and target.name == "recovery-new":
             raise OSError("cannot move replacement aside")
 
     on_replace(fail_vacate)
     with pytest.raises(_models.ConversionError, match="rollback failed") as raised:
         staged.publish(paths)
-    roots = transfers(paths.images.parent)
+    roots = transfers(paths.output.parent)
     assert len(roots) == 1
     assert str(roots[0] / "backup") in str(raised.value)
-    assert (roots[0] / "backup" / "old.svg").is_file()
-    assert (paths.images / "new.svg").is_file()
+    assert (roots[0] / "backup").read_text(encoding="utf-8") == "old markdown"
+    assert paths.output.read_text(encoding="utf-8") == "new markdown"
 
 
 def test_cleanup_error_after_success_does_not_claim_rollback(
@@ -339,7 +318,7 @@ def test_renames_are_destination_local_even_with_foreign_scratch(
 
     on_replace(assert_local)
     staged.publish(paths)
-    assert len(observed) == 6
+    assert len(observed) == 4
 
 
 if sys.platform == "linux":
@@ -352,13 +331,10 @@ if sys.platform == "linux":
             assert scratch.stat().st_dev != paths.output.parent.stat().st_dev
             markdown = scratch / "final.md"
             images = scratch / "images"
-            pages = scratch / "pages"
             markdown.write_text("cross filesystem", encoding="utf-8")
             images.mkdir()
             (images / "image.png").write_bytes(PNG)
-            pages.mkdir()
-            (pages / "01-child.md").write_text("# Child\n", encoding="utf-8")
-            _publication.publish_outputs(markdown, images, paths, pages)
+            _publication.publish_outputs(markdown, images, paths)
         assert paths.output.read_text(encoding="utf-8") == "cross filesystem"
         assert (paths.images / "image.png").is_file()
         assert_no_transfers(paths)
@@ -376,13 +352,11 @@ def test_arbitrary_image_destination_cannot_bypass_derivation(
 def test_rollback_restores_absence_of_new_outputs_and_parents(
     staged: Staged, paths: _models.ConversionPaths, tmp_path: Path, on_replace: OnReplace
 ) -> None:
-    fresh = _publication.validate_paths(
-        paths.source, tmp_path / "new-parent" / "document.md", split_depth=1
-    )
+    fresh = _publication.validate_paths(paths.source, tmp_path / "new-parent" / "document.md")
 
     def fail_last(source: Path, target: Path) -> None:
-        if source.name == "prepared" and target == fresh.pages:
-            raise OSError("new-page publication failed")
+        if source.name == "prepared" and target == fresh.images:
+            raise OSError("new-image publication failed")
 
     on_replace(fail_last)
     with pytest.raises(_models.ConversionError, match="previous outputs restored"):
@@ -395,7 +369,7 @@ def test_failed_rollback_keeps_backups_for_every_failed_restore(
     staged: Staged, paths: _models.ConversionPaths, on_replace: OnReplace
 ) -> None:
     def fail_restore(source: Path, target: Path) -> None:
-        if source.name == "prepared" and target == paths.pages:
+        if source.name == "prepared" and target == paths.images:
             raise OSError("original error")
         if source.name == "backup":
             raise OSError("recovery error")
@@ -404,7 +378,7 @@ def test_failed_rollback_keeps_backups_for_every_failed_restore(
     with pytest.raises(_models.ConversionError) as raised:
         staged.publish(paths)
     roots = transfers(paths.output.parent, paths.images.parent)
-    assert len(roots) == 3
+    assert len(roots) == 2
     for root in roots:
         assert (root / "backup").exists()
         assert str(root / "backup") in str(raised.value)

@@ -29,10 +29,8 @@ class ConversionPaths:
     source_entry: Path
     output: Path
     images: Path
-    pages: Path
     intermediates: Path | None
     explicit_output: bool
-    split_depth: int
     replace_generated: bool
 
 
@@ -66,15 +64,9 @@ class BookmarkSection:
     exact: bool
 
 
-@dataclass(frozen=True)
-class SectionTarget:
-    page: Path
-    fragment: str = ""
-
-
 @dataclass
 class DocumentNavigation:
-    """The headings, Word bookmarks and links of a converted document, which its pages link."""
+    """The headings, Word bookmarks and links of a converted document."""
 
     headings: list[SourceHeading] = field(default_factory=list[SourceHeading])
     link_targets: list[str] = field(default_factory=list[str])
@@ -82,8 +74,9 @@ class DocumentNavigation:
     bookmark_sections: dict[str, BookmarkSection] = field(
         default_factory=dict[str, BookmarkSection]
     )
-    bookmark_targets: dict[str, SectionTarget] = field(default_factory=dict[str, SectionTarget])
-    # The names of the Word bookmarks, which no page may declare as an HTML id.
+    # By Word bookmark name: the ID of its section's heading, or "" for the document top.
+    bookmark_targets: dict[str, str] = field(default_factory=dict[str, str])
+    # The names of the Word bookmarks, which the Markdown may not declare as HTML ids.
     bookmarks: set[str] = field(default_factory=set[str])
 
     @property
@@ -113,16 +106,6 @@ class WordPackage:
     def media_folder(self) -> str:
         """Where Word keeps the document's images, such as word/media."""
         return posixpath.join(posixpath.dirname(self.document_part), "media")
-
-
-@dataclass
-class WikiPage:
-    title: str
-    source_level: int
-    parent: int | None
-    relative_path: Path
-    lines: list[str] = field(default_factory=list)
-    heading_indices: list[int | None] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

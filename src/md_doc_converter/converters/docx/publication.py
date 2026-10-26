@@ -126,12 +126,9 @@ def validate_paths(
     input_path: Path,
     output_path: Path | None,
     *,
-    split_depth: int = 0,
     replace_generated: bool = False,
     keep_intermediates: Path | None = None,
 ) -> ConversionPaths:
-    if not 0 <= split_depth <= 6:
-        raise ConversionError(f"Split depth must be between 0 and 6, got {split_depth}")
     if input_path.suffix.casefold() != ".docx":
         raise ConversionError(f"Input must be a DOCX file: {input_path}")
     if not input_path.is_file():
@@ -149,17 +146,14 @@ def validate_paths(
     if is_link(image_parent):
         raise ConversionError(f"The .images folder must not be a symbolic link: {image_parent}")
     images = _entry_path(image_parent / output_entry.stem)
-    pages = _entry_path(output_entry.with_suffix(""))
     intermediates = _entry_path(keep_intermediates) if keep_intermediates is not None else None
     paths = ConversionPaths(
         source,
         source_entry,
         output_entry,
         images,
-        pages,
         intermediates,
         output_path is not None,
-        split_depth,
         replace_generated,
     )
     _validate_destinations(paths, intermediates_empty=True)
@@ -167,13 +161,13 @@ def validate_paths(
 
 
 def _validate_destinations(paths: ConversionPaths, *, intermediates_empty: bool) -> None:
-    output, images, pages = paths.output, paths.images, paths.pages
-    if images != output.parent / ".images" / output.stem or pages != output.with_suffix(""):
-        raise ConversionError("Image and page destinations must derive from the Markdown output")
-    related = (paths.source, paths.source_entry, output, images, pages)
+    output, images = paths.output, paths.images
+    if images != output.parent / ".images" / output.stem:
+        raise ConversionError("The image destination must derive from the Markdown output")
+    related = (paths.source, paths.source_entry, output, images)
     if is_link(output.parent / ".images") or _entry_path(images) != images:
         raise ConversionError(f"The .images folder must not be a symbolic link: {images.parent}")
-    if any(_entry_path(path) != path for path in (output, pages)):
+    if _entry_path(output) != output:
         raise ConversionError("Destination parent changed through a symlink")
     if output.exists() and not output.is_file():
         raise ConversionError(f"Markdown destination is not a regular file: {output}")
@@ -184,11 +178,7 @@ def _validate_destinations(paths: ConversionPaths, *, intermediates_empty: bool)
             f"Markdown output already exists: {output}; name it with -o/--output, or use "
             "--replace-generated, to replace it"
         )
-    if overlaps(images, pages):
-        raise ConversionError(f"Image and page destinations overlap: {images}, {pages}")
     directories = [images]
-    if paths.split_depth:
-        directories.append(pages)
     if paths.intermediates is not None:
         intermediates = paths.intermediates
         for protected in related:
@@ -256,19 +246,12 @@ def _cleanup_transfers(roots: list[Path], created: list[Path]) -> list[str]:
     return errors
 
 
-def publish_outputs(
-    staged_markdown: Path,
-    staged_images: Path,
-    paths: ConversionPaths,
-    staged_pages: Path | None = None,
-) -> None:
+def publish_outputs(staged_markdown: Path, staged_images: Path, paths: ConversionPaths) -> None:
     """Prepare the entire batch locally; retain recovery data if rollback fails.
 
     A document without images publishes no image directory: a previous one is removed, with
     its .images parent when that leaves the parent empty.
     """
-    if (staged_pages is not None) != bool(paths.split_depth):
-        raise ConversionError("Staged pages must match the selected split depth")
     _validate_destinations(paths, intermediates_empty=False)
     if is_link(staged_images) or not staged_images.is_dir():
         raise ConversionError(f"Invalid staged artifact: {staged_images}")
@@ -277,8 +260,6 @@ def publish_outputs(
     artifacts: list[tuple[Path | None, Path, bool]] = [(staged_markdown, paths.output, False)]
     if images is not None or removing_images:
         artifacts.append((images, paths.images, True))
-    if staged_pages is not None:
-        artifacts.append((staged_pages, paths.pages, True))
     roots: list[Path] = []
     created: list[Path] = []
     prepared: list[PreparedArtifact] = []

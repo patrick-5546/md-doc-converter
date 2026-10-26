@@ -6,7 +6,6 @@ and PDF.
 - **Word to Markdown:** converts with [Pandoc](https://pandoc.org/), keeping
   images with their captions as alt text, tables, lists, links, bookmarks,
   footnotes, equations and heading levels as Markdown can show them.
-  Optionally splits the document into pages.
 - **Excel and CSV to Markdown:** a table page per worksheet or CSV file, with
   cell contents kept literal.
 - **Markdown to HTML and PDF:** one file or a whole folder, with Mermaid
@@ -85,7 +84,7 @@ and never changes its input.
 is described in:
 
 - [Word conversion](docs/word-conversion.md), for `docx-to-md`: what the
-  Markdown holds, the report, pages, and converting again;
+  Markdown holds, the report, and converting again;
 - [Excel and CSV conversion](docs/excel-and-csv.md), for `excel-to-md`,
   `excel-to-csv` and `csv-to-md`: how worksheets and CSV files become pages,
   and what makes clean output;

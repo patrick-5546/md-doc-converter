@@ -695,11 +695,10 @@ def tidy_lists(blocks: list[JSONValue], report: TransformReport) -> None:
 @dataclass
 class Notes:
     """Word's footnotes and endnotes, by number, each referred to by a placeholder until the
-    Markdown is written, and the top-level block after which each is defined."""
+    Markdown is written."""
 
     token: str = field(default_factory=lambda: "DOCXTOMDNOTE" + uuid.uuid4().hex.upper())
     contents: list[list[JSONValue]] = field(default_factory=list[list[JSONValue]])
-    places: list[int] = field(default_factory=list[int])
 
     def placeholder(self, number: int) -> str:
         return f"{self.token}N{number}X"
@@ -715,7 +714,7 @@ def extract_notes(blocks: list[JSONValue], report: TransformReport) -> Notes:
     notes = Notes()
     numbers: dict[int, int | None] = {}
     empty = 0
-    for index, block in enumerate(blocks):
+    for block in blocks:
         for element in _tree.walk(block):
             if element["t"] != "Note":
                 continue
@@ -724,7 +723,6 @@ def extract_notes(blocks: list[JSONValue], report: TransformReport) -> Notes:
                 empty += 1
                 continue
             notes.contents.append(_tree.items(element["c"]))
-            notes.places.append(index)
             numbers[id(element)] = len(notes.contents)
     if numbers:
 
@@ -746,8 +744,7 @@ def extract_notes(blocks: list[JSONValue], report: TransformReport) -> Notes:
 def define_notes(
     blocks: list[JSONValue], notes: Notes, pandoc: str, api: JSONValue, math: MathSyntax
 ) -> None:
-    """Define each note in GFM after the top-level block that refers to it, so that a page of a
-    split document holds the notes it refers to."""
+    """Define the notes in GFM, in order, at the end of the document."""
     if not notes.contents:
         return
     batch: list[JSONValue] = []
@@ -765,11 +762,10 @@ def define_notes(
             current = bodies.setdefault(line.strip(), [])
         elif current is not None:
             current.append(line)
-    definitions: dict[int, list[str]] = {}
-    for number, (marker, place) in enumerate(zip(markers, notes.places, strict=True), 1):
+    definitions: list[str] = []
+    for number, marker in enumerate(markers, 1):
         lines = "\n".join(bodies.get(marker, [])).strip("\n").split("\n")
         first = f"[^{number}]: {lines[0]}".rstrip()
         rest = "".join("\n" + (f"    {line}" if line.strip() else "") for line in lines[1:])
-        definitions.setdefault(place, []).append(first + rest)
-    for place in sorted(definitions, reverse=True):
-        blocks.insert(place + 1, _tree.raw_block("gfm", "\n\n".join(definitions[place])))
+        definitions.append(first + rest)
+    blocks.append(_tree.raw_block("gfm", "\n\n".join(definitions)))

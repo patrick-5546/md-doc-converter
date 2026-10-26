@@ -33,7 +33,6 @@ TRANSFORMS = (
     "code",
     "cleanup",
     "duplicate-headings",
-    "pages",
     "title",
     "checks",
 )
