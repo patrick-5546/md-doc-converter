@@ -48,6 +48,11 @@ POPPLER_FIX = (
     if WINDOWS
     else "Install Poppler (`poppler-utils` in most distributions)"
 )
+# Office documents, and drawings and images made with Office or draw.io, use Calibri, which only
+# Windows has. On Linux, fontconfig puts Carlito, which has Calibri's metrics, in its place.
+LINUX = sys.platform.startswith("linux")
+CARLITO_FIX = "Install Carlito (`fonts-crosextra-carlito` in Debian and Ubuntu)"
+FONTCONFIG_FIX = "Install fontconfig"
 SETUP_FIX = "Run `md-doc-converter setup`"
 REINSTALL_FIX = "Run `md-doc-converter setup --force`"
 # The npm commands that the Pandoc filters run with Node.js, by package.
@@ -231,6 +236,38 @@ def check_poppler() -> Check:
     return Check("poppler", "ok", cairo)
 
 
+def check_fonts() -> Check:
+    """Whether the browser and LibreOffice draw text in Calibri: in Calibri, or in Carlito."""
+    fc_match = executables.which("fc-match")
+    if fc_match is None:
+        return Check(
+            "fonts", "warn", "no fc-match; Calibri and Carlito cannot be checked", FONTCONFIG_FIX
+        )
+    try:
+        result = subprocess.run(
+            [fc_match, "--format=%{family}", "Calibri"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+    except OSError, subprocess.SubprocessError:
+        families: set[str] = set()
+    else:
+        families = {family.strip() for family in result.stdout.split(",")}
+    if "Calibri" in families:
+        return Check("fonts", "ok", "Calibri")
+    if "Carlito" in families:
+        return Check("fonts", "ok", "Carlito, for Calibri")
+    return Check(
+        "fonts",
+        "warn",
+        "neither Calibri nor Carlito; text in Calibri, which Office documents and drawings use, "
+        "is drawn in another font",
+        CARLITO_FIX,
+    )
+
+
 def render_checks(tools: Toolchain, *, pdf: bool) -> list[Check]:
     """Checks that must pass before rendering; fast enough to run for every render."""
     return [
@@ -260,6 +297,7 @@ def doctor_checks(tools: Toolchain) -> list[Check]:
         check_git(),
         check_libreoffice(),
         check_poppler(),
+        *([check_fonts()] if LINUX else []),
     ]
 
 

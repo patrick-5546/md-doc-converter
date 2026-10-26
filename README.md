@@ -23,6 +23,10 @@ and PDF.
   where its installer puts it) and Poppler (`pdftocairo`, `pdfinfo` and
   `pdftotext`) to convert EMF and WMF drawings in Word documents to SVG, and Git
   to skip Git-ignored files when converting or rendering a folder.
+- Optional, on Linux: the Carlito font (`fonts-crosextra-carlito` in Debian and
+  Ubuntu), which has Calibri's metrics. Without Calibri or Carlito, text in
+  Calibri, which Office documents and drawings use, is drawn in another font,
+  which may not fit where Calibri did.
 
 `md-doc-converter setup` installs the rest, including Pandoc for Word
 conversion and rendering; see [Toolchain](#toolchain). Excel and CSV conversion

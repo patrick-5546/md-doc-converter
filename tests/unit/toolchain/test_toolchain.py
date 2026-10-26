@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import stat
+import sys
 import tarfile
 import urllib.error
 import zipfile
@@ -37,7 +38,13 @@ from md_doc_converter.toolchain.environment import (
     render_environment,
     write_stamp,
 )
-from tests.support.fake_tools import BROWSER_PATH, FakeTools, browser_path, write_packages
+from tests.support.fake_tools import (
+    BROWSER_PATH,
+    FakeTools,
+    browser_path,
+    write_executable,
+    write_packages,
+)
 
 # The root of the file system that holds the current folder: / or a drive such as C:\.
 ROOT = Path(Path.cwd().anchor)
@@ -324,6 +331,54 @@ def test_poppler_needs_each_command_that_emf_conversion_runs(fakes: FakeTools) -
     )
     fakes.write("pdftotext")
     assert checks.check_poppler() == checks.Check("poppler", "ok", str(cairo))
+
+
+def fake_fc_match(fakes: FakeTools, families: str) -> None:
+    """A fake fc-match, which names *families* as the match for any font."""
+    python = "python" if sys.platform == "win32" else sys.executable
+    write_executable(fakes.bin, "fc-match", f"#!{python}\nprint({families!r}, end='')\n")
+
+
+@pytest.mark.parametrize(
+    ("families", "check"),
+    [
+        pytest.param("Calibri", checks.Check("fonts", "ok", "Calibri"), id="calibri"),
+        pytest.param("Carlito", checks.Check("fonts", "ok", "Carlito, for Calibri"), id="carlito"),
+        pytest.param(
+            "DejaVu Sans,DejaVu Sans Condensed",
+            checks.Check(
+                "fonts",
+                "warn",
+                "neither Calibri nor Carlito; text in Calibri, which Office documents and "
+                "drawings use, is drawn in another font",
+                checks.CARLITO_FIX,
+            ),
+            id="another-font",
+        ),
+    ],
+)
+def test_doctor_checks_that_text_in_calibri_has_its_font(
+    fakes: FakeTools, families: str, check: checks.Check
+) -> None:
+    fake_fc_match(fakes, families)
+    assert checks.check_fonts() == check
+
+
+def test_without_fc_match_the_fonts_cannot_be_checked(fakes: FakeTools) -> None:
+    assert checks.check_fonts() == checks.Check(
+        "fonts", "warn", "no fc-match; Calibri and Carlito cannot be checked", checks.FONTCONFIG_FIX
+    )
+
+
+@pytest.mark.parametrize("linux", [True, False])
+@pytest.mark.usefixtures("fakes")
+def test_doctor_checks_the_fonts_on_linux_only(
+    linux: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Windows has Calibri; fontconfig, which finds Carlito in its place, is Linux's.
+    monkeypatch.setattr(checks, "LINUX", linux)
+    names = [check.name for check in checks.doctor_checks(Toolchain(tmp_path / "home"))]
+    assert ("fonts" in names) == linux
 
 
 def test_versions_are_checked(fakes: FakeTools) -> None:
