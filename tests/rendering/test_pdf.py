@@ -131,6 +131,10 @@ def test_pages_are_tagged_us_letter(pdf: Path) -> None:
     assert pages(pdf) >= 2
 
 
+def test_the_title_is_the_heading_that_the_document_opens_with(pdf: Path) -> None:
+    assert re.search(r"^Title:\s+Cache controller$", run("pdfinfo", pdf), re.MULTILINE)
+
+
 def test_every_page_shows_the_header_footer_and_its_number(pdf: Path) -> None:
     count = pages(pdf)
     for page in range(1, count + 1):

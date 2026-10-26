@@ -45,8 +45,9 @@ class FakeRenderer:
     they get.
 
     Each program is found at /found/<name>. git reports whether the input is in a work tree.
-    pandoc writes *html*, or fails with status 7; the PDF printer records the HTML it gets and
-    writes a placeholder PDF. Any other command fails the test.
+    pandoc records the metadata of the prepared document it gets, writes *html*, or fails with
+    status 7; the PDF printer records the HTML it gets and writes a placeholder PDF. Any other
+    command fails the test.
     """
 
     git_work_tree: bool = False
@@ -61,6 +62,7 @@ class FakeRenderer:
     html: str = "<html>rendered</html>"
     prepare_calls: list[tuple[Path, bool, bool]] = field(default_factory=list)
     prepared: list[Path] = field(default_factory=list)
+    metas: list[JSONValue] = field(default_factory=list)
     styles: list[str] = field(default_factory=list)
     katex_stylesheets: list[str] = field(default_factory=list)
     lookups: list[tuple[str, str | None]] = field(default_factory=list)
@@ -88,7 +90,11 @@ class FakeRenderer:
             if self.pandoc_fails:
                 raise subprocess.CalledProcessError(7, command)
             prepared = json.loads(self.prepared[-1].read_text(encoding="utf-8"))
-            assert prepared == self.preparation.document
+            # Rendering may add metadata, such as a title.
+            self.metas.append(prepared.pop("meta"))
+            expected = dict(self.preparation.document)
+            expected.pop("meta")
+            assert prepared == expected
             styles = Path(command[command.index("--include-in-header") + 1])
             self.styles.append(styles.read_text(encoding="utf-8"))
             environment = kwargs["env"]
@@ -389,6 +395,37 @@ def test_an_invalid_language_fails_before_rendering(
             )
     run.assert_not_called()
     assert not fake.prepare_calls
+
+
+def test_the_title_is_the_level_1_heading_that_the_document_opens_with(
+    fake: FakeRenderer, source: Path, tools: Toolchain
+) -> None:
+    words: list[JSONValue] = [
+        {"t": "Str", "c": "Spec"},
+        {"t": "Space"},
+        {"t": "Emph", "c": [{"t": "Str", "c": "v2"}]},
+    ]
+    heading: JSONValue = {"t": "Header", "c": [1, ["spec-v2", [], []], words]}
+    section: JSONValue = {"t": "Header", "c": [2, ["part", [], []], words]}
+    paragraph: JSONValue = {"t": "Para", "c": words}
+    given: dict[str, JSONValue] = {"title": {"t": "MetaInlines", "c": words}}
+    cases: list[tuple[list[JSONValue], dict[str, JSONValue]]] = [
+        ([heading, paragraph], {}),
+        ([paragraph, heading], {}),
+        ([section], {}),
+        ([heading], given),
+        ([], {}),
+    ]
+    for blocks, meta in cases:
+        fake.preparation = preprocess.PreparedDocument({**document(*blocks), "meta": meta})
+        render.render_markdown(source, FORMAT.HTML, tools=tools)
+    assert fake.metas == [
+        {"pagetitle": {"t": "MetaString", "c": "Spec v2"}},
+        {},
+        {},
+        given,
+        {},
+    ]
 
 
 def test_embedded_image_data_goes_into_the_html_after_pandoc(

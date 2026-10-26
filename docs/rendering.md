@@ -53,6 +53,10 @@ opens anywhere without a network, and printing it to PDF needs none either.
 Links to other local files point to their absolute paths on the machine that
 rendered them, on Windows as `/C:/...`, as a `file:` URL names them.
 
+The title of the HTML, and of the PDF, is the text of the level-1 heading that
+the document opens with, such as `# Cache controller`; without one, it is the
+output's name without its extension, such as `spec`.
+
 ## Messages
 
 Rendering warns about what it cannot show as written, such as a missing image

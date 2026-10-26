@@ -328,6 +328,27 @@ def _prepare_markdown(
         raise RenderError(f"cannot prepare {source}: {error}") from error
 
 
+def titled(document: dict[str, _pandoc.JSONValue]) -> dict[str, _pandoc.JSONValue]:
+    """*document*, titled after the level-1 heading that it opens with, unless it has a title."""
+    # Imported here so command-line help does not load the Markdown toolchain.
+    from md_doc_converter.markdown.headings import collect_headings
+
+    meta, blocks = document.get("meta"), document.get("blocks")
+    if not isinstance(meta, dict) or "title" in meta or "pagetitle" in meta:
+        return document
+    if not isinstance(blocks, list) or not blocks:
+        return document
+    first = blocks[0]
+    if not isinstance(first, dict) or first.get("t") != "Header":
+        return document
+    [heading] = collect_headings([first])
+    title = " ".join(heading.text.split())
+    if heading.level != 1 or not title:
+        return document
+    # Metadata, which Pandoc escapes, rather than a variable or a value that it reads as YAML.
+    return {**document, "meta": {**meta, "pagetitle": {"t": "MetaString", "c": title}}}
+
+
 # How Pandoc reports a resource that it cannot embed, such as an image outside its sandbox.
 _NOT_FETCHED = "Could not fetch resource "
 
@@ -407,7 +428,8 @@ def render_markdown(
         try:
             name = destination.stem
             # Pandoc reads the document as prepared, already parsed, as Pandoc JSON. Its HTML
-            # title, without a heading to take it from, is the name of this file.
+            # title is the level-1 heading that the document opens with, or else the name of
+            # this file.
             document = work / "document" / f"{name}.json"
             document.parent.mkdir()
             active().status("preparing the Markdown")
@@ -416,7 +438,9 @@ def render_markdown(
                 respect_gitignore=filter_gitignored,
                 download_images=options.download_images,
             )
-            document.write_text(json.dumps(prepared.document), encoding="utf-8", newline="\n")
+            document.write_text(
+                json.dumps(titled(prepared.document)), encoding="utf-8", newline="\n"
+            )
 
             styles_file = work / "page-styles.html"
             styles_file.write_text(
