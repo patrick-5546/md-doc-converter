@@ -449,6 +449,61 @@ def test_csv_to_md_reports_a_folder_without_csv_files(
     assert capsys.readouterr().out == "No CSV files found.\n"
 
 
+def test_csv_to_md_converts_a_folder_that_git_ignores_unless_asked_to_skip_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    (scratch / "table.csv").write_text("Name\nvalue\n", encoding="utf-8")
+    (tmp_path / ".gitignore").write_text("/scratch/\n", encoding="utf-8")
+    subprocess.run(["git", "init", "--quiet", str(tmp_path)], check=True)
+
+    assert main(["csv-to-md", str(scratch), "--respect-gitignore"]) == 0
+    assert capsys.readouterr().out == (
+        "No CSV files found once Git-ignored files are skipped; "
+        "--no-respect-gitignore includes them.\n"
+    )
+    assert main(["csv-to-md", str(scratch)]) == 0
+    assert (scratch / "table.md").is_file()
+
+
+def test_csv_to_md_converts_git_ignored_files_on_request(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "--quiet", str(tmp_path)], check=True)
+    (tmp_path / ".gitignore").write_text("ignored.csv\n", encoding="utf-8")
+    (tmp_path / "ignored.csv").write_text("Name\nvalue\n", encoding="utf-8")
+
+    assert main(["csv-to-md", str(tmp_path), "--no-respect-gitignore"]) == 0
+
+    assert (tmp_path / "ignored.md").is_file()
+
+
+def test_csv_to_md_finds_csv_files_in_any_case_outside_dot_entries(tmp_path: Path) -> None:
+    for name in ("UPPER.CSV", ".hidden.csv", ".venv/package/data.csv", "sub/.cache/data.csv"):
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / name).write_text("Name\nvalue\n", encoding="utf-8")
+
+    assert main(["csv-to-md", str(tmp_path)]) == 0
+
+    assert [path.relative_to(tmp_path).as_posix() for path in tmp_path.rglob("*.md")] == [
+        "UPPER.md"
+    ]
+
+
+def test_csv_to_md_converts_the_csv_files_in_the_folder_not_those_git_lists(
+    tmp_path: Path,
+) -> None:
+    # Git lists a file added to its index until the deletion is too, and reading it failed.
+    for name in ("kept.csv", "deleted.csv"):
+        (tmp_path / name).write_text("Name\nvalue\n", encoding="utf-8")
+    subprocess.run(["git", "init", "--quiet", str(tmp_path)], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "add", "deleted.csv"], check=True)
+    (tmp_path / "deleted.csv").unlink()
+
+    assert main(["csv-to-md", str(tmp_path)]) == 0
+
+    assert [path.name for path in tmp_path.glob("*.md")] == ["kept.md"]
+
+
 def test_csv_to_md_reports_a_missing_input(tmp_path: Path) -> None:
     missing = tmp_path / "missing.csv"
     message = f"^csv-to-md: error: not found: {re.escape(str(missing))}$"

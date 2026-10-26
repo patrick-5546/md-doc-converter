@@ -12,7 +12,7 @@ import pytest
 
 from md_doc_converter.console import Console, activated, shown
 from md_doc_converter.markdown.document import MarkdownError
-from md_doc_converter.markdown.preprocess import ignored_by_git, prepare_markdown
+from md_doc_converter.markdown.preprocess import prepare_markdown
 from tests.support import documents
 
 
@@ -165,32 +165,6 @@ def test_a_folder_left_empty_by_git_ignore_rules_names_the_option_that_includes_
     with pytest.raises(MarkdownError) as raised:
         prepare_markdown(docs, respect_gitignore=True)
     assert str(raised.value) == message
-
-
-def test_git_ignores_a_folder_by_a_rule_for_it_or_a_parent(tmp_path: Path) -> None:
-    outer = tmp_path / "outer"
-    for folder in ("scratch/sub", "scratch/nested", "build", "docs/a", "kept"):
-        (outer / folder).mkdir(parents=True)
-    (outer / ".gitignore").write_text("/scratch/\nbuild/\ndocs/*\n", encoding="utf-8")
-    for repository in (outer, outer / "scratch" / "nested"):
-        subprocess.run(["git", "init", "--quiet"], cwd=repository, check=True, capture_output=True)
-    expected = {
-        ".": False,
-        "scratch/sub": True,
-        # The top of a work tree, which its own repository answers for, not the enclosing one.
-        "scratch/nested": False,
-        "build": True,
-        "docs": False,
-        "docs/a": True,
-        "kept": False,
-    }
-    # Only some Windows users may create symbolic links.
-    if sys.platform != "win32":
-        # A link is judged as the folder that it leads to, whatever its own name.
-        (outer / "alias").symlink_to(outer / "build", target_is_directory=True)
-        expected["alias"] = True
-
-    assert {folder: ignored_by_git(outer / folder) for folder in expected} == expected
 
 
 def test_recursive_csv_output_preserves_relative_directories(tmp_path: Path) -> None:

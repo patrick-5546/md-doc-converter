@@ -759,7 +759,8 @@ def test_missing_prerequisites_fail_before_any_rendering(
         pytest.param("folder", None, True, True, id="folder-in-a-work-tree"),
         pytest.param("folder", None, False, False, id="folder-outside-work-trees"),
         pytest.param("folder", False, True, False, id="folder-opted-out"),
-        pytest.param("folder", True, False, True, id="folder-opted-in"),
+        pytest.param("folder", True, True, True, id="folder-opted-in"),
+        pytest.param("folder", True, False, False, id="folder-opted-in-outside-work-trees"),
         pytest.param("file", None, True, False, id="file-in-a-work-tree"),
     ],
 )

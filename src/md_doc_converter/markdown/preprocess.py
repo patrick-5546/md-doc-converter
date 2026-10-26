@@ -48,6 +48,7 @@ from md_doc_converter import executables
 from md_doc_converter import pandoc as _pandoc
 from md_doc_converter.console import active, shown
 from md_doc_converter.download import DownloadError, download
+from md_doc_converter.gitignore import git_ignored
 from md_doc_converter.markdown import file_paths
 from md_doc_converter.markdown.document import READER as _RENDERER_READER
 from md_doc_converter.markdown.document import MarkdownDocument, MarkdownError
@@ -603,63 +604,6 @@ def print_stats(stats: dict[str, Counter[str]]) -> None:
         active().detail(f"prepared the Markdown ({', '.join(changes)})")
 
 
-def in_git_work_tree(directory: Path) -> bool:
-    """Return True if git is available and *directory* is inside a work tree."""
-    git = executables.which("git")
-    if git is None:
-        return False
-    try:
-        proc = subprocess.run(
-            [git, "-C", str(directory), "rev-parse", "--is-inside-work-tree"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except OSError:
-        return False
-    return proc.returncode == 0 and proc.stdout.strip() == "true"
-
-
-def ignored_by_git(directory: Path) -> bool:
-    """Return True if git ignores *directory* itself, by a rule for it or for a parent.
-
-    Asked from inside *directory*, its own repository answers: the top of a work tree is never
-    ignored, even when an enclosing repository ignores it.
-    """
-    # Named from its parent: git would test "." as "docs/", say, which a rule for the folder's
-    # entries, such as "docs/*", also matches. git works in the folder that a symbolic link
-    # leads to, so the name is that folder's.
-    path = f"../{directory.resolve().name}"
-    return path in _git_ignored([path], directory)
-
-
-def _git_ignored(names: list[str], directory: Path) -> set[str]:
-    """Return the subset of *names* (entries of *directory*) that git ignores.
-
-    Runs ``git check-ignore`` from *directory*.  It honours .gitignore,
-    .git/info/exclude and the global excludes file, and (by consulting the
-    index) never reports tracked files, so a tracked file matching an ignore
-    rule is still kept.  Returns an empty set on any git error.
-    """
-    if not names:
-        return set()
-    try:
-        proc = subprocess.run(
-            [executables.resolve("git"), "check-ignore", "--stdin", "-z"],
-            input="\0".join(names),
-            cwd=directory,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except OSError:
-        return set()
-    # 0 = one or more paths ignored, 1 = none ignored; anything else is an error.
-    if proc.returncode not in (0, 1):
-        return set()
-    return {name for name in proc.stdout.split("\0") if name}
-
-
 def collect_directory(
     root: Path,
     stats: dict[str, Counter[str]],
@@ -686,13 +630,6 @@ def collect_directory(
     --no-respect-gitignore if Git-ignore filtering left out Markdown files or
     folders.
     """
-    if respect_gitignore and not in_git_work_tree(root):
-        active().warning(
-            f"--respect-gitignore had no effect: '{shown(root)}' is not "
-            "inside a git working tree (or git is unavailable)"
-        )
-        respect_gitignore = False
-
     # Cross-file link resolution state, populated after collection from each
     # file's headings and their identifiers in the combined document, which
     # Pandoc assigns: the renderer's GFM-compatible IDs, including Unicode,
@@ -710,7 +647,7 @@ def collect_directory(
     def _is_ignored(file_path: Path) -> bool:
         if not respect_gitignore:
             return False
-        if file_path.name in _git_ignored([file_path.name], file_path.parent):
+        if file_path.name in git_ignored([file_path.name], file_path.parent):
             _leave_out(file_path)
             return True
         return False
@@ -721,7 +658,7 @@ def collect_directory(
         entries = [entry.name for entry in directory.iterdir()]
 
         if respect_gitignore:
-            ignored = _git_ignored(entries, directory)
+            ignored = git_ignored(entries, directory)
             entries = [e for e in entries if e not in ignored]
             for e in sorted(ignored):
                 if not e.startswith(".") and (

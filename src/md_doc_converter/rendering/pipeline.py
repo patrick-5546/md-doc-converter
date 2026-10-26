@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 from urllib.parse import unquote, urlsplit
 
-from md_doc_converter import executables
+from md_doc_converter import executables, gitignore
 from md_doc_converter import pandoc as _pandoc
 from md_doc_converter.console import Console, activated, active, add_verbosity_options, shown
 from md_doc_converter.download import DownloadError, download
@@ -301,18 +301,6 @@ def publish(staged: Path, destination: Path) -> None:
         ) from error
 
 
-def _filter_gitignored(choice: bool | None, source: Path) -> bool:
-    if choice is not None:
-        return choice
-    if not source.is_dir():
-        return False
-    # Imported here so command-line help does not load the Markdown toolchain.
-    from md_doc_converter.markdown.preprocess import ignored_by_git, in_git_work_tree
-
-    # Filtering a folder that Git ignores would skip every file in it.
-    return in_git_work_tree(source) and not ignored_by_git(source)
-
-
 def _prepare_markdown(
     source: Path, *, respect_gitignore: bool, download_images: bool = False
 ) -> PreparedDocument:
@@ -418,7 +406,7 @@ def render_markdown(
     base_css = github_stylesheet(tools)
     math_css = katex_stylesheet(tools)
     environment = render_environment(tools)
-    filter_gitignored = _filter_gitignored(options.respect_gitignore, source)
+    filter_gitignored = gitignore.skips_ignored(options.respect_gitignore, source)
 
     with tempfile.TemporaryDirectory(prefix="md-doc-converter-render-") as temporary:
         work = Path(temporary)
@@ -567,15 +555,7 @@ def main(argv: list[str] | None = None, *, action: Literal["html", "pdf"]) -> in
         metavar="FILE",
         help="Stylesheet applied after the built-in styles",
     )
-    parser.add_argument(
-        "--respect-gitignore",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        help=(
-            "Skip Git-ignored files in a folder input (default: when it is in a Git work tree, "
-            "unless Git ignores the folder)"
-        ),
-    )
+    gitignore.add_option(parser)
     parser.add_argument(
         "--keep-intermediates",
         type=Path,

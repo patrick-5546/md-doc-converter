@@ -1,18 +1,19 @@
 """Convert CSV files to Markdown pages, as docs/excel-and-csv.md describes.
 
-A folder's CSV files are those that Git lists, which leaves out Git-ignored ones, or every one
-outside a Git work tree. Each is read as UTF-8 without its byte-order mark, its delimiter is
-detected from its header line, and markdown/tables.py writes its page, keeping each cell literal.
+A folder's CSV files are those in it and its subfolders whose names end in .csv, in any case,
+except entries whose names begin with "." and, as gitignore.py decides, what Git ignores. Each
+is read as UTF-8 without its byte-order mark, its delimiter is detected from its header line,
+and markdown/tables.py writes its page, keeping each cell literal.
 """
 
 import argparse
 import csv
 import io
-import subprocess
 import sys
 from pathlib import Path
 
-from md_doc_converter import executables
+from md_doc_converter import gitignore
+from md_doc_converter.console import Console, activated
 from md_doc_converter.markdown.tables import table_page
 
 # The delimiters that detection chooses from, by name; on a tie the first wins.
@@ -54,43 +55,45 @@ def csv_to_md(csv_path: Path, delimiter: str | None = None) -> str:
         raise ValueError(f"{csv_path}: {error}") from error
 
 
+def find_csv_files(folder: Path, skip_ignored: bool) -> tuple[list[Path], bool]:
+    """The CSV files in *folder* and its subfolders, sorted, and whether skipping what Git
+    ignores, with *skip_ignored*, left out a CSV file or a folder. Links to folders are not
+    followed."""
+    found: list[Path] = []
+    left_out = False
+    for directory, folders, files in folder.walk():
+        folders[:] = [name for name in folders if not name.startswith(".")]
+        names = [
+            name for name in files if not name.startswith(".") and name.lower().endswith(".csv")
+        ]
+        ignored = gitignore.git_ignored([*folders, *names], directory) if skip_ignored else set()
+        left_out = left_out or bool(ignored)
+        folders[:] = [name for name in folders if name not in ignored]
+        found.extend(directory / name for name in names if name not in ignored)
+    return sorted(found), left_out
+
+
 def convert(
     input_path: str,
     output_dir: str | None = None,
     dry_run: bool = False,
     delimiter: str | None = None,
+    respect_gitignore: bool | None = None,
 ) -> None:
     src = Path(input_path)
     if not src.exists():
         raise FileNotFoundError(f"not found: {input_path}")
 
+    left_out = False
     if src.is_dir():
-        # Use git ls-files to respect .gitignore; -z lists each name unquoted, after a NUL.
-        try:
-            result = subprocess.run(
-                [
-                    executables.resolve("git"),
-                    "ls-files",
-                    "-z",
-                    "--cached",
-                    "--others",
-                    "--exclude-standard",
-                    "*.csv",
-                ],
-                cwd=src,
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            csv_files = sorted(src / name for name in result.stdout.split("\0") if name)
-        except subprocess.CalledProcessError, FileNotFoundError:
-            # Fall back to rglob if git is unavailable
-            csv_files = sorted(src.rglob("*.csv"))
+        skip_ignored = gitignore.skips_ignored(respect_gitignore, src)
+        csv_files, left_out = find_csv_files(src, skip_ignored)
     else:
         csv_files = [src]
 
     if not csv_files:
-        print("No CSV files found.")
+        hint = " once Git-ignored files are skipped; --no-respect-gitignore includes them"
+        print(f"No CSV files found{hint if left_out else ''}.")
         return
 
     for csv_path in csv_files:
@@ -138,10 +141,12 @@ def main(argv: list[str] | None = None) -> None:
         choices=DELIMITERS,
         help="Field delimiter (default: detected from each file's header line)",
     )
+    gitignore.add_option(parser)
     args = parser.parse_args(argv)
     delimiter = DELIMITERS[args.delimiter] if args.delimiter else None
 
-    try:
-        convert(args.input, args.output_dir, args.dry_run, delimiter)
-    except (OSError, UnicodeError, csv.Error, ValueError) as error:
-        sys.exit(f"csv-to-md: error: {error}")
+    with activated(Console("csv-to-md")):
+        try:
+            convert(args.input, args.output_dir, args.dry_run, delimiter, args.respect_gitignore)
+        except (OSError, UnicodeError, csv.Error, ValueError) as error:
+            sys.exit(f"csv-to-md: error: {error}")

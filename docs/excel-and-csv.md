@@ -35,11 +35,14 @@ For clean output, each worksheet should:
 
 ## CSV files
 
-`csv-to-md` converts one CSV file, or every CSV in a folder and its subfolders,
-skipping Git-ignored files when the folder is in a Git work tree; for a folder,
-`-o` keeps the relative subfolders. Each page has a heading from the file name,
-with hyphens as spaces, a note that it is generated, and the table. Short rows
-are padded; rows wider than the header fail instead of silently dropping cells.
+`csv-to-md` converts one CSV file, or every file in a folder and its subfolders
+whose name ends in `.csv`, in any case; for a folder, `-o` keeps the relative
+subfolders. As in a [folder that is rendered](rendering.md#folder-input),
+entries whose names begin with `.` are skipped, and so are Git-ignored files,
+unless Git ignores the folder itself. Each page has a heading from the file
+name, with hyphens as spaces, a note that it is generated, and the table. Short
+rows are padded; rows wider than the header fail instead of silently dropping
+cells.
 
 CSV files are read as UTF-8, with or without the byte-order mark that Excel's
 "CSV UTF-8" format writes. Each file's delimiter is detected from its header
