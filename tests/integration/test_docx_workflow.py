@@ -1485,6 +1485,30 @@ def test_equations_are_written_in_the_chosen_syntax(
     assert f"[^1]: See {inline}\n" in page
 
 
+def test_equation_text_that_pandoc_cannot_read_back_is_kept_without_a_warning(
+    convert: Converter,
+) -> None:
+    # A \_ typed in an equation is a literal run; in bold italic, Pandoc writes it as
+    # \textit{\textbf{\_}}, which its own TeX reader cannot read.
+    formula = ET.Element(M + "oMath")
+    for text, literal in (("a", False), ("_", True), ("b", False)):
+        run = ET.SubElement(formula, M + "r")
+        properties = ET.SubElement(run, M + "rPr")
+        if literal:
+            ET.SubElement(properties, M + "lit")
+        ET.SubElement(properties, M + "sty", {M + "val": "bi"})
+        ET.SubElement(run, M + "t").text = text
+    block = ET.Element(M + "oMathPara")
+    block.append(formula)
+    equation = ET.Element(W + "p")
+    equation.append(block)
+
+    result, _report, warnings = convert.reported([paragraph("Section", "Heading1"), equation])
+
+    assert "\\textit{\\textbf{\\_}}" in result
+    assert warnings == ""
+
+
 def test_an_image_in_a_footnote_is_published(convert: Converter, tmp_path: Path) -> None:
     noted = paragraph("Text")
     ET.SubElement(ET.SubElement(noted, W + "r"), W + "footnoteReference", {W + "id": "1"})

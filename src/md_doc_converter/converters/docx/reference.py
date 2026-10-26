@@ -414,6 +414,9 @@ def pandoc_html(markdown: str, pandoc: str) -> ET.Element:
                 f"--from={DOCX_READER}",
                 "--to=html5",
                 "--wrap=none",
+                # Equations stay TeX: the checks need none of them, and Pandoc cannot read back
+                # all the TeX it writes from Word, such as \textit{\textbf{x}}.
+                "--math-method=mathjax",
             ],
             "Markdown integrity parsing",
             input_text=markdown,
