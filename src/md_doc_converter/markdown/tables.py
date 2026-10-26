@@ -19,8 +19,38 @@ def _letter_or_digit(character: str) -> bool:
     )
 
 
+def _maybe_letter_or_digit(character: str) -> bool:
+    """Whether Pandoc may read *character*, if any, as a letter or digit: whether it is one
+    now or was one in Unicode 3.2."""
+    return character != "" and (
+        unicodedata.category(character)[0] in "LN"
+        or unicodedata.ucd_3_2_0.category(character)[0] in "LN"
+    )
+
+
+def _example_label_end(text: str, start: int) -> int:
+    """Where the label that starts at *start* of an example reference, @label, ends.
+
+    Pandoc's Markdown reads words of letters and digits, joined by _ or -, as the label. It
+    is not text to Pandoc, so an @ right after it can start a citation. A character that
+    Pandoc may read as a letter or digit counts, so that the label is never shorter than
+    Pandoc's.
+    """
+    end = start
+    while end < len(text):
+        if _maybe_letter_or_digit(text[end]):
+            end += 1
+        elif text[end] in "_-" and _maybe_letter_or_digit(text[end + 1 : end + 2]):
+            end += 2
+        else:
+            break
+    return end
+
+
 def literal_cell(text: str) -> str:
     """Keep cell contents literal while retaining compact, readable Markdown."""
+    # Where the label ends of the example reference that the last @ left as text starts.
+    label_end = -1
 
     def _escape_run(match: re.Match[str]) -> str:
         return "".join("\\" + character for character in match[0])
@@ -30,8 +60,13 @@ def literal_cell(text: str) -> str:
         return "_" if _letter_or_digit(following) else "\\_"
 
     def _escape_citation(match: re.Match[str]) -> str:
-        preceding = match.string[match.start() - 1 : match.start()]
-        return "@" if _letter_or_digit(preceding) else "\\@"
+        nonlocal label_end
+        at = match.start()
+        if _letter_or_digit(match.string[at - 1 : at]) and at != label_end:
+            label_end = _example_label_end(match.string, at + 1)
+            return "@"
+        label_end = -1
+        return "\\@"
 
     text = text.strip().replace("\r\n", "\n").replace("\r", "\n").replace("\t", " ")
     text = html.escape(text, quote=False)
@@ -39,8 +74,9 @@ def literal_cell(text: str) -> str:
     text = re.sub(r"-{2,}|\.{3,}", _escape_run, text)
     # Escape possible closing delimiters, not leading/intra-word signal underscores.
     text = re.sub(r"_", _escape_closing_underscore, text)
-    # A citation in Pandoc's Markdown, @key, unless a letter or digit precedes it, as in an
-    # e-mail address.
+    # A citation in Pandoc's Markdown, @key, unless a word that Pandoc reads as text precedes
+    # it, as in an e-mail address. An @ that stays text starts an example reference, @label,
+    # so a word right after it is that reference's label, not text.
     text = re.sub(r"@", _escape_citation, text)
     # A GFM emoji shortcode, such as :smile:.
     text = re.sub(r":(?=[\w+-]+:)", lambda match: "\\" + match[0], text)

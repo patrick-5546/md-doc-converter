@@ -108,6 +108,7 @@ def test_literal_cells_do_not_create_markup_or_extra_columns(reader: str, pandoc
         "first\nsecond",
         r"\_literal\_ and \*literal\*",
         "\U00013460@0 and _x_\U000323b0",
+        "0@0@0< a@b_c@d a@b-c@d x@y@z.com",
     ]
     markdown = table_row(["Value"]) + "\n" + table_row(["---"]) + "\n"
     markdown += "\n".join(table_row([literal_cell(value)]) for value in values)
@@ -123,6 +124,12 @@ def test_literal_cells_do_not_create_markup_or_extra_columns(reader: str, pandoc
     [
         pytest.param('it\'s "quoted"', 'it\\\'s \\"quoted\\"', id="quotes"),
         pytest.param("user@example.com and @mention", "user@example.com and \\@mention", id="at"),
+        # Pandoc reads @word as an example reference, so an @ right after it starts a citation.
+        pytest.param(
+            "0@0@0 a@b_c@d a@b-c@d a@b@c@d a@b.c@d, e@f.com",
+            "0@0\\@0 a@b_c\\@d a@b-c\\@d a@b\\@c@d a@b.c@d, e@f.com",
+            id="at-after-example-reference",
+        ),
         pytest.param("12:30, :smile: and a:b:c", "12:30, \\:smile: and a\\:b:c", id="colons"),
         pytest.param("snake_case_name and _x_", "snake_case_name and _x\\_", id="underscores"),
         pytest.param("<b> & \u00a9", "&lt;b&gt; &amp; \u00a9", id="html"),
