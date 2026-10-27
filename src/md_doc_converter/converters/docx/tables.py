@@ -95,6 +95,34 @@ def _bookmark_holder(row: ET.Element) -> ET.Element | None:
     return None
 
 
+def omit_empty_tables(root: ET.Element) -> list[ET.Element]:
+    """Remove the tables that show nothing; return them, in document order.
+
+    A table shows nothing when no cell holds text, a symbol, a picture, or an equation. A
+    nested table goes with its outer table, or alone when the outer table shows something.
+    The bookmarks of a removed table stay in its place, in an empty paragraph, so links to
+    them still lead to its section, and a cell left without a paragraph gets one. A table
+    without cells is left to the checks of its rows.
+    """
+    parents = {child: parent for parent in root.iter() for child in parent}
+    removed: list[ET.Element] = []
+    gone: set[ET.Element] = set()
+    for table in list(root.iter(WORD + "tbl")):
+        if table in gone or table.find(f"{WORD}tr/{WORD}tc") is None or _ooxml.shows_content(table):
+            continue
+        gone.update(table.iter(WORD + "tbl"))
+        holder = parents[table]
+        position = list(holder).index(table)
+        holder.remove(table)
+        marks = [node for node in table.iter() if node.tag in _BOOKMARK_TAGS]
+        if marks or (holder.tag == WORD + "tc" and holder.find(WORD + "p") is None):
+            paragraph = ET.Element(WORD + "p")
+            paragraph.extend(marks)
+            holder.insert(position, paragraph)
+        removed.append(table)
+    return removed
+
+
 def drop_empty_rows(root: ET.Element) -> int:
     """Remove the table rows that show nothing; return how many.
 

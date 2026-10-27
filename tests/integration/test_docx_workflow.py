@@ -763,10 +763,10 @@ def test_multiple_empty_headerless_and_nested_tables(convert: Converter, pandoc:
     )
     parsed = _reference.pandoc_html(result, pandoc)
     tables = list(parsed.iter("table"))
-    # The first table's empty rows go, so its data row leads a Markdown table. A table without
-    # rows shows nothing and goes; the nested table is part of its outer table's HTML.
-    assert [len(_tables.html_rows(item)) for item in tables] == [1, 1, 1, 1]
-    assert stats["tables"] == 3
+    # The first table's empty rows go, so its data row leads a Markdown table. Tables without
+    # rows, or that show nothing, go; the nested table is part of its outer table's HTML.
+    assert [len(_tables.html_rows(item)) for item in tables] == [1, 1, 1]
+    assert stats["tables"] == 2
     assert len(list(parsed.iter("thead"))) == 1
     assert "nested" in result
     assert "Before" in result
@@ -939,14 +939,28 @@ def test_signal_identifiers_are_readable_in_prose_and_table_cells(convert: Conve
     assert r"\_ctl_s_ready" not in result
 
 
-def test_an_all_empty_table_keeps_its_first_row(convert: Converter, pandoc: str) -> None:
-    result, _stats = convert(
+def test_an_empty_table_is_omitted_and_reported(convert: Converter) -> None:
+    nested = table(row(cell(""), cell("")))
+    result, report, warnings = convert.reported(
         [
-            paragraph("Tables.", "Heading1"),
-            table(row(cell(""), cell("")), row(cell(""), cell("")), row(cell(""), cell(""))),
+            paragraph("Tables", "Heading1"),
+            paragraph("Before"),
+            table(row(cell(bookmark("_Empty", "")), cell("")), row(cell(""), cell("\u00a0"))),
+            paragraph("After"),
+            table(row(cell(nested), cell("Tail")), row(cell("a"), cell("b"))),
+            hyperlink("Back to the table", anchor="_Empty"),
         ]
     )
-    assert len(list(_reference.pandoc_html(result, pandoc).iter("tr"))) == 1
+    # Its bookmark stays where it was, in its section. A nested empty table leaves its cell
+    # empty.
+    assert result == (
+        "# Tables\n\nBefore\n\nAfter\n\n| | Tail |\n| --- | --- |\n| a | b |\n\n"
+        "[Back to the table](#tables)\n"
+    )
+    assert "    not applied (2): Word table is empty; omitted" in report.summary()
+    assert "tables: paragraph 3: Word table is empty; omitted" in warnings
+    assert "tables: paragraph 8: Word table is empty; omitted" in warnings
+    assert report.status("checks") == "applied"
 
 
 def test_rows_and_tables_without_cells_are_omitted(convert: Converter) -> None:
@@ -3040,11 +3054,12 @@ def test_complex_toc_field_results_and_blank_rows_survive(convert: Converter, pa
             start,
             paragraph("Cached field entry"),
             end,
-            table(row(cell(""), cell(""))),
+            table(row(cell("Name"), cell("Value")), row(cell(""), cell(""))),
         ]
     )
     assert "Cached field entry" in result
-    assert len(list(_reference.pandoc_html(result, pandoc).iter("tr"))) == 1
+    # A template's blank row to fill in stays.
+    assert len(list(_reference.pandoc_html(result, pandoc).iter("tr"))) == 2
 
 
 @pytest.mark.parametrize(

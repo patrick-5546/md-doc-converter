@@ -43,6 +43,7 @@ from md_doc_converter.converters.docx.ooxml import (
 IMAGE_PREFIX = "docx-to-md-image-"
 MISSING_BOOKMARK = "link to a missing Word bookmark; kept as plain text"
 _EMPTY_HEADING = "Word heading has no text; omitted"
+_EMPTY_TABLE = "Word table is empty; omitted"
 _PICTURE_HEADING = "Word heading has only a picture; kept as a paragraph"
 _LISTED_HEADING = "Word numbers this outline-level heading as a list item; kept as a list item"
 SKIPPED_LEVEL = "Word heading skips a level; kept at its level"
@@ -1094,9 +1095,28 @@ def _prepare_links(
     return kept
 
 
+def _omit_empty_tables(root: ET.Element, report: TransformReport) -> None:
+    """Omit the tables that show nothing, and name each by the paragraph where it starts, or
+    by the one that holds the text box it is in, as for an empty heading."""
+    numbers = {
+        paragraph: index for index, paragraph in enumerate(_ooxml.scoped_iter(root, WORD + "p"))
+    }
+    for paragraph, index in list(numbers.items()):
+        for box in paragraph.iter(TEXT_BOX_CONTENT):
+            for inner in box.iter(WORD + "p"):
+                numbers.setdefault(inner, index)
+    for table in _tables.omit_empty_tables(root):
+        first = next(table.iter(WORD + "p"), None)
+        where = f"paragraph {numbers[first] + 1}" if first in numbers else "the document"
+        report.skipped("tables", _EMPTY_TABLE, f"{where}: {_EMPTY_TABLE}")
+
+
 def _prepare_tables(root: ET.Element, report: TransformReport) -> None:
     """Give Pandoc tables it reads whole: a row without cells, which shows nothing, breaks
-    the whole table, and a table without rows goes; a narrow first body row would narrow it."""
+    the whole table, and a table without rows goes; a narrow first body row would narrow it.
+    A table that shows nothing goes first, so that nothing else reports on it."""
+    with transform(report, "tables"):
+        _omit_empty_tables(root, report)
     for problem in _tables.canonicalize_horizontal_merges(root, strict=False):
         report.warn(
             f"Legacy horizontal table merge kept as written: {problem}",

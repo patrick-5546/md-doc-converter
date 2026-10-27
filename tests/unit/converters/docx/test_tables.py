@@ -19,6 +19,7 @@ from tests.support.docx import (
     W,
     bookmark,
     cell,
+    paragraph,
     row,
     table,
 )
@@ -481,3 +482,48 @@ def test_a_removed_rows_bookmarks_move_to_the_nearest_kept_row() -> None:
     rows = body.findall(f"./{W}tbl/{W}tr")
     names = [node.get(W + "name") for node in rows[0].iter(W + "bookmarkStart")]
     assert names == ["_Gone"]
+
+
+def _omitted(*nodes: ET.Element) -> tuple[ET.Element, list[ET.Element]]:
+    """Omit the empty tables of a body of *nodes*; return the body and the tables omitted."""
+    body = ET.Element(W + "body")
+    body.extend(nodes)
+    return body, _tables.omit_empty_tables(body)
+
+
+def test_tables_that_show_nothing_go_and_others_stay() -> None:
+    body, omitted = _omitted(
+        table(row(cell(""), cell("\u00a0")), row(cell(" "), cell(""))),
+        table(row(cell("Name"), cell("Value")), row(cell(""), cell(""))),
+        table(row()),
+    )
+    # A template's table to fill in shows its header; a table without cells is left to the
+    # checks of its rows.
+    assert len(omitted) == 1
+    assert [_texts(node) for node in body] == [[["Name", "Value"], ["", ""]], [[]]]
+
+
+def test_an_empty_tables_bookmarks_stay_in_its_place() -> None:
+    body, omitted = _omitted(
+        paragraph("Before"), table(row(cell(bookmark("_Gone", "")), cell(""))), paragraph("After")
+    )
+    assert len(omitted) == 1
+    assert [node.tag for node in body] == [W + "p"] * 3
+    names = [node.get(W + "name") for node in body[1].iter(W + "bookmarkStart")]
+    assert names == ["_Gone"]
+    assert len(list(body[1].iter(W + "bookmarkEnd"))) == 1
+
+
+def test_an_empty_nested_table_goes_and_its_cell_keeps_a_paragraph() -> None:
+    nested = table(row(cell(""), cell("")))
+    body, omitted = _omitted(
+        table(row(cell(nested), cell("Tail")), row(cell("Text", nested), cell("x"))),
+        table(row(cell(nested), cell(""))),
+    )
+    # A nested table goes with its outer table when that shows nothing either.
+    assert len(omitted) == 3
+    cells = body.findall(f"./{W}tbl/{W}tr/{W}tc")
+    assert [len(item.findall(W + "tbl")) for item in cells] == [0, 0, 0, 0]
+    assert [len(item.findall(W + "p")) for item in cells] == [1, 1, 1, 1]
+    assert _texts(body[0]) == [["", "Tail"], ["Text", "x"]]
+    assert len(body) == 1

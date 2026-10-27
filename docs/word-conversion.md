@@ -50,7 +50,8 @@ accepted.
   paragraphs and a one-level list become lines separated by `<br>`; in the
   header, whose line breaks usually narrow a column, they become spaces, unless
   the table has only that row. Rows that show nothing are omitted, except the
-  first after the header, such as a template's row to fill in. Column widths,
+  first after the header, such as a template's row to fill in. A table that
+  shows nothing is omitted too, and the report names it. Column widths,
   colors, borders and cell alignment are not kept.
 - **Code:** text in a monospace font, such as Consolas, becomes code: whole
   paragraphs of it, or a one-cell table of them, a fenced `text` block, and
