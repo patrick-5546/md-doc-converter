@@ -1346,6 +1346,8 @@ def test_word_line_breaks_are_hard_line_breaks(convert: Converter) -> None:
         [
             broken("first line", "second line"),
             broken("Heading top", "Heading bottom", style="Heading1"),
+            # Breaks that start or end a heading, as above a cover page's title, show nothing.
+            broken("", "", "Edges", "", style="Heading1"),
             broken(image("art"), hyperlink("Source", relation="site")),
         ],
         relations=(
@@ -1356,6 +1358,7 @@ def test_word_line_breaks_are_hard_line_breaks(convert: Converter) -> None:
     )
     assert "first line\\\nsecond line\n" in result
     assert "# Heading top Heading bottom\n" in result
+    assert "\n# Edges\n" in result
     assert re.search(
         r"!\[Diagram\]\(\.images/[^)\n]+\)\\\n\[Source\]\(https://example\.test/a\?b=1&amp;c=2\)",
         result,

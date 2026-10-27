@@ -140,19 +140,21 @@ def _one_line(inlines: list[JSONValue]) -> None:
 
 def single_lines(blocks: list[JSONValue], report: TransformReport) -> None:
     """Write each heading and link text on one line, which Markdown needs: a Word line break
-    in one becomes a space."""
+    in one becomes a space. The breaks that start or end a heading, which show nothing, as
+    those of a paragraph, go."""
     for element in _tree.walk(blocks):
         if element["t"] not in {"Header", "Link"}:
             continue
         inlines = _tree.items(_tree.items(element["c"])[2 if element["t"] == "Header" else 1])
-        if element["t"] == "Header" and any(
-            found["t"] == "LineBreak" for found in _tree.walk(inlines)
-        ):
-            report.skipped(
-                "headings",
-                "Word line break in a heading; a Markdown heading is one line",
-                section="markdown",
-            )
+        if element["t"] == "Header":
+            _trim_breaks(inlines, end=False)
+            _trim_breaks(inlines, end=True)
+            if any(found["t"] == "LineBreak" for found in _tree.walk(inlines)):
+                report.skipped(
+                    "headings",
+                    "Word line break in a heading; a Markdown heading is one line",
+                    section="markdown",
+                )
         _one_line(inlines)
 
 
