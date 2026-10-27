@@ -62,7 +62,9 @@ accepted.
   highlight become `<u>`, `<sub>`, `<sup>` and `<mark>`, except underline in
   links, headings and code. Paragraphs in Word's quote styles become block
   quotes. Text that Markdown would read as markup, such as `<speeds>`, a
-  backtick, a leading `#` or a line of `---`, stays text.
+  backtick, a leading `#` or a line of `---`, stays text. Brackets and angle
+  brackets keep a backslash only where Markdown could read them as markup, as
+  in `\<speeds>`: `bits [3:0]`, `a -> b` and `x <= 4` stay as typed.
 - **Links** keep their targets, and a ScreenTip becomes the link's title. A
   link to a Word bookmark, such as a cross-reference that Word links, leads to
   the heading the bookmark marks, or to the section that holds it. A

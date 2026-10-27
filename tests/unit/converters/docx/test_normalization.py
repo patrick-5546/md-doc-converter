@@ -232,6 +232,35 @@ def test_brackets_and_cell_numbers_lose_their_escapes(pandoc: str) -> None:
     assert _normalization.drop_unneeded_escapes(text, pandoc) == (expected, 10)
 
 
+def test_angle_brackets_lose_the_escapes_that_nothing_needs(pandoc: str) -> None:
+    text = (
+        r"A \<name\> field, a \</b\> tag, x \<= 4, a -\> b, \<-\> and \<\>." + "\n\n"
+        "| Op | Note |\n| --- | --- |\n"
+        r"| a \<\< 2 | \> b |" + "\n"
+    )
+    expected = (
+        r"A \<name> field, a \</b> tag, x <= 4, a -> b, <-> and <>." + "\n\n"
+        "| Op | Note |\n| --- | --- |\n"
+        "| a << 2 | > b |\n"
+    )
+    assert _normalization.drop_unneeded_escapes(text, pandoc) == (expected, 11)
+
+
+def test_angle_brackets_that_could_start_markup_stay_escaped(pandoc: str) -> None:
+    # A tag, a comment, a processing instruction, a block quote, and an email autolink, which
+    # a < and a > make only together.
+    text = (
+        r"Kept: \<open, \<!-- and \<?x." + "\n\n"
+        r"\> not a quote" + "\n\n"
+        r"- \> an item" + "\n\n"
+        r"Mail \<1a@b.co\> about \[3:0\]." + "\n"
+    )
+    assert _normalization.drop_unneeded_escapes(text, pandoc) == (
+        text.replace(r"\[3:0\]", "[3:0]"),
+        2,
+    )
+
+
 def test_brackets_markdownlint_could_read_as_links_stay_escaped(pandoc: str) -> None:
     text = (
         r"See \[a\](b), (x)\[y\], !\[i\] and \[c\]\[d\]." + "\n\n"

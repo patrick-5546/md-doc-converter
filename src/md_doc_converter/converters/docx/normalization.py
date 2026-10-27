@@ -163,11 +163,14 @@ class _Unaligned(Exception):
 def _escape_groups(line: str) -> list[EscapeGroup]:
     """Offsets of the escapes in *line* that could go, in groups that go or stay together.
 
-    Pandoc's writer escapes every [ and ], and a number that starts a table cell. An escaped
-    bracket pair is one group, left out after ")" (a reversed link, MD011), "!" or "]", and
-    before "(" or "[" (a link or a reference, MD052), where markdownlint could misread it. It
-    is also left out at the start of a line before ":", where it could define a link for the
-    whole page.
+    Pandoc's writer escapes every [, ], < and >, and a number that starts a table cell. An
+    escaped bracket pair is one group, left out after ")" (a reversed link, MD011), "!" or "]",
+    and before "(" or "[" (a link or a reference, MD052), where markdownlint could misread it.
+    It is also left out at the start of a line before ":", where it could define a link for
+    the whole page. An escaped < is left out before a letter, "/", "!" or "?", where it could
+    start an HTML tag, a comment or an autolink, and an escaped > at the start of a line, where
+    it could start a block quote. The other escaped <s are a group with the next escaped >,
+    since together they could enclose an autolink.
     """
     escaped: list[int] = []
     start = 0
@@ -175,13 +178,23 @@ def _escape_groups(line: str) -> list[EscapeGroup]:
         escaped += [
             start + match.start()
             for match in re.finditer(r"\\(.)", line[start:code_start])
-            if match.group(1) in "[]"
+            if match.group(1) in "[]<>"
         ]
         start = code_end
     groups: list[EscapeGroup] = []
     opened: list[int] = []
+    angled: list[int] = []
     for position in escaped:
-        if line[position + 1] == "[":
+        character = line[position + 1]
+        if character == "<":
+            following = line[position + 2 : position + 3]
+            if not following.isalpha() and following not in {"/", "!", "?"}:
+                angled.append(position)
+        elif character == ">":
+            if _LINE_START.fullmatch(line[:position]) is None:
+                groups.append((*angled, position))
+                angled = []
+        elif character == "[":
             opened.append(position)
         elif not opened:
             groups.append((position,))
@@ -192,7 +205,7 @@ def _escape_groups(line: str) -> list[EscapeGroup]:
             definition = after == ":" and _LINE_START.fullmatch(line[:first]) is not None
             if before not in {")", "!", "]"} and after not in {"(", "["} and not definition:
                 groups.append((first, position))
-    groups += [(position,) for position in opened]
+    groups += [(position,) for position in opened + angled]
     if _tables.split_table_row(line) is not None:
         groups += [(match.start(1),) for match in _CELL_NUMBER.finditer(line)]
     return groups
