@@ -86,6 +86,9 @@ accepted.
   their own line, as GitHub writes them, or with `--math dollars`, `$x$` and
   `$$x$$`, for renderers that read only those, such as Azure DevOps Wiki.
 - **Text boxes:** the text of a text box follows the paragraph that holds it.
+  A drawing of shapes and text boxes, such as a block diagram drawn in Word, has
+  no picture, so only its labels are kept, after its paragraph, and the report
+  lists it to check in Word.
 - **Images** keep their place, without Word's display size. An image's alt
   text is the title of its figure caption, or else Word's alt text; otherwise
   it is empty, and reported, to add in Word. EMF and WMF drawings, which Word

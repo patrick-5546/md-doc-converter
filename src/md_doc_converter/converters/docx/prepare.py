@@ -87,6 +87,17 @@ _RUN_WRAPPERS = frozenset(
     {WORD + "smartTag", WORD + "customXml", WORD + "sdt", WORD + "sdtContent"}
 )
 _TEXT_BOX_CONSEQUENCE = "its text is kept after its paragraph"
+# A drawing of shapes and text boxes: one that groups its shapes, VML's or DrawingML's, or
+# draws them on a canvas. Its text boxes are labels, which only the picture of the whole
+# places.
+_SHAPE_GROUPS = frozenset(
+    {
+        VML + "group",
+        "{http://schemas.microsoft.com/office/word/2010/wordprocessingGroup}wgp",
+        "{http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas}wpc",
+    }
+)
+_DIAGRAM = "Word drawing of shapes and text boxes: no picture of the whole"
 
 
 @dataclass(frozen=True)
@@ -271,6 +282,7 @@ def _text_boxes_after_paragraphs(root: ET.Element, report: TransformReport) -> N
         if paragraph is None or holder is None:
             continue
         content: list[ET.Element] = []
+        boxes = 0
         for box in list(container.iter(TEXT_BOX_CONTENT)):
             owner = parents.get(box)
             nested = owner
@@ -282,17 +294,26 @@ def _text_boxes_after_paragraphs(root: ET.Element, report: TransformReport) -> N
                 continue
             content.extend(list(box))
             owner.remove(box)
+            boxes += 1
         if not content:
             continue
-        kind = "VML text box" if container.tag == WORD + "pict" else "DrawingML text box"
-        reason = f"{kind}: no embedded image; {_TEXT_BOX_CONSEQUENCE}"
         where = f"paragraph {numbers[paragraph] + 1}" if paragraph in numbers else "the document"
-        report.skipped(
-            "images",
-            reason,
-            f"{kind} at {where}: no embedded image; {_TEXT_BOX_CONSEQUENCE}",
-            section="markdown",
-        )
+        if boxes > 1 or any(node.tag in _SHAPE_GROUPS for node in container.iter()):
+            # Its labels make sense only in the picture, which the author can save in Word.
+            report.skipped(
+                "images",
+                f"{_DIAGRAM}; {_TEXT_BOX_CONSEQUENCE}",
+                f"{_DIAGRAM} at {where}, with {boxes} text box(es); {_TEXT_BOX_CONSEQUENCE}",
+            )
+        else:
+            kind = "VML text box" if container.tag == WORD + "pict" else "DrawingML text box"
+            reason = f"{kind}: no embedded image; {_TEXT_BOX_CONSEQUENCE}"
+            report.skipped(
+                "images",
+                reason,
+                f"{kind} at {where}: no embedded image; {_TEXT_BOX_CONSEQUENCE}",
+                section="markdown",
+            )
         position = list(holder).index(paragraph) + 1 + moved.get(paragraph, 0)
         holder[position:position] = content
         moved[paragraph] = moved.get(paragraph, 0) + len(content)

@@ -2527,6 +2527,60 @@ def test_text_boxes_are_reported_without_stopping_conversion(convert: Converter)
     assert "DrawingML text box at paragraph 2: no embedded image" in warnings
 
 
+def _labels(*texts: str) -> list[ET.Element]:
+    """VML text boxes holding *texts*, as a Word drawing's labels."""
+    boxes = []
+    for text in texts:
+        shape = ET.Element(_ooxml.VML + "rect")
+        ET.SubElement(ET.SubElement(shape, _ooxml.VML + "textbox"), _ooxml.TEXT_BOX_CONTENT).append(
+            paragraph(text)
+        )
+        boxes.append(shape)
+    return boxes
+
+
+def test_a_drawing_of_shapes_and_text_boxes_is_reported_to_check_in_word(
+    convert: Converter,
+) -> None:
+    # A VML group of labels and a line, and a DrawingML group of labels: only the picture of
+    # the whole places the labels, which are kept after their paragraph.
+    group = ET.Element(_ooxml.VML + "group")
+    group.extend([*_labels("Fetch unit", "Decode unit"), ET.Element(_ooxml.VML + "line")])
+    legacy = paragraph("Pipeline")
+    ET.SubElement(ET.SubElement(legacy, W + "r"), W + "pict").append(group)
+    modern = text_box("Issue queue")
+    group_ns = "http://schemas.microsoft.com/office/word/2010/wordprocessingGroup"
+    data = next(modern.iter(_ooxml.DRAWING + "graphicData"))
+    shape = data[0]
+    data.remove(shape)
+    data.set("uri", group_ns)
+    second = copy.deepcopy(shape)
+    next(second.iter(W + "t")).text = "Writeback queue"
+    ET.SubElement(data, f"{{{group_ns}}}wgp").extend([shape, second])
+    result, report, warnings = convert.reported(
+        [paragraph("Before"), legacy, modern, text_box("A lone note"), paragraph("After")]
+    )
+    assert result == (
+        "Before\n\nPipeline\n\nFetch unit\n\nDecode unit\n\nIssue queue\n\nWriteback queue\n\n"
+        "A lone note\n\nAfter\n"
+    )
+    diagram = "Word drawing of shapes and text boxes: no picture of the whole"
+    assert dict(report.records["images"].skipped) == {
+        f"{diagram}; its text is kept after its paragraph": 2,
+        "DrawingML text box: no embedded image; its text is kept after its paragraph": 1,
+    }
+    assert f"images: {diagram} at paragraph 2, with 2 text box(es)" in warnings
+    assert f"images: {diagram} at paragraph 3, with 2 text box(es)" in warnings
+    issues = report.issues()
+    split = issues.index("docx-to-md: expected in Markdown:")
+    assert issues.index("docx-to-md: to check in Word:") < split
+    assert f"  2  {diagram}; its text is kept after its paragraph" in issues[:split]
+    assert (
+        "  1  DrawingML text box: no embedded image; its text is kept after its paragraph"
+        in issues[split:]
+    )
+
+
 def test_unconverted_vector_image_is_published_as_is(
     convert: Converter, monkeypatch: pytest.MonkeyPatch
 ) -> None:
