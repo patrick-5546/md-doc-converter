@@ -365,7 +365,7 @@ def test_fields_pandoc_cannot_close_are_reduced_to_their_text() -> None:
     body = ET.Element(W + "body")
     body.extend(starmap(_line, lines))
 
-    counts = _ooxml.repair_fields(body)
+    counts, kept = _ooxml.repair_fields(body)
 
     assert counts == Counter(
         {
@@ -375,6 +375,7 @@ def test_fields_pandoc_cannot_close_are_reduced_to_their_text() -> None:
             "field(s) in an instruction removed": 1,
         }
     )
+    assert kept == []
     assert [_parts(line) for line in body] == [
         ["A "],
         ["{", "@ IF ", '@ = 1 "y" ', "|", "y", "}"],
@@ -399,13 +400,13 @@ def test_well_formed_and_deleted_fields_are_unchanged() -> None:
     ET.SubElement(alternative, _ooxml.MC + "Fallback").extend(_line("Fallback"))
     before = ET.tostring(content)
 
-    assert _ooxml.repair_fields(content) == Counter()
+    assert _ooxml.repair_fields(content) == (Counter(), [])
     assert ET.tostring(content) == before
 
 
 def test_word_shows_nothing_of_a_field_whose_code_names_no_field() -> None:
     # An empty code, spaces, only a switch, or only a field; a QUOTE field in the result goes
-    # with it. A field whose result spans paragraphs is unwrapped as before.
+    # with it. A field whose result spans paragraphs is unwrapped as before, and listed.
     lines = [
         ("A ", "{", "|", "x", "}", " A"),
         ("B ", "{", "@   ", "|", "x", "}", " B"),
@@ -418,7 +419,7 @@ def test_word_shows_nothing_of_a_field_whose_code_names_no_field() -> None:
     body = ET.Element(W + "body")
     body.extend(starmap(_line, lines))
 
-    counts = _ooxml.repair_fields(body)
+    counts, kept = _ooxml.repair_fields(body)
 
     assert counts == Counter(
         {
@@ -427,6 +428,7 @@ def test_word_shows_nothing_of_a_field_whose_code_names_no_field() -> None:
             "field(s) unwrapped": 1,
         }
     )
+    assert kept == [body[5]]
     assert [_parts(line) for line in body] == [
         ["A ", " A"],
         ["B ", " B"],
@@ -454,8 +456,9 @@ def test_a_hidden_field_result_goes_but_its_bookmarks_stay() -> None:
     body = ET.Element(W + "body")
     body.append(line)
 
-    assert _ooxml.repair_fields(body) == Counter(
-        {"field result(s) that Word does not show removed": 1}
+    assert _ooxml.repair_fields(body) == (
+        Counter({"field result(s) that Word does not show removed": 1}),
+        [],
     )
     assert [child.tag for child in line] == [
         W + "r",
@@ -464,6 +467,26 @@ def test_a_hidden_field_result_goes_but_its_bookmarks_stay() -> None:
         W + "r",
     ]
     assert _parts(line) == ["A ", " B"]
+
+
+def test_hidden_results_that_stay_are_listed_when_they_show_something() -> None:
+    # Taking out a result across paragraphs would join them, and one that a hyperlink splits
+    # stays too; an empty result across paragraphs is not listed.
+    empty = [_line("A ", "{", "|"), _line("}", " A")]
+    linked = _line("B ", "{")
+    link = ET.SubElement(linked, W + "hyperlink", {W + "anchor": "_Elsewhere"})
+    link.extend(list(_line("|", "x")))
+    linked.extend(list(_line("}", " B")))
+    body = ET.Element(W + "body")
+    body.extend([*empty, linked])
+
+    counts, kept = _ooxml.repair_fields(body)
+
+    assert counts == Counter({"field(s) unwrapped": 2})
+    assert kept == [linked]
+    assert [_parts(line) for line in empty] == [["A "], [" A"]]
+    assert [node.text for node in linked.iter(W + "t")] == ["B ", "x", " B"]
+    assert not list(body.iter(W + "fldChar"))
 
 
 def _numbering(*definitions: str) -> ET.Element:

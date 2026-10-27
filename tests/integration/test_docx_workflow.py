@@ -2195,6 +2195,26 @@ def test_a_picture_word_hides_in_a_field_is_left_out(convert: Converter) -> None
     )
 
 
+def test_a_hidden_field_result_across_paragraphs_stays_and_is_reported(
+    convert: Converter,
+) -> None:
+    # Word shows nothing of a field without a field name, but taking out a result that spans
+    # paragraphs would join them, so it stays, and the report says where it starts.
+    def mark(kind: str) -> ET.Element:
+        run = ET.Element(W + "r")
+        ET.SubElement(run, W + "fldChar", {W + "fldCharType": kind})
+        return run
+
+    first = paragraph("Before ")
+    first.extend([mark("begin"), mark("separate"), _ooxml.word_run("old draft")])
+    last = paragraph_of(_ooxml.word_run("more of it"), mark("end"), _ooxml.word_run(" after"))
+    result, report, warnings = convert.reported([paragraph("Notes", "Heading1"), first, last])
+    reason = "Word field without a field name holds what Word does not show; kept"
+    assert result == "# Notes\n\nBefore old draft\n\nmore of it after\n"
+    assert f"docx-to-md: warning: fields: paragraph 2: {reason}" in warnings
+    assert f"    not applied (1): {reason}" in report.summary()
+
+
 def test_caption_replaces_word_alt_text_and_is_reported(convert: Converter) -> None:
     boxed = paragraph("Note")
     boxed.extend(list(text_box("Box label", legacy=True)))

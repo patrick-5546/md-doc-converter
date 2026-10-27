@@ -44,6 +44,7 @@ IMAGE_PREFIX = "docx-to-md-image-"
 MISSING_BOOKMARK = "link to a missing Word bookmark; kept as plain text"
 _EMPTY_HEADING = "Word heading has no text; omitted"
 _EMPTY_TABLE = "Word table is empty; omitted"
+_HIDDEN_RESULT = "Word field without a field name holds what Word does not show; kept"
 _PICTURE_HEADING = "Word heading has only a picture; kept as a paragraph"
 _LISTED_HEADING = "Word numbers this outline-level heading as a list item; kept as a list item"
 SKIPPED_LEVEL = "Word heading skips a level; kept at its level"
@@ -1095,9 +1096,9 @@ def _prepare_links(
     return kept
 
 
-def _omit_empty_tables(root: ET.Element, report: TransformReport) -> None:
-    """Omit the tables that show nothing, and name each by the paragraph where it starts, or
-    by the one that holds the text box it is in, as for an empty heading."""
+def _paragraph_numbers(root: ET.Element) -> dict[ET.Element, int]:
+    """Each paragraph's index in document order outside text boxes, which warnings name it by;
+    a paragraph in a text box has the index of the paragraph that holds the text box."""
     numbers = {
         paragraph: index for index, paragraph in enumerate(_ooxml.scoped_iter(root, WORD + "p"))
     }
@@ -1105,6 +1106,13 @@ def _omit_empty_tables(root: ET.Element, report: TransformReport) -> None:
         for box in paragraph.iter(TEXT_BOX_CONTENT):
             for inner in box.iter(WORD + "p"):
                 numbers.setdefault(inner, index)
+    return numbers
+
+
+def _omit_empty_tables(root: ET.Element, report: TransformReport) -> None:
+    """Omit the tables that show nothing, and name each by the paragraph where it starts, or
+    by the one that holds the text box it is in, as for an empty heading."""
+    numbers = _paragraph_numbers(root)
     for table in _tables.omit_empty_tables(root):
         first = next(table.iter(WORD + "p"), None)
         where = f"paragraph {numbers[first] + 1}" if first in numbers else "the document"
@@ -1205,8 +1213,14 @@ def prepare_document(
         )
     with transform(report, "fields"):
         report.applied("fields", "simple field(s) kept", _ooxml.expand_simple_fields(root))
-        for detail, count in _ooxml.repair_fields(root).items():
+        repairs, kept = _ooxml.repair_fields(root)
+        for detail, count in repairs.items():
             report.applied("fields", detail, count)
+        if kept:
+            numbers = _paragraph_numbers(root)
+            for number in sorted(numbers.get(paragraph, -1) + 1 for paragraph in kept):
+                where = f"paragraph {number}" if number else "the document"
+                report.skipped("fields", _HIDDEN_RESULT, f"{where}: {_HIDDEN_RESULT}")
         report.applied("fields", "check box(es) shown", _ooxml.form_check_boxes(root))
         report.applied("fields", "page number(s) kept as text", _ooxml.unlink_page_references(root))
     with transform(report, "hidden-text"):

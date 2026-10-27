@@ -634,14 +634,18 @@ def code_text(paragraph: ET.Element) -> str:
     return "".join(" " if piece in UNICODE_SPACES else piece for piece in "".join(pieces))
 
 
-def shows_content(element: ET.Element) -> bool:
-    """Whether *element* shows text, a symbol, or a picture; text boxes are pictures here."""
-    return any(
-        (node.tag in _TEXT_TAGS and (node.text or "").strip())
+def _shows(node: ET.Element) -> bool:
+    """Whether *node* itself shows something: text, a symbol, or a picture or text box."""
+    return (
+        (node.tag in _TEXT_TAGS and bool((node.text or "").strip()))
         or node.tag == WORD + "sym"
         or node.tag in IMAGE_CONTAINERS
-        for node in scoped_iter(element)
     )
+
+
+def shows_content(element: ET.Element) -> bool:
+    """Whether *element* shows text, a symbol, or a picture; text boxes are pictures here."""
+    return any(_shows(node) for node in scoped_iter(element))
 
 
 def _join_paragraphs(root: ET.Element, joined: list[ET.Element]) -> None:
@@ -1172,8 +1176,9 @@ def _drop_field_result(
     return True
 
 
-def repair_fields(root: ET.Element) -> Counter[str]:
-    """Reduce the Word fields that Pandoc cannot close to their cached text; count by kind.
+def repair_fields(root: ET.Element) -> tuple[Counter[str], list[ET.Element]]:
+    """Reduce the Word fields that Pandoc cannot close to their cached text; count by kind, and
+    list the paragraphs where results that Word does not show, but that stay, start.
 
     Pandoc ignores a field separator or end that does not match its open field. The field
     then stays open, and each later numbered paragraph's text moves into the next
@@ -1182,9 +1187,12 @@ def repair_fields(root: ET.Element) -> Counter[str]:
     fields keep their link. A field inside another field's instruction, which Word does not
     show, is removed, as are separators and ends outside any field. A field whose own code
     names no field, as when it is empty or only switches, shows nothing in Word, so its
-    cached result goes too when it is in one paragraph.
+    cached result goes too when it is in one paragraph. One that spans paragraphs, whose
+    removal would join them, or that a hyperlink splits, stays, and is listed when it shows
+    something.
     """
     parents = {child: parent for parent in root.iter() for child in parent}
+    shown = _shown(root)
 
     def paragraph(node: ET.Element) -> ET.Element | None:
         current = parents.get(node)
@@ -1196,6 +1204,7 @@ def repair_fields(root: ET.Element) -> Counter[str]:
     marks: list[ET.Element] = []
     nested: list[tuple[_OpenField, ET.Element]] = []
     hidden: list[tuple[_OpenField, ET.Element]] = []
+    kept: list[ET.Element] = []
     stack: list[_OpenField] = []
 
     def unwrap(current: _OpenField, end: ET.Element | None) -> None:
@@ -1203,7 +1212,18 @@ def repair_fields(root: ET.Element) -> Counter[str]:
         marks.extend(node for node in (current.separate, end) if node is not None)
         counts["field(s) unwrapped"] += 1
 
-    for node in _shown(root):
+    def keep(current: _OpenField, end: ET.Element) -> None:
+        """List where the result of a field that Word does not show starts, if it shows
+        something, and unwrap the field."""
+        separate = current.separate
+        if separate is not None:
+            start = paragraph(separate)
+            result = shown[shown.index(separate) + 1 : shown.index(end)]
+            if start is not None and any(_shows(node) for node in result):
+                kept.append(start)
+        unwrap(current, end)
+
+    for node in shown:
         if node.tag == WORD + "instrText":
             if stack and stack[-1].separate is None:
                 stack[-1].instructions.append(node)
@@ -1230,7 +1250,10 @@ def repair_fields(root: ET.Element) -> Counter[str]:
                 paragraph(current.begin) is not paragraph(node)
                 and not re.match(r"\s*HYPERLINK\b", instruction, re.IGNORECASE)
             ):
-                unwrap(current, node)
+                if _keywordless(instruction):
+                    keep(current, node)
+                else:
+                    unwrap(current, node)
         elif kind in {"separate", "end"}:
             # Word and Pandoc ignore these.
             marks.append(node)
@@ -1252,13 +1275,13 @@ def repair_fields(root: ET.Element) -> Counter[str]:
         counts["field(s) in an instruction removed"] += 1
     for current, end in hidden:
         if current.separate is None or not _drop_field_result(current.separate, end, parents):
-            unwrap(current, end)
+            keep(current, end)
             continue
         marks.extend([current.begin, *current.instructions, current.separate, end])
         counts["field result(s) that Word does not show removed"] += 1
     for mark in marks:
         _remove_field_mark(mark, parents)
-    return counts
+    return counts, kept
 
 
 def split_drawing_runs(root: ET.Element) -> None:
