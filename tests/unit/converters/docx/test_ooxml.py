@@ -369,13 +369,14 @@ def test_fields_pandoc_cannot_close_are_reduced_to_their_text() -> None:
 
     assert counts == Counter(
         {
-            "field(s) unwrapped": 3,
+            "field(s) unwrapped": 2,
+            "field result(s) that Word does not show removed": 1,
             "stray field mark(s) removed": 2,
             "field(s) in an instruction removed": 1,
         }
     )
     assert [_parts(line) for line in body] == [
-        ["A ", "x"],
+        ["A "],
         ["{", "@ IF ", '@ = 1 "y" ', "|", "y", "}"],
         ["B"],
         ["Entry"],
@@ -400,6 +401,69 @@ def test_well_formed_and_deleted_fields_are_unchanged() -> None:
 
     assert _ooxml.repair_fields(content) == Counter()
     assert ET.tostring(content) == before
+
+
+def test_word_shows_nothing_of_a_field_whose_code_names_no_field() -> None:
+    # An empty code, spaces, only a switch, or only a field; a QUOTE field in the result goes
+    # with it. A field whose result spans paragraphs is unwrapped as before.
+    lines = [
+        ("A ", "{", "|", "x", "}", " A"),
+        ("B ", "{", "@   ", "|", "x", "}", " B"),
+        ("C ", "{", "@ \\* MERGEFORMAT ", "|", "x", "}", " C"),
+        ("D ", "{", "{", '@ QUOTE "w" ', "|", "w", "}", "|", "x", "}", " D"),
+        ("E ", "{", "|", "{", '@ QUOTE "x" ', "|", "x", "}", "}", " E"),
+        ("F ", "{", "|", "x"),
+        ("y", "}", " F"),
+    ]
+    body = ET.Element(W + "body")
+    body.extend(starmap(_line, lines))
+
+    counts = _ooxml.repair_fields(body)
+
+    assert counts == Counter(
+        {
+            "field result(s) that Word does not show removed": 5,
+            "field(s) in an instruction removed": 1,
+            "field(s) unwrapped": 1,
+        }
+    )
+    assert [_parts(line) for line in body] == [
+        ["A ", " A"],
+        ["B ", " B"],
+        ["C ", " C"],
+        ["D ", " D"],
+        ["E ", " E"],
+        ["F ", "x"],
+        ["y", " F"],
+    ]
+    assert not [run for line in body for run in line if not len(run)]
+
+
+def test_a_hidden_field_result_goes_but_its_bookmarks_stay() -> None:
+    line = _line("A ", "{")
+    # The separator shares a run with the result, which holds a picture and a link.
+    shared = ET.SubElement(line, W + "r")
+    ET.SubElement(shared, W + "fldChar", {W + "fldCharType": "separate"})
+    ET.SubElement(shared, W + "t").text = "x"
+    ET.SubElement(line, W + "bookmarkStart", {W + "id": "1", W + "name": "_Kept"})
+    ET.SubElement(ET.SubElement(line, W + "r"), W + "pict")
+    link = ET.SubElement(line, W + "hyperlink", {W + "anchor": "_Elsewhere"})
+    link.append(_ooxml.word_run("y"))
+    link.append(ET.Element(W + "bookmarkEnd", {W + "id": "1"}))
+    line.extend(list(_line("}", " B")))
+    body = ET.Element(W + "body")
+    body.append(line)
+
+    assert _ooxml.repair_fields(body) == Counter(
+        {"field result(s) that Word does not show removed": 1}
+    )
+    assert [child.tag for child in line] == [
+        W + "r",
+        W + "bookmarkStart",
+        W + "bookmarkEnd",
+        W + "r",
+    ]
+    assert _parts(line) == ["A ", " B"]
 
 
 def _numbering(*definitions: str) -> ET.Element:

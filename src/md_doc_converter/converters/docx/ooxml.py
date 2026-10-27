@@ -1135,6 +1135,43 @@ def _shown(root: ET.Element) -> list[ET.Element]:
     return result
 
 
+def _keywordless(instruction: str) -> bool:
+    """Whether a field's own code names no field, as when it is empty or only switches.
+
+    Word calls such a field empty and shows nothing of it, not even its result.
+    """
+    return not instruction.strip() or instruction.lstrip().startswith("\\")
+
+
+def _drop_field_result(
+    separate: ET.Element, end: ET.Element, parents: dict[ET.Element, ET.Element]
+) -> bool:
+    """Remove what a field shows, between its separator and its end, keeping bookmarks and the
+    other marks that show nothing; return False, removing nothing, unless both are in runs of
+    one container, such as a paragraph."""
+    first, last = parents.get(separate), parents.get(end)
+    container = None if first is None else parents.get(first)
+    if container is None or last is None or parents.get(last) is not container:
+        return False
+    _split_run_children(container, frozenset({WORD + "fldChar"}), group_content=True)
+    children = list(container)
+    for child in children:
+        parents[child] = container
+        for node in child:
+            parents[node] = child
+    start = next((index for index, child in enumerate(children) if parents[separate] is child), -1)
+    stop = next((index for index, child in enumerate(children) if parents[end] is child), -1)
+    if start < 0 or stop < start:
+        return False
+    for child in children[start + 1 : stop]:
+        if child.tag not in _ZERO_WIDTH:
+            position = list(container).index(child)
+            container[position : position + 1] = [
+                node for node in child.iter() if node.tag in _ZERO_WIDTH
+            ]
+    return True
+
+
 def repair_fields(root: ET.Element) -> Counter[str]:
     """Reduce the Word fields that Pandoc cannot close to their cached text; count by kind.
 
@@ -1143,7 +1180,9 @@ def repair_fields(root: ET.Element) -> Counter[str]:
     paragraph. Fields without an instruction, fields that never end, and fields spanning
     paragraphs, such as a table of contents, are unwrapped to their cached text; hyperlink
     fields keep their link. A field inside another field's instruction, which Word does not
-    show, is removed, as are separators and ends outside any field.
+    show, is removed, as are separators and ends outside any field. A field whose own code
+    names no field, as when it is empty or only switches, shows nothing in Word, so its
+    cached result goes too when it is in one paragraph.
     """
     parents = {child: parent for parent in root.iter() for child in parent}
 
@@ -1156,6 +1195,7 @@ def repair_fields(root: ET.Element) -> Counter[str]:
     counts: Counter[str] = Counter()
     marks: list[ET.Element] = []
     nested: list[tuple[_OpenField, ET.Element]] = []
+    hidden: list[tuple[_OpenField, ET.Element]] = []
     stack: list[_OpenField] = []
 
     def unwrap(current: _OpenField, end: ET.Element | None) -> None:
@@ -1180,6 +1220,12 @@ def repair_fields(root: ET.Element) -> Counter[str]:
             instruction = "".join(item.text or "" for item in current.instructions)
             if current.nested:
                 nested.append((current, node))
+            elif (
+                _keywordless(instruction)
+                and current.separate is not None
+                and paragraph(current.separate) is paragraph(node)
+            ):
+                hidden.append((current, node))
             elif not instruction.strip() or (
                 paragraph(current.begin) is not paragraph(node)
                 and not re.match(r"\s*HYPERLINK\b", instruction, re.IGNORECASE)
@@ -1204,6 +1250,12 @@ def repair_fields(root: ET.Element) -> Counter[str]:
             continue
         del container[children.index(first) : children.index(last) + 1]
         counts["field(s) in an instruction removed"] += 1
+    for current, end in hidden:
+        if current.separate is None or not _drop_field_result(current.separate, end, parents):
+            unwrap(current, end)
+            continue
+        marks.extend([current.begin, *current.instructions, current.separate, end])
+        counts["field result(s) that Word does not show removed"] += 1
     for mark in marks:
         _remove_field_mark(mark, parents)
     return counts

@@ -365,6 +365,7 @@ def test_lists_after_fields_pandoc_cannot_close_keep_word_numbering(convert: Con
         contents.insert(position, run)
     closing = paragraph()
     closing.extend(marks("end"))
+    # Word shows nothing of a field without an instruction, not even its cached result.
     revision = paragraph("Revision ")
     revision.extend([*marks("begin", "separate"), _ooxml.word_run("2"), *marks("end")])
     caption = paragraph("Figure ")
@@ -387,12 +388,12 @@ def test_lists_after_fields_pandoc_cannot_close_keep_word_numbering(convert: Con
     )
     assert report.status("lists") == "applied"
     assert re.search(r"Intro\n\n7\.\s+Alpha\n+8\.\s+Beta\n\nOutro", result)
-    for text in ("[Scope](#scope)", "Revision 2", "Figure 1"):
+    for text in ("[Scope](#scope)", "Revision", "Figure 1"):
         assert f"\n{text}\n" in f"\n{result}"
     assert (
-        "  fields: applied (2 field(s) unwrapped, 1 table-of-contents page number(s) dropped)"
-        in report.summary()
-    )
+        "  fields: applied (1 field result(s) that Word does not show removed, 1 field(s) "
+        "unwrapped, 1 table-of-contents page number(s) dropped)"
+    ) in report.summary()
 
 
 def test_lists_that_start_at_a_nested_level_keep_word_numbering(convert: Converter) -> None:
@@ -2166,6 +2167,32 @@ def test_caption_alt_text_is_recovered_without_invention(convert: Converter, pan
         media={"image.png": PNG},
     )
     assert next(_reference.pandoc_html(result, pandoc).iter("img")).get("alt") == "Request flow"
+
+
+def test_a_picture_word_hides_in_a_field_is_left_out(convert: Converter) -> None:
+    # A copy of the figure is the result of a field without a code, which Word does not show,
+    # so the caption describes the one picture that Word shows.
+    figure = image(alt=None)
+    hidden = image("copy", alt=None).find(W + "r")
+    assert hidden is not None
+    for kind in ("begin", "separate"):
+        ET.SubElement(ET.SubElement(figure, W + "r"), W + "fldChar", {W + "fldCharType": kind})
+    figure.append(hidden)
+    ET.SubElement(ET.SubElement(figure, W + "r"), W + "fldChar", {W + "fldCharType": "end"})
+    result, report, _warnings = convert.reported(
+        [figure, paragraph("Figure 4: Request flow", "Caption")],
+        relations=(
+            ("image", "image", "media/image.png", "Internal"),
+            ("copy", "image", "media/copy.png", "Internal"),
+        ),
+        media={"image.png": PNG, "copy.png": PNG},
+    )
+    assert result.count("![") == 1
+    assert "![Request flow](" in result
+    assert "copy" not in result
+    assert "  fields: applied (1 field result(s) that Word does not show removed)" in (
+        report.summary()
+    )
 
 
 def test_caption_replaces_word_alt_text_and_is_reported(convert: Converter) -> None:

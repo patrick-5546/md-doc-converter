@@ -145,6 +145,9 @@ title.
 
 - Comments, tracked-change history, hidden text, headers and footers, and the
   page layout.
+- What a field shows when its code names no field, as when the code is empty
+  or holds only switches: Word does not show it either. A field whose result
+  spans paragraphs keeps it.
 - Images linked from outside the document, and drawings without a picture, such
   as charts, SmartArt and shapes; the report names each.
 
