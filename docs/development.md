@@ -58,6 +58,27 @@ tell how each part works.
   that `executables.py` finds on `PATH`, never by its bare name, which Windows
   would look for in the current folder first. Lua filters get the paths they
   need from `render_environment`, such as `MD_DOC_CONVERTER_NODE`.
+- **Word conversion:** the Markdown shows the document as Word shows it. Where
+  a document has a mistake, such as a heading that skips a level, the
+  conversion keeps it and reports it under "to check in Word", for its author
+  to fix in Word, rather than correcting it; what Markdown cannot show is
+  reported under "expected in Markdown". It adds nothing that the document
+  lacks, such as alt text taken from a nearby heading, and prefers a report to
+  a guess at what the author meant. Where it is unclear what Word shows, check
+  in Word with a made-up document, for example by having Word export it to PDF.
+- **Confidential documents:** the documents converted with md-doc-converter are
+  often confidential, so nothing from a real document goes into the repository
+  or its history: not its text, notation, names, numbers or counts, in code,
+  tests, docs or commit messages. Tests build made-up documents with
+  `tests/support`, and a commit message describes what a document did in
+  general terms. Keep real documents and their conversions outside the
+  checkout, or in a folder listed in `.git/info/exclude`, and stage changes by
+  path.
+- **Commits:** one change per commit, with its tests and docs, and `make lint`,
+  `make test` and `make test-render` passing. The subject says what changes, in
+  the imperative and without a final period, such as "Leave HTML comments out
+  of rendered HTML"; the body says what happened before, what happens now, and
+  why.
 
 ## Documentation
 
