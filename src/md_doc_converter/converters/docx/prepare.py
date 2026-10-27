@@ -46,6 +46,9 @@ _EMPTY_HEADING = "Word heading has no text; omitted"
 _PICTURE_HEADING = "Word heading has only a picture; kept as a paragraph"
 _LISTED_HEADING = "Word numbers this outline-level heading as a list item; kept as a list item"
 SKIPPED_LEVEL = "Word heading skips a level; kept at its level"
+_TITLE_NOT_FIRST = "the Word title is not a paragraph before the first heading; kept as written"
+_NO_LEVEL_LEFT = "a level 6 heading has no Markdown level left below the title; kept as a paragraph"
+_MOVED_DOWN = "heading(s) moved down one level"
 _UNLABELED_ITEMS = "Word list paragraph(s) without a number or bullet kept as paragraphs"
 _LIST_GAPS = "empty paragraph(s) inside a Word list omitted"
 # The names Word gives the bookmarks that its tables of contents and cross-references lead to.
@@ -98,7 +101,6 @@ class PreparedImage:
 @dataclass
 class PreparedDocument:
     path: Path
-    title: str | None
     # By the name of the media file that the picture shows in the prepared copy.
     images: dict[str, PreparedImage] = field(default_factory=dict[str, PreparedImage])
     # The text that starts the paragraph of links to each Word bookmark, in this order, which
@@ -158,16 +160,6 @@ class _Styles:
     @property
     def changed(self) -> bool:
         return self.edited or bool(self._added)
-
-
-def document_title(root: ET.Element) -> str | None:
-    for paragraph in root.iter(WORD + "p"):
-        style = paragraph.find(f"./{WORD}pPr/{WORD}pStyle")
-        if style is not None and style.get(WORD + "val", "").casefold() == "title":
-            title = _ooxml.paragraph_text(paragraph)
-            if title:
-                return title
-    return None
 
 
 def rebase_link(target: str, paths: ConversionPaths) -> str:
@@ -306,14 +298,18 @@ def _text_boxes_after_paragraphs(root: ET.Element, report: TransformReport) -> N
             parents[container].remove(container)
 
 
-def _keep_metadata_in_body(root: ET.Element, styles: _Styles, numbered: Collection[str]) -> None:
+def _keep_metadata_in_body(
+    root: ET.Element, styles: _Styles, numbered: Collection[str], title: ET.Element | None
+) -> None:
     """Keep the leading Title, Subtitle, Author, Date and Abstract paragraphs in the body.
 
     Pandoc reads them as metadata, which it does not write; without the style, they are
-    paragraphs.
+    paragraphs. The *title*, already a heading, is passed over.
     """
     body = root.find(WORD + "body")
     for paragraph in [] if body is None else list(body):
+        if paragraph is title:
+            continue
         if paragraph.tag != WORD + "p" or _ooxml.pandoc_heading(paragraph, styles.definitions):
             return
         try:
@@ -382,24 +378,48 @@ def _style_heading_level(paragraph: ET.Element, styles: _Styles) -> int | None:
     return None
 
 
+def _is_title(paragraph: ET.Element, styles: _Styles) -> bool:
+    """Whether *paragraph* is in Word's Title style, or in a style based on it."""
+    style = _style_of(paragraph)
+    return style is not None and (style.casefold() == "title" or "title" in styles.chain(style))
+
+
 def _prepare_headings(
     root: ET.Element,
     styles: _Styles,
     list_item: Callable[[ET.Element], bool],
     in_table: Callable[[ET.Element], bool],
     report: TransformReport,
-) -> list[ET.Element]:
+) -> tuple[list[ET.Element], ET.Element | None]:
     """Give each heading a "heading N" style at its final level, and make the rest paragraphs.
 
     A heading by Word's outline level or style keeps its level, up to 6; one that shows no
     text, or only a picture, is a paragraph. A numbered heading by outline level, not by a
     heading style, stays the list item that Word numbers. A heading more than one level below
     the heading before it keeps its level too, and is reported, as markdownlint's MD001 would
-    report it; headings in tables are left out of that. Return the headings, in document
-    order.
+    report it; headings in tables are left out of that.
+
+    A paragraph in Word's Title style before the first heading is the only level 1 heading,
+    and the headings outside tables move down one level; a level 6 one, which has no level
+    left, is a paragraph. Return the headings, and the title.
     """
     levels: dict[ET.Element, int] = {}
+    title: ET.Element | None = None
+    titled = False
     for index, paragraph in enumerate(_ooxml.scoped_iter(root, WORD + "p")):
+        if not titled and _is_title(paragraph, styles) and _shows_text(paragraph):
+            titled = True
+            if not in_table(paragraph) and all(in_table(heading) for heading in levels):
+                title = paragraph
+                levels[paragraph] = 1
+                continue
+            text = " ".join(_ooxml.paragraph_text(paragraph).split())
+            report.skipped(
+                "title",
+                _TITLE_NOT_FIRST,
+                f"Word title {text!r}: {_TITLE_NOT_FIRST}",
+                section="markdown",
+            )
         try:
             level = _ooxml.heading_level(paragraph, styles.definitions)
             if level is None:
@@ -433,10 +453,10 @@ def _prepare_headings(
             _make_plain_paragraph(paragraph)
             continue
         levels[paragraph] = level
+    body = [paragraph for paragraph in levels if paragraph is not title and not in_table(paragraph)]
     previous: int | None = None
-    for paragraph, level in levels.items():
-        if in_table(paragraph):
-            continue
+    for paragraph in body:
+        level = levels[paragraph]
         if previous is not None and level > previous + 1:
             text = " ".join(_ooxml.paragraph_text(paragraph).split())
             report.warn(
@@ -445,6 +465,26 @@ def _prepare_headings(
                 kind=SKIPPED_LEVEL,
             )
         previous = level
+    if title is not None:
+        moved = 0
+        for paragraph in body:
+            if levels[paragraph] < 6:
+                levels[paragraph] += 1
+                moved += 1
+                continue
+            del levels[paragraph]
+            _make_plain_paragraph(paragraph)
+            text = " ".join(_ooxml.paragraph_text(paragraph).split())
+            report.skipped(
+                "title",
+                _NO_LEVEL_LEFT,
+                f"Word heading {text!r}: {_NO_LEVEL_LEFT}",
+                section="markdown",
+            )
+        if moved:
+            report.applied("title", _MOVED_DOWN, moved)
+        else:
+            report.applied("title")
     for paragraph, level in levels.items():
         _set_style(paragraph, styles.style("paragraph", f"heading {level}"))
         properties = paragraph.find(WORD + "pPr")
@@ -453,7 +493,7 @@ def _prepare_headings(
                 for node in properties.findall(WORD + name):
                     properties.remove(node)
         report.applied("headings")
-    return list(levels)
+    return list(levels), title
 
 
 def _split_code_edges(run: ET.Element, parent: ET.Element) -> None:
@@ -1166,7 +1206,6 @@ def prepare_document(
     _ooxml.split_drawing_runs(root)
     _prepare_tables(root, report)
     _text_boxes_after_paragraphs(root, report)
-    title = document_title(root)
     numbered, unlabeled, numbering = _list_numbering(package, styles, report)
     if numbering is not None:
         modified[package.numbering_part] = numbering
@@ -1197,8 +1236,9 @@ def prepare_document(
         return list_of(paragraph) is not None
 
     headings: list[ET.Element] = []
+    title: ET.Element | None = None
     with transform(report, "headings"):
-        headings = _prepare_headings(root, styles, list_item, in_table, report)
+        headings, title = _prepare_headings(root, styles, list_item, in_table, report)
     with transform(report, "code"):
         _prepare_code(root, styles, package, set(headings), list_item, report)
     images: dict[str, PreparedImage] = {}
@@ -1208,7 +1248,7 @@ def prepare_document(
         report.applied("lists", _LIST_GAPS, _join_split_lists(root, list_of))
     _report_drifted_bookmarks(root, report)
     bookmarks = _prepare_links(root, relationships, paths, report)
-    _keep_metadata_in_body(root, styles, numbered)
+    _keep_metadata_in_body(root, styles, numbered, title)
     _plain_layout(root, styles)
     probe = "DOCXTOMDBOOKMARKS" + uuid.uuid4().hex.upper()
     _probe_bookmarks(root, bookmarks, probe)
@@ -1228,4 +1268,4 @@ def prepare_document(
         )
     prepared = work / "prepared.docx"
     _write_package(package, prepared, modified)
-    return PreparedDocument(prepared, title, images, probe, bookmarks)
+    return PreparedDocument(prepared, images, probe, bookmarks)

@@ -7,7 +7,6 @@ import html
 import os
 import re
 import urllib.parse
-import uuid
 from collections import defaultdict
 from collections.abc import Callable
 from functools import partial
@@ -27,7 +26,6 @@ from md_doc_converter.converters.docx.models import (
     SourceHeading,
 )
 from md_doc_converter.converters.docx.tree import MathSyntax
-from md_doc_converter.markdown import syntax as _syntax
 from md_doc_converter.markdown.headings import Heading, HeadingError, collect_headings
 from md_doc_converter.pandoc import JSONValue, PandocError, ParsedMarkdown, run_all
 
@@ -36,6 +34,13 @@ def qualify_duplicate_headings(markdown: str) -> tuple[str, list[HeadingChange]]
     """Qualify titles only; source levels, punctuation, and anchor IDs are not edited."""
     lines = markdown.splitlines()
     headings = _normalization.markdown_heading_lines(markdown)
+    order = list(headings)
+    # A heading that holds every other heading, such as the title, tells none of them apart.
+    top = (
+        order[0]
+        if order and all(headings[index][0] > headings[order[0]][0] for index in order[1:])
+        else None
+    )
     ancestry: dict[int, tuple[str, ...]] = {}
     stack: list[int] = []
     groups: dict[str, list[int]] = defaultdict(list)
@@ -47,7 +52,7 @@ def qualify_duplicate_headings(markdown: str) -> tuple[str, list[HeadingChange]]
         ancestry[index] = tuple(
             headings[parent][1]
             for parent in stack
-            if _normalization.heading_reference_key(headings[parent][1])
+            if parent != top and _normalization.heading_reference_key(headings[parent][1])
         )
         stack.append(index)
         if _normalization.heading_reference_key(title):
@@ -388,102 +393,13 @@ def _map_bookmarks(
         report.applied("bookmarks", count=mapped)
 
 
-_TITLE_NOT_FOUND = "the Word title is not a paragraph before the first heading; kept as written"
 # A linked bookmark inside a section, which Markdown can link only as a whole.
 _SECTION_LINK = "Word bookmark now links to its containing section, not its exact position"
-_TITLE_TOO_DEEP = (
-    "a heading is at level 6, the deepest Markdown level, so headings cannot move down; "
-    "the title stays a paragraph"
-)
-_TITLE_CHANGES_IDS = "the title as a heading would change other heading IDs; it stays a paragraph"
-
-
-def _title_line(lines: list[str], end: int, title: str, pandoc: str) -> int | None:
-    """The first one-line paragraph before line *end* that shows the Word title."""
-    prose = _syntax.markdown_prose_lines("\n".join(lines))
-    candidates = [
-        index
-        for index in range(min(end, len(lines)))
-        if index in prose
-        and lines[index].strip()
-        and (index == 0 or not lines[index - 1].strip())
-        and (index + 1 == len(lines) or not lines[index + 1].strip())
-    ]
-    if not candidates:
-        return None
-    # Pandoc's plain text drops the formatting and escapes that Word does not have.
-    separator = "MDCONVTITLE" + uuid.uuid4().hex.upper()
-    shown = _reference.run_command(
-        [pandoc, f"--from={_reference.DOCX_READER}", "--to=plain", "--wrap=none"],
-        "Word title search",
-        input_text=f"\n\n{separator}\n\n".join(lines[index] for index in candidates),
-    )
-    texts = shown.split(separator)
-    if len(texts) != len(candidates):
-        return None
-    wanted = _reference.plain_text(title).casefold()
-    return next(
-        (
-            index
-            for index, text in zip(candidates, texts, strict=True)
-            if _reference.plain_text(text).casefold() == wanted
-        ),
-        None,
-    )
-
-
-def _title_heading(markdown: str, title: str, pandoc: str, report: TransformReport) -> str:
-    """Make the Word title the document's only H1 and move every heading down one level."""
-    lines = markdown.split("\n")
-    headings = _normalization.markdown_heading_lines(markdown)
-    line = _title_line(lines, min(headings, default=len(lines)), title, pandoc)
-    if line is None:
-        report.skipped(
-            "title",
-            _TITLE_NOT_FOUND,
-            f"Word title {title!r}: {_TITLE_NOT_FOUND}",
-            section="markdown",
-        )
-        return markdown
-    if any(level == 6 for level, _text in headings.values()):
-        report.skipped(
-            "title", _TITLE_TOO_DEEP, f"Word title {title!r}: {_TITLE_TOO_DEEP}", section="markdown"
-        )
-        return markdown
-    shown = lines[line].strip()
-    trailing_hashes = re.search(r"(?<!\\)(#+)$", shown)
-    if trailing_hashes is not None:
-        shown = shown[: trailing_hashes.start()] + trailing_hashes[0].replace("#", r"\#")
-    lines[line] = "# " + shown
-    for index, (level, text) in headings.items():
-        lines[index] = "#" * (level + 1) + (" " + text if text else "")
-    result = "\n".join(lines)
-
-    def outline(text: str) -> list[tuple[int, str]]:
-        parsed = _reference.markdown_ast(text, pandoc, "Title heading validation")
-        return [(item.level, item.identifier) for item in collect_headings(parsed.blocks)]
-
-    before, after = run_all([partial(outline, markdown), partial(outline, result)])
-    moved = [(level + 1, identifier) for level, identifier in before]
-    if not after or after[0][0] != 1 or after[1:] != moved:
-        report.skipped(
-            "title",
-            _TITLE_CHANGES_IDS,
-            f"Word title {title!r}: {_TITLE_CHANGES_IDS}",
-            section="markdown",
-        )
-        return markdown
-    if headings:
-        report.applied("title", "heading(s) moved down one level", len(headings))
-    else:
-        report.applied("title")
-    return result
 
 
 def resolve_links(
     markdown: str,
     output: Path,
-    title: str | None,
     pandoc: str,
     *,
     source: DocumentNavigation | None = None,
@@ -491,7 +407,7 @@ def resolve_links(
     math: MathSyntax = "github",
 ) -> str:
     """Lead the links of *markdown*, written to *output*, to the final heading IDs, and Word
-    bookmarks to their sections; with a report, the Word *title* becomes the only H1.
+    bookmarks to their sections.
 
     Without a report, every problem is an error.
     """
@@ -525,7 +441,4 @@ def resolve_links(
             problem + "; kept as written",
         )
     report.applied("links", "bare web or e-mail address(es) linked", sum(linked))
-    if title:
-        with _diagnostics.transform(report, "title"):
-            result = _title_heading(result, title, pandoc, report)
     return result

@@ -2031,33 +2031,76 @@ def test_word_title_becomes_the_only_h1(convert: Converter) -> None:
     assert report.status("checks") == "applied"
 
 
-@pytest.mark.parametrize(
-    ("body", "reason"),
-    [
-        pytest.param(
-            [paragraph(f"Level {level}", f"Heading{level}") for level in range(1, 7)],
-            (
-                "a heading is at level 6, the deepest Markdown level, so headings cannot "
-                "move down; the title stays a paragraph"
-            ),
-            id="level-6",
-        ),
-        pytest.param(
-            [paragraph("Guide Title", "Heading1"), paragraph("Text")],
-            "the title as a heading would change other heading IDs; it stays a paragraph",
-            id="same-text",
-        ),
-    ],
-)
-def test_word_title_stays_a_paragraph_when_headings_cannot_move_down(
-    body: list[ET.Element], reason: str, convert: Converter
-) -> None:
+def test_a_level_6_heading_under_the_word_title_becomes_a_paragraph(convert: Converter) -> None:
     result, report, warnings = convert.reported(
-        [paragraph("Guide Title", "Title"), *body], styles=(word_style("Title"),)
+        [
+            paragraph("Guide Title", "Title"),
+            *(paragraph(f"Level {level}", f"Heading{level}") for level in range(1, 6)),
+            bookmark("_Deep", "Level 6", "Heading6"),
+            paragraph("Text"),
+            hyperlink("Go deep", anchor="_Deep"),
+        ],
+        styles=(word_style("Title"),),
     )
-    assert result.startswith("Guide Title\n\n# ")
-    assert f"    not applied (1): {reason}" in report.summary()
-    assert "Word title 'Guide Title'" in warnings
+    assert result.startswith(
+        "# Guide Title\n\n## Level 1\n\n### Level 2\n\n#### Level 3\n\n##### Level 4\n\n"
+        "###### Level 5\n\nLevel 6\n\nText\n"
+    )
+    # The paragraph's bookmark leads to its section.
+    assert "[Go deep](#level-5)" in result
+    assert (
+        "  title: partial (5 heading(s) moved down one level applied, 1 not applied)"
+        in report.summary()
+    )
+    assert (
+        "title: Word heading 'Level 6': a level 6 heading has no Markdown level left below "
+        "the title; kept as a paragraph" in warnings
+    )
+    assert report.status("checks") == "applied"
+
+
+def test_a_word_title_and_a_heading_of_the_same_text_keep_their_ids(convert: Converter) -> None:
+    result, report, _warnings = convert.reported(
+        [
+            paragraph("Guide Title", "Title"),
+            bookmark("_Same", "Guide Title", "Heading1"),
+            paragraph("Text"),
+            hyperlink("Back", anchor="_Same"),
+        ],
+        styles=(word_style("Title"),),
+    )
+    assert result == "# Guide Title\n\n## Guide Title\n\nText\n\n[Back](#guide-title-1)\n"
+    assert "  title: applied (1 heading(s) moved down one level)" in report.summary()
+    assert report.status("checks") == "applied"
+
+
+def test_a_word_title_after_the_first_heading_stays_a_paragraph(convert: Converter) -> None:
+    result, report, _warnings = convert.reported(
+        [paragraph("Intro", "Heading1"), paragraph("Late Title", "Title"), paragraph("Text")],
+        styles=(word_style("Title"),),
+    )
+    assert result == "# Intro\n\nLate Title\n\nText\n"
+    assert (
+        "    not applied (1): the Word title is not a paragraph before the first heading; "
+        "kept as written" in report.summary()
+    )
+
+
+def test_duplicate_qualification_leaves_out_the_word_title(convert: Converter) -> None:
+    result, _stats = convert(
+        [
+            paragraph("Guide", "Title"),
+            paragraph("Block", "Heading1"),
+            paragraph("Same", "Heading2"),
+            paragraph("Same", "Heading2"),
+        ],
+        styles=(word_style("Title"),),
+        qualify=True,
+    )
+    assert result == (
+        "# Guide\n\n## Block\n\n### Block - Same - occurrence 1\n\n"
+        "### Block - Same - occurrence 2\n"
+    )
 
 
 def test_images_in_table_cells_keep_a_markdown_table(convert: Converter) -> None:

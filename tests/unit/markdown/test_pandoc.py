@@ -118,7 +118,7 @@ def test_docx_headings_and_link_rewriting_share_one_parse(
     source = "# Top\n\n[Self](#top)\n"
     run = mock.Mock(wraps=subprocess.run)
     monkeypatch.setattr(subprocess, "run", run)
-    result = navigation.resolve_links(source, Path("/docs/out.md"), None, "pandoc")
+    result = navigation.resolve_links(source, Path("/docs/out.md"), "pandoc")
     reads = [call for call in run.call_args_list if "--to=json" in call.args[0]]
     assert len(reads) == 1
     assert "[Self](#top)" in result

@@ -41,7 +41,7 @@ def _tree_markdown(
     stager: _media.ImageStager,
     report: TransformReport,
     math: _tree.MathSyntax,
-) -> tuple[str, DocumentNavigation, str | None, dict[str, int]]:
+) -> tuple[str, DocumentNavigation, dict[str, int]]:
     """The Markdown of the prepared document as Pandoc reads it, with each transform applied."""
     report.console.status("reading the Word document")
     prepared = _prepare.prepare_document(package, paths, work, report)
@@ -96,7 +96,7 @@ def _tree_markdown(
         "image_occurrences": images.occurrences,
         "unresolved_alt_text": images.unresolved_alt_text,
     }
-    return markdown, navigation, prepared.title, stats
+    return markdown, navigation, stats
 
 
 def _convert_in_work(
@@ -116,7 +116,7 @@ def _convert_in_work(
         if pandoc is None:
             raise ConversionError(_NEEDS_PANDOC)
         stager = _media.ImageStager(work, package)
-        markdown, navigation, title, stats = _tree_markdown(
+        markdown, navigation, stats = _tree_markdown(
             paths, work, package, pandoc, stager, report, math
         )
         with _diagnostics.transform(report, "cleanup"):
@@ -138,7 +138,6 @@ def _convert_in_work(
             markdown = _navigation.resolve_links(
                 markdown,
                 paths.output,
-                title,
                 pandoc,
                 source=navigation,
                 report=report,
