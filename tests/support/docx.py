@@ -183,6 +183,29 @@ def page_reference(anchor: str, value: str = "1", *, simple: bool = False) -> li
     return runs
 
 
+def field(instruction: str, result: str | None = None, *, simple: bool = False) -> list[ET.Element]:
+    """A Word field of *instruction* whose cached result shows *result*, or nothing: as a
+    w:fldSimple, or as runs of field characters."""
+    if simple:
+        element = ET.Element(W + "fldSimple", {W + "instr": instruction})
+        if result is not None:
+            element.append(_ooxml.word_run(result))
+        return [element]
+    runs: list[ET.Element] = []
+    for kind in ("begin", "instruction", "separate", "result", "end"):
+        if kind == "result":
+            if result is not None:
+                runs.append(_ooxml.word_run(result))
+            continue
+        run = ET.Element(W + "r")
+        if kind == "instruction":
+            ET.SubElement(run, W + "instrText", {_ooxml.XML_SPACE: "preserve"}).text = instruction
+        else:
+            ET.SubElement(run, W + "fldChar", {W + "fldCharType": kind})
+        runs.append(run)
+    return runs
+
+
 def toc_entry(
     anchor: str, number: str, title: str, page: str, *, begin: bool = False, end: bool = False
 ) -> ET.Element:

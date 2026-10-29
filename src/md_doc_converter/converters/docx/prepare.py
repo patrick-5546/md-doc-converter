@@ -45,6 +45,7 @@ MISSING_BOOKMARK = "link to a missing Word bookmark; kept as plain text"
 _EMPTY_HEADING = "Word heading has no text; omitted"
 _EMPTY_TABLE = "Word table is empty; omitted"
 _HIDDEN_RESULT = "Word field without a field name holds what Word does not show; kept"
+EMPTY_SEQUENCE = "Word caption number shows nothing until the fields are updated"
 _PICTURE_HEADING = "Word heading has only a picture; kept as a paragraph"
 _LISTED_HEADING = "Word numbers this outline-level heading as a list item; kept as a list item"
 SKIPPED_LEVEL = "Word heading skips a level; kept at its level"
@@ -1452,6 +1453,20 @@ def _paragraph_numbers(root: ET.Element) -> dict[ET.Element, int]:
     return numbers
 
 
+def _report_empty_sequences(root: ET.Element, report: TransformReport) -> None:
+    """Report each caption number, or other SEQ field, whose cached result shows nothing,
+    which it shows in Word until its author updates the fields, as the Markdown does."""
+    empty = _ooxml.empty_sequences(root)
+    numbers = _paragraph_numbers(root) if empty else {}
+    for paragraph in empty:
+        where = f"paragraph {numbers[paragraph] + 1}" if paragraph in numbers else "the document"
+        report.warn(
+            f"fields: {where}: Word caption number (SEQ field) shows nothing until the fields "
+            "are updated; in Word, press Ctrl+A and then F9",
+            kind=EMPTY_SEQUENCE,
+        )
+
+
 def _omit_empty_tables(root: ET.Element, report: TransformReport) -> None:
     """Omit the tables that show nothing, and name each by the paragraph where it starts, or
     by the one that holds the text box it is in, as for an empty heading."""
@@ -1564,6 +1579,7 @@ def prepare_document(
             for number in sorted(numbers.get(paragraph, -1) + 1 for paragraph in kept):
                 where = f"paragraph {number}" if number else "the document"
                 report.skipped("fields", _HIDDEN_RESULT, f"{where}: {_HIDDEN_RESULT}")
+        _report_empty_sequences(root, report)
         report.applied("fields", "check box(es) shown", _ooxml.form_check_boxes(root))
         report.applied("fields", "page number(s) kept as text", _ooxml.unlink_page_references(root))
     with transform(report, "hidden-text"):

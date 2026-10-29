@@ -1289,6 +1289,56 @@ def split_drawing_runs(root: ET.Element) -> None:
         _split_run_children(parent, IMAGE_CONTAINERS)
 
 
+@dataclass
+class _Result:
+    """A field whose result is open: its begin, its code so far, and whether its separator
+    has come, and then anything that shows."""
+
+    begin: ET.Element
+    code: list[str]
+    separated: bool = False
+    shows: bool = False
+
+
+_SEQUENCE = re.compile(r"\s*SEQ\b", re.IGNORECASE)
+
+
+def empty_sequences(root: ET.Element) -> list[ET.Element]:
+    r"""The paragraph of each SEQ field, such as the number of a caption, whose cached result
+    shows nothing, in document order.
+
+    Word shows a field's cached result, which Word fills in when it updates the field. Until
+    then, a caption's number can show nothing, as in "Figure 3-: Clock tree". A field with the
+    \h switch, which hides its result, as to restart a numbering, shows nothing by design.
+    """
+    parents = {child: parent for parent in root.iter() for child in parent}
+    found: list[ET.Element] = []
+    open_fields: list[_Result] = []
+    for node in _shown(root):
+        if node.tag == WORD + "instrText":
+            if open_fields and not open_fields[-1].separated:
+                open_fields[-1].code.append(node.text or "")
+        elif node.tag == WORD + "fldChar":
+            kind = node.get(WORD + "fldCharType")
+            if kind == "begin":
+                open_fields.append(_Result(node, []))
+            elif kind == "separate" and open_fields:
+                open_fields[-1].separated = True
+            elif kind == "end" and open_fields:
+                field = open_fields.pop()
+                code = "".join(field.code)
+                if _SEQUENCE.match(code) and not re.search(r"\\h\b", code) and not field.shows:
+                    paragraph = parents.get(field.begin)
+                    while paragraph is not None and paragraph.tag != WORD + "p":
+                        paragraph = parents.get(paragraph)
+                    if paragraph is not None:
+                        found.append(paragraph)
+        elif _shows(node):
+            for field in open_fields:
+                field.shows = field.shows or field.separated
+    return found
+
+
 def scoped_iter(node: ET.Element, tag: str | None = None) -> Iterator[ET.Element]:
     """Pre-order elements outside text boxes, whose content the converters place differently."""
     stack = [node]

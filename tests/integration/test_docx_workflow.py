@@ -45,6 +45,7 @@ from tests.support.docx import (
     boundary_hyperlink_field,
     cell,
     code_run,
+    field,
     font_run,
     formatted,
     grouped_image,
@@ -1517,6 +1518,41 @@ def test_simple_fields_keep_their_cached_results(convert: Converter) -> None:
     assert not report.records["bookmarks"].skipped
     assert report.status("checks") == "applied"
     assert not report.records["checks"].skipped
+
+
+def test_caption_numbers_that_show_nothing_are_kept_and_reported(convert: Converter) -> None:
+    # Word shows a field's cached result, which it fills in when it updates the field.
+    def caption(label: str, number: list[ET.Element], title: str) -> ET.Element:
+        return paragraph_of(
+            _ooxml.word_run(f"{label} "),
+            *field(" STYLEREF 1 \\s ", "2"),
+            _ooxml.word_run("-"),
+            *number,
+            _ooxml.word_run(f": {title}"),
+            style="Caption",
+        )
+
+    result, report, warnings = convert.reported(
+        [
+            paragraph("Clocks", "Heading1"),
+            caption("Figure", field(" SEQ Figure \\* ARABIC \\s 1 ", "1"), "Power up"),
+            caption("Figure", field(" SEQ Figure \\* ARABIC \\s 1 "), "Clock tree"),
+            caption("Table", field(" SEQ Table \\* ARABIC \\s 1 ", simple=True), "Reset steps"),
+            # The \h switch hides the result, as to restart the numbering.
+            paragraph_of(*field(" SEQ Figure \\r 0 \\h "), _ooxml.word_run("Restart")),
+        ],
+        styles=(word_style("Caption"),),
+    )
+    for text in ("Figure 2-1: Power up", "Figure 2-: Clock tree", "Table 2-: Reset steps"):
+        assert f"\n{text}\n" in result
+    for number in (3, 4):
+        assert (
+            f"fields: paragraph {number}: Word caption number (SEQ field) shows nothing until "
+            "the fields are updated; in Word, press Ctrl+A and then F9"
+        ) in warnings
+    assert report.kinds[_prepare.EMPTY_SEQUENCE] == 2
+    assert report.sections[_prepare.EMPTY_SEQUENCE] == "word"
+    assert f"  2  {_prepare.EMPTY_SEQUENCE}" in report.issues()
 
 
 def test_bookmarks_in_leading_title_paragraphs_keep_their_position(convert: Converter) -> None:
