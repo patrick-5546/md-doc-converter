@@ -305,6 +305,23 @@ def test_lists_lose_empty_items_and_are_tight_when_they_can_be(
     assert gfm(blocks, api, pandoc) == markdown
 
 
+def test_list_content_stays_where_pandoc_put_it_when_its_lists_are_not_as_marked(
+    pandoc: str,
+) -> None:
+    # The preparation marked a paragraph for the second of two open items; Pandoc made one.
+    marker = "DOCXTOMDLISTTEST"
+    blocks, api = read(
+        f"<ol><li>One</li></ol><p>{marker}R2</p><p>{marker}B1</p><p>Held</p>"
+        f'<p>{marker}ES1</p><ol start="2"><li>Two</li></ol>',
+        pandoc,
+    )
+    report = TransformReport()
+    _transforms.place_list_content(blocks, marker, report)
+    assert gfm(blocks, api, pandoc) == "1.  One\n\nHeld\n\n2.  Two\n"
+    assert report.kinds == {_transforms.NOT_JOINED: 1}
+    assert report.sections == {_transforms.NOT_JOINED: "markdown"}
+
+
 def test_notes_are_numbered_in_order_and_defined_at_the_end(pandoc: str) -> None:
     def note(*paragraphs: str) -> JSONValue:
         return _tree.element(

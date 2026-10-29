@@ -47,6 +47,8 @@ def _tree_markdown(
     prepared = _prepare.prepare_document(package, paths, work, report)
     tree = _tree.read_docx(prepared.path, work / "pandoc-media", pandoc)
     blocks, api = _tree.items(tree["blocks"]), tree["pandoc-api-version"]
+    with _diagnostics.transform(report, "lists"):
+        _transforms.place_list_content(blocks, prepared.list_marker, report)
     with _diagnostics.transform(report, "symbols"):
         _transforms.plain_arrows(blocks, report)
     resolved: dict[str, str] = {}

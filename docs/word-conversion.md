@@ -41,7 +41,13 @@ accepted.
   its list. A paragraph of a list that shows no number or bullet at any level,
   which Word uses to indent paragraphs, is a paragraph, in the list item before
   it if there is one. An empty paragraph between two items of a list is
-  omitted, so that the list goes on, as in Word, rather than beginning again.
+  omitted, so that the list goes on, as in Word, rather than beginning again. A
+  table or paragraph between two items of a list, indented to the text of an
+  item or further, which Word shows inside that item, is in the Markdown item
+  too, and the list goes on after it. One that is not indented into the list
+  ends the Markdown list, and the items after it start a new one, numbered as in
+  Word. If the item after it is nested in an earlier item, which the new list
+  has at its top level, the report names it, to indent in Word.
 - **Line breaks** are Markdown hard line breaks, a backslash at the end of the
   line; two in a row start a new paragraph. In a table cell they are `<br>`.
 - **Tables** are Markdown tables, with Word's first row as the header, or

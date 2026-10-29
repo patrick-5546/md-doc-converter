@@ -24,6 +24,11 @@ from md_doc_converter.pandoc import decode_document
 EMPTY_ITEMS = "empty Word list item(s) omitted"
 _CAPTIONED = "image(s) described by their caption"
 _LISTS = frozenset({"BulletList", "OrderedList"})
+_IN_LIST_ITEMS = "table(s) and paragraph(s) indented into a Word list item kept in it"
+NOT_JOINED = (
+    "Word list after a table or paragraph indented into it could not be joined to it; "
+    "kept as Pandoc reads it"
+)
 
 
 def _children(element: Element, position: int) -> list[Element]:
@@ -627,6 +632,114 @@ def publish_images(
 def _start(block: JSONValue) -> int:
     start = _tree.items(_tree.items(_tree.node(block)["c"])[0])[0]
     return start if isinstance(start, int) else 1
+
+
+def _entries(block: Element) -> list[JSONValue]:
+    """The items of a list, each a list of blocks."""
+    content = _tree.items(block["c"])
+    return _tree.items(content[1]) if block["t"] == "OrderedList" else content
+
+
+def _open_items(block: Element) -> list[tuple[Element, list[JSONValue]]]:
+    """The items that later items can nest in, after *block*, as Pandoc nests them: the last
+    item of *block* if it is a list, then the last item of that item's last block if that is
+    a list, and so on; each with the list that holds it."""
+    found: list[tuple[Element, list[JSONValue]]] = []
+    while block["t"] in _LISTS and (entries := _entries(block)):
+        content = _tree.items(entries[-1])
+        found.append((block, content))
+        if not content:
+            break
+        block = _tree.node(content[-1])
+    return found
+
+
+_LIST_STEP = re.compile(r"R[0-9]+|B(?:[0-9]+|X)|E(?:[SN][0-9]+|T)*")
+
+
+def _list_step(block: JSONValue, marker: str) -> str | None:
+    """The step that *block* gives, if it is a paragraph of the preparation's list *marker*."""
+    if not marker or not isinstance(block, dict) or block.get("t") != "Para":
+        return None
+    content = block.get("c")
+    if not isinstance(content, list) or len(content) != 1 or not isinstance(content[0], dict):
+        return None
+    value = content[0].get("c") if content[0].get("t") == "Str" else None
+    return value[len(marker) :] if isinstance(value, str) and value.startswith(marker) else None
+
+
+def place_list_content(blocks: list[JSONValue], marker: str, report: TransformReport) -> None:
+    """Move each table and paragraph that the preparation marked into the list item that Word
+    shows it in, and go on with the list after it, as Pandoc does with an unbroken list.
+
+    The steps of the paragraphs of *marker*, which go, are those of
+    prepare._mark_list_content. A list that Pandoc did not make as the preparation expected
+    stays as Pandoc made it, as does every list after it, and the report says so.
+    """
+    kept: list[JSONValue] = []
+    steps: list[tuple[int, str]] = []
+    for block in blocks:
+        step = _list_step(block, marker)
+        if step is None:
+            kept.append(block)
+        elif _LIST_STEP.fullmatch(step):
+            steps.append((len(kept), step))
+    blocks[:] = kept
+    if not steps:
+        return
+    # Rewrite a copy, so that a failure leaves Pandoc's lists whole.
+    work: list[JSONValue] = json.loads(json.dumps(kept))
+    result: list[JSONValue] = work[: steps[0][0]]
+    path: list[tuple[Element, list[JSONValue]]] = []
+    joined = True
+    placed = 0
+
+    def fail() -> None:
+        nonlocal joined
+        if joined:
+            report.skipped("lists", NOT_JOINED, section="markdown")
+        joined = False
+
+    for number, (start, step) in enumerate(steps):
+        end = steps[number + 1][0] if number + 1 < len(steps) else len(work)
+        segment = [_tree.node(block) for block in work[start:end]]
+        if step[0] == "R":
+            path = _open_items(_tree.node(result[-1])) if result else []
+            if len(path) != int(step[1:]):
+                fail()
+        elif step[0] == "B":
+            if joined and step != "BX" and int(step[1:]) < len(path):
+                index = int(step[1:])
+                path[index][1].extend(segment)
+                del path[index + 1 :]
+                placed += any(_shows(block) for block in segment)
+                continue
+            if step != "BX":
+                fail()
+            path = []
+        else:
+            for kind in re.findall(r"[SN][0-9]+|T", step[1:]):
+                if not joined or not segment or segment[0]["t"] not in _LISTS:
+                    fail()
+                    break
+                block = segment.pop(0)
+                index = int(kind[1:] or 0)
+                if kind == "T":
+                    result.append(block)
+                    path = _open_items(block)
+                elif index >= len(path) or (kind[0] == "S" and path[index][0]["t"] != block["t"]):
+                    fail()
+                    result.append(block)
+                elif kind[0] == "S":
+                    holder = path[index][0]
+                    _entries(holder).extend(_entries(block))
+                    path = path[:index] + _open_items(holder)
+                else:
+                    path[index][1].append(block)
+                    path = path[: index + 1] + _open_items(block)
+        result.extend(segment)
+    report.applied("lists", _IN_LIST_ITEMS, placed)
+    blocks[:] = result
 
 
 def _tight(entries: list[JSONValue]) -> bool:

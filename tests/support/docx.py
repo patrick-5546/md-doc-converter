@@ -26,11 +26,17 @@ PNG = bytes.fromhex(
 SVG = b'<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><path d="M0 0L10 10"/></svg>'
 
 
-def paragraph(text: str = "", style: str | None = None, *, bold: bool = False) -> ET.Element:
+def paragraph(
+    text: str = "", style: str | None = None, *, bold: bool = False, indent: int | None = None
+) -> ET.Element:
+    """A paragraph of *text*, in the style *style*, indented *indent* twips from the margin."""
     result = ET.Element(W + "p")
-    if style is not None:
+    if style is not None or indent is not None:
         props = ET.SubElement(result, W + "pPr")
-        ET.SubElement(props, W + "pStyle", {W + "val": style})
+        if style is not None:
+            ET.SubElement(props, W + "pStyle", {W + "val": style})
+        if indent is not None:
+            ET.SubElement(props, W + "ind", {W + "left": str(indent)})
     run = ET.SubElement(result, W + "r")
     if bold:
         ET.SubElement(ET.SubElement(run, W + "rPr"), W + "b")
@@ -62,11 +68,12 @@ def formatted(run: ET.Element, tag: str, value: str | None = None) -> ET.Element
     return run
 
 
-def paragraph_of(*runs: ET.Element, style: str | None = None) -> ET.Element:
-    """A paragraph of *runs*, in the paragraph style *style*."""
-    result = ET.Element(W + "p")
-    if style is not None:
-        ET.SubElement(ET.SubElement(result, W + "pPr"), W + "pStyle", {W + "val": style})
+def paragraph_of(
+    *runs: ET.Element, style: str | None = None, indent: int | None = None
+) -> ET.Element:
+    """A paragraph of *runs*, in the paragraph style *style*, indented *indent* twips."""
+    result = paragraph(style=style, indent=indent)
+    result.remove(result[-1])
     result.extend(runs)
     return result
 
@@ -91,11 +98,16 @@ def row(*cells: ET.Element, header: bool = False) -> ET.Element:
     return result
 
 
-def table(*rows: ET.Element, columns: int = 2, caption: str | None = None) -> ET.Element:
+def table(
+    *rows: ET.Element, columns: int = 2, caption: str | None = None, indent: int | None = None
+) -> ET.Element:
+    """A table of *rows*, indented *indent* twips from the margin."""
     result = ET.Element(W + "tbl")
     props = ET.SubElement(result, W + "tblPr")
     if caption is not None:
         ET.SubElement(props, W + "tblCaption", {W + "val": caption})
+    if indent is not None:
+        ET.SubElement(props, W + "tblInd", {W + "w": str(indent), W + "type": "dxa"})
     grid = ET.SubElement(result, W + "tblGrid")
     for _ in range(columns):
         ET.SubElement(grid, W + "gridCol", {W + "w": "2000"})
@@ -522,10 +534,13 @@ def numbering_xml(
     *,
     style_link: str | None = None,
     second: str | None = None,
+    levels: int = 3,
+    indent: int | None = None,
 ) -> bytes:
-    """List 1 defines three levels; *style_link* adds list 2, which takes them from that style.
+    """List 1 defines *levels* levels; *style_link* adds list 2, which takes them from that style.
 
-    *second* instead adds list 2 with its own three levels in that format, numbered from 1.
+    *second* instead adds list 2 with its own levels in that format, numbered from 1. With
+    *indent*, the text of each level starts *indent* twips right of the level above's.
     """
     numbering = ET.Element(W + "numbering")
     abstract = ET.SubElement(numbering, W + "abstractNum", {W + "abstractNumId": "1"})
@@ -533,7 +548,16 @@ def numbering_xml(
         ET.SubElement(abstract, W + "styleLink", {W + "val": style_link})
         linked = ET.SubElement(numbering, W + "abstractNum", {W + "abstractNumId": "2"})
         ET.SubElement(linked, W + "numStyleLink", {W + "val": style_link})
-    for index in range(3):
+
+    def define(level: ET.Element, index: int) -> None:
+        if indent is not None:
+            ET.SubElement(
+                ET.SubElement(level, W + "pPr"),
+                W + "ind",
+                {W + "left": str(indent * (index + 1)), W + "hanging": "360"},
+            )
+
+    for index in range(levels):
         level = ET.SubElement(abstract, W + "lvl", {W + "ilvl": str(index)})
         for name, value in (
             ("start", str(start)),
@@ -541,13 +565,15 @@ def numbering_xml(
             ("lvlText", f"%{index + 1}."),
         ):
             ET.SubElement(level, W + name, {W + "val": value})
+        define(level, index)
     if second is not None:
         other = ET.SubElement(numbering, W + "abstractNum", {W + "abstractNumId": "2"})
-        for index in range(3):
+        for index in range(levels):
             level = ET.SubElement(other, W + "lvl", {W + "ilvl": str(index)})
             text = "\u2022" if second == "bullet" else f"%{index + 1}."
             for name, value in (("start", "1"), ("numFmt", second), ("lvlText", text)):
                 ET.SubElement(level, W + name, {W + "val": value})
+            define(level, index)
     lists = ("1", "2") if style_link is not None or second is not None else ("1",)
     for identity in lists:
         number = ET.SubElement(numbering, W + "num", {W + "numId": identity})

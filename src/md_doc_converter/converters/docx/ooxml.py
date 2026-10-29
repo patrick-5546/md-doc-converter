@@ -1487,17 +1487,57 @@ def unlabeled_lists(numbering: ET.Element) -> frozenset[str]:
     return frozenset(result)
 
 
-def numbering_reference(paragraph: ET.Element, styles: dict[str, ET.Element]) -> str | None:
-    """The numId that applies to *paragraph*, directly or through its style chain; 0 is none."""
+def left_indent(properties: ET.Element | None) -> int | None:
+    """The left indent, in twips, that the paragraph or list level properties *properties* give."""
+    indent = None if properties is None else properties.find(WORD + "ind")
+    value = "" if indent is None else indent.get(WORD + "left", indent.get(WORD + "start", ""))
+    return int(value) if re.fullmatch(r"-?[0-9]+", value) else None
+
+
+@dataclass(frozen=True)
+class ListLevel:
+    """A level of a Word list: the abstract list that Pandoc numbers and nests it by, and where
+    its text starts, in twips, if the level says."""
+
+    abstract: str
+    indent: int | None
+
+
+def list_levels(numbering: ET.Element) -> dict[tuple[str, str], ListLevel]:
+    """Each level of each Word list, by numId and ilvl, as Pandoc looks it up: the level that
+    the list overrides, else its abstract list's."""
+    abstracts = {
+        node.get(WORD + "abstractNumId", ""): node
+        for node in numbering.findall(WORD + "abstractNum")
+    }
+    result: dict[tuple[str, str], ListLevel] = {}
+    for instance in numbering.findall(WORD + "num"):
+        reference = instance.find(WORD + "abstractNumId")
+        identity = "" if reference is None else reference.get(WORD + "val", "")
+        abstract = abstracts.get(identity)
+        if abstract is None:
+            continue
+        levels = {level.get(WORD + "ilvl", ""): level for level in abstract.findall(WORD + "lvl")}
+        for override in instance.findall(WORD + "lvlOverride"):
+            level = override.find(WORD + "lvl")
+            if level is not None:
+                levels[override.get(WORD + "ilvl", "")] = level
+        number = instance.get(WORD + "numId", "")
+        for ilvl, level in levels.items():
+            result[number, ilvl] = ListLevel(identity, left_indent(level.find(WORD + "pPr")))
+    return result
+
+
+def _numbering_properties(
+    paragraph: ET.Element, styles: dict[str, ET.Element]
+) -> ET.Element | None:
+    """The w:numPr that gives *paragraph* its numId: its own, or that of its style chain."""
     properties = paragraph.find(WORD + "pPr")
     seen: set[str] = set()
     while properties is not None:
-        number = properties.find(f"./{WORD}numPr/{WORD}numId")
-        if number is not None:
-            value = number.get(WORD + "val", "")
-            if not value.isdigit():
-                raise ConversionError(f"Invalid Word numbering identity: {value!r}")
-            return value
+        numbering = properties.find(WORD + "numPr")
+        if numbering is not None and numbering.find(WORD + "numId") is not None:
+            return numbering
         style = properties.find(WORD + "pStyle")
         if style is None:
             return None
@@ -1521,6 +1561,26 @@ def numbering_reference(paragraph: ET.Element, styles: dict[str, ET.Element]) ->
                 },
             )
     return None
+
+
+def numbering_reference(paragraph: ET.Element, styles: dict[str, ET.Element]) -> str | None:
+    """The numId that applies to *paragraph*, directly or through its style chain; 0 is none."""
+    numbering = _numbering_properties(paragraph, styles)
+    number = None if numbering is None else numbering.find(WORD + "numId")
+    if number is None:
+        return None
+    value = number.get(WORD + "val", "")
+    if not value.isdigit():
+        raise ConversionError(f"Invalid Word numbering identity: {value!r}")
+    return value
+
+
+def numbering_level(paragraph: ET.Element, styles: dict[str, ET.Element]) -> str:
+    """The ilvl of *paragraph*'s list level, as Pandoc reads it: that of the w:numPr that gives
+    its numId, 0 if that gives none."""
+    numbering = _numbering_properties(paragraph, styles)
+    level = None if numbering is None else numbering.find(WORD + "ilvl")
+    return "0" if level is None else level.get(WORD + "val", "0")
 
 
 def is_list_item(

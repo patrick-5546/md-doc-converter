@@ -619,6 +619,204 @@ def test_empty_paragraphs_inside_a_word_list_do_not_split_it(
     assert "lists:" not in warnings
 
 
+def _register_table(indent: int | None = None) -> ET.Element:
+    return table(
+        row(cell("Field"), cell("Value")), row(cell("ctrl_mode"), cell("2")), indent=indent
+    )
+
+
+def test_tables_and_paragraphs_indented_into_a_word_list_stay_in_its_items(
+    convert: Converter,
+) -> None:
+    # Word shows each inside the item that it is indented into, and numbers the list on past
+    # it. Pandoc ended the list at the table, and began a new one for each item after it.
+    result, report, warnings = convert.reported(
+        [
+            paragraph("Intro"),
+            numbered("Power up", 0),
+            numbered("Clock tree", 1),
+            numbered("Set the mode", 2),
+            numbered("Wait for the lock", 3),
+            # Right of the level's text, as a table whose border lines up with it.
+            _register_table(indent=4 * 720 + 108),
+            # Just left of it, as an indent typed in centimeters.
+            paragraph("Hold the reset meanwhile.", indent=4 * 720 - 11),
+            numbered("Check the lock", 4),
+            numbered("Reset steps", 1),
+            numbered("Assert the reset", 2),
+            numbered("Release the reset", 2),
+            numbered("Run", 0),
+            paragraph("Outro"),
+        ],
+        extras={"word/numbering.xml": numbering_xml("decimal", 1, levels=5, indent=720)},
+    )
+    assert result == (
+        "Intro\n\n"
+        "1. Power up\n"
+        "   1. Clock tree\n"
+        "      1. Set the mode\n"
+        "         1. Wait for the lock\n\n"
+        "            | Field | Value |\n"
+        "            | --- | --- |\n"
+        "            | ctrl_mode | 2 |\n\n"
+        "            Hold the reset meanwhile.\n\n"
+        "            1. Check the lock\n"
+        "   2. Reset steps\n"
+        "      1. Assert the reset\n"
+        "      2. Release the reset\n"
+        "2. Run\n\n"
+        "Outro\n"
+    )
+    assert "lists:" not in warnings
+    assert "2 table(s) and paragraph(s) indented into a Word list item kept in it" in "\n".join(
+        report.summary()
+    )
+
+
+def _unlabeled_second_list() -> bytes:
+    """numbering_xml's list 1, numbered from 1, and list 2, whose levels show no number and
+    only indent their paragraphs; the levels of both are indented by half an inch."""
+    numbering = ET.fromstring(numbering_xml("decimal", 1, second="decimal", indent=720))
+    for abstract in numbering.findall(W + "abstractNum"):
+        if abstract.get(W + "abstractNumId") == "2":
+            for text in abstract.iter(W + "lvlText"):
+                text.set(W + "val", "")
+    return _ooxml.word_xml_bytes(numbering)
+
+
+@pytest.mark.parametrize(
+    ("blocks", "markdown"),
+    [
+        pytest.param(
+            [table(row(cell("Mode", colspan=2)), row(cell("ctrl_mode"), cell("2")), indent=1440)],
+            '<table>\n<tbody>\n<tr>\n<td colspan="2">Mode</td>\n</tr>\n<tr>\n'
+            "<td>ctrl_mode</td>\n<td>2</td>\n</tr>\n</tbody>\n</table>",
+            id="html-table",
+        ),
+        pytest.param(
+            [
+                paragraph_of(code_run("make all"), indent=1440),
+                paragraph_of(code_run("make test"), indent=1440),
+            ],
+            "```text\nmake all\nmake test\n```",
+            id="code",
+        ),
+        pytest.param(
+            [table(row(cell(paragraph_of(code_run("make all")))), columns=1, indent=1440)],
+            "```text\nmake all\n```",
+            id="one-cell-code-table",
+        ),
+        pytest.param(
+            # The paragraph of a list that shows no number is where its level indents it.
+            [paragraph("Wait a moment.", indent=1440), numbered("Then check it.", 1, number="2")],
+            "Wait a moment.\n\nThen check it.",
+            id="paragraph-of-a-list-without-numbers",
+        ),
+    ],
+)
+def test_blocks_indented_into_a_word_list_item_are_written_in_it(
+    blocks: list[ET.Element], markdown: str, convert: Converter
+) -> None:
+    result, _report, warnings = convert.reported(
+        [numbered("Build", 0), numbered("Compile", 1), *blocks, numbered("Test", 1)],
+        extras={"word/numbering.xml": _unlabeled_second_list()},
+    )
+    content = "\n".join(f"      {line}" if line else "" for line in markdown.split("\n"))
+    assert result == f"1. Build\n   1. Compile\n\n{content}\n\n   2. Test\n"
+    assert "lists:" not in warnings
+
+
+@pytest.mark.parametrize(
+    ("block", "kind", "markdown"),
+    [
+        pytest.param(
+            _register_table(),
+            "table",
+            "| Field | Value |\n| --- | --- |\n| ctrl_mode | 2 |",
+            id="table",
+        ),
+        pytest.param(
+            paragraph("Hold the reset meanwhile."),
+            "paragraph",
+            "Hold the reset meanwhile.",
+            id="paragraph",
+        ),
+    ],
+)
+def test_a_word_list_going_on_after_a_block_not_indented_into_it_is_reported(
+    block: ET.Element, kind: str, markdown: str, convert: Converter
+) -> None:
+    # Word shows the block outside the list, and numbers the list on past it; the Markdown
+    # list ends there, and the items after it start a new one, numbered as in Word.
+    result, report, warnings = convert.reported(
+        [
+            numbered("Power up", 0),
+            numbered("Clock tree", 1),
+            block,
+            numbered("Reset steps", 1),
+            numbered("Run", 0),
+        ],
+        extras={"word/numbering.xml": numbering_xml("decimal", 1, indent=720)},
+    )
+    assert result == (
+        f"1. Power up\n   1. Clock tree\n\n{markdown}\n\n2. Reset steps\n\n<!-- -->\n\n2. Run\n"
+    )
+    assert (
+        f"lists: paragraph 3: Word {kind} between items of a list is not indented into the "
+        "list; the items after it start a new list"
+    ) in warnings
+    assert report.kinds[_prepare.UNINDENTED_IN_LIST] == 1
+    assert report.sections[_prepare.UNINDENTED_IN_LIST] == "word"
+
+
+@pytest.mark.parametrize(
+    "levels",
+    [
+        pytest.param((0, 1, 0), id="top-level"),
+        # Word shows a list whose items are all a level down at its own outermost level.
+        pytest.param((1, 2, 1), id="outermost-level"),
+    ],
+)
+def test_a_block_not_indented_into_a_word_list_before_an_outermost_item_is_not_reported(
+    levels: tuple[int, int, int], convert: Converter
+) -> None:
+    # Word shows the note outside the list, and the list going on at its outermost level
+    # after it, as the Markdown does.
+    first, second, third = levels
+    result, report, warnings = convert.reported(
+        [
+            numbered("Power up", first),
+            numbered("Clock tree", second),
+            paragraph("Hold the reset meanwhile."),
+            numbered("Run", third),
+        ],
+        extras={"word/numbering.xml": numbering_xml("decimal", 1, indent=720)},
+    )
+    assert result == "1. Power up\n   1. Clock tree\n\nHold the reset meanwhile.\n\n2. Run\n"
+    assert report.kinds[_prepare.UNINDENTED_IN_LIST] == 0
+    assert "lists:" not in warnings
+
+
+def test_a_table_between_two_word_lists_ends_the_first(convert: Converter) -> None:
+    # The items after the table are of another list, which Word numbers from its start.
+    result, report, warnings = convert.reported(
+        [
+            numbered("Power up"),
+            numbered("Run"),
+            _register_table(),
+            numbered("Check the lock", number="2"),
+            numbered("Check the clock", number="2"),
+        ],
+        extras={"word/numbering.xml": numbering_xml("decimal", 1, second="decimal")},
+    )
+    assert result == (
+        "1. Power up\n2. Run\n\n| Field | Value |\n| --- | --- |\n| ctrl_mode | 2 |\n\n"
+        "1. Check the lock\n2. Check the clock\n"
+    )
+    assert report.status("lists") == "applied"
+    assert "lists:" not in warnings
+
+
 def test_paragraphs_pandoc_reads_as_headings_are_not_list_items(convert: Converter) -> None:
     contents = word_style("TOCHeading", based_on="Heading1", number="1")
     properties = contents.find(W + "pPr")

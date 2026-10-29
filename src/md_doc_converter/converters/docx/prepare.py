@@ -53,6 +53,17 @@ _NO_LEVEL_LEFT = "a level 6 heading has no Markdown level left below the title; 
 _MOVED_DOWN = "heading(s) moved down one level"
 _UNLABELED_ITEMS = "Word list paragraph(s) without a number or bullet kept as paragraphs"
 _LIST_GAPS = "empty paragraph(s) inside a Word list omitted"
+# The text that starts each paragraph that tells the tree where a table or paragraph between
+# the items of a Word list goes.
+LIST_MARKER = "DOCXTOMDLIST"
+UNINDENTED_IN_LIST = (
+    "Word table or paragraph between items of a list is not indented into the list; "
+    "the items after it start a new list"
+)
+# How far left of a list item's text a table or paragraph may start and still be inside the
+# item, in twips: one point, more than Word's rounding leaves of an indent typed in other
+# units, such as 1.25 cm against a list level's half inch.
+_INDENT_TOLERANCE = 20
 # The names Word gives the bookmarks that its tables of contents and cross-references lead to.
 _FIELD_BOOKMARKS = ("_Toc", "_Ref")
 DRIFTED_BOOKMARK = (
@@ -120,6 +131,39 @@ class PreparedDocument:
     # the copy ends with when it has bookmarks.
     probe: str = ""
     bookmarks: list[str] = field(default_factory=list[str])
+    # The text that starts each paragraph that marks a table or paragraph between the items of
+    # a list for the tree, which removes them all.
+    list_marker: str = ""
+
+
+@dataclass
+class _OpenItem:
+    """A Word list item that the items after it can nest in, as Pandoc nests them: its level,
+    abstract list and numId, and where its text starts, in twips, if that is known."""
+
+    level: int
+    abstract: str
+    number: str
+    indent: int | None
+
+
+def _list_step(stack: list[_OpenItem], item: _OpenItem) -> str:
+    """Where Pandoc puts a list that starts with *item*, after the open items *stack*: "S" and
+    the index of the open item at its level of its abstract list, which it goes on after;
+    else "N" and the index of the deepest open item at a lower level, which it is nested in;
+    else "T", at the top level."""
+    for index in reversed(range(len(stack))):
+        if stack[index].level == item.level and stack[index].abstract == item.abstract:
+            return f"S{index}"
+    for index in reversed(range(len(stack))):
+        if stack[index].level < item.level:
+            return f"N{index}"
+    return "T"
+
+
+def _open(stack: list[_OpenItem], item: _OpenItem) -> None:
+    """Make *item* the deepest open item: it closes those at its level and below."""
+    stack[:] = [*(found for found in stack if found.level < item.level), item]
 
 
 class _Styles:
@@ -232,6 +276,69 @@ def _style_of(paragraph: ET.Element) -> str | None:
     return None if style is None else style.get(WORD + "val")
 
 
+def _set_indent(paragraph: ET.Element, twips: int) -> None:
+    """Give *paragraph* the left indent *twips*, which says only where Word shows it: the
+    preparation takes every indent out of the copy that Pandoc reads."""
+    properties = paragraph.find(WORD + "pPr")
+    if properties is None:
+        properties = ET.Element(WORD + "pPr")
+        paragraph.insert(0, properties)
+    for indent in properties.findall(WORD + "ind"):
+        properties.remove(indent)
+    ET.SubElement(properties, WORD + "ind", {WORD + "left": str(twips)})
+
+
+def _paragraph_indent(paragraph: ET.Element, styles: _Styles) -> int | None:
+    """The left indent of *paragraph*, in twips: its own, else its style chain's."""
+    value = _ooxml.left_indent(paragraph.find(WORD + "pPr"))
+    identity = _style_of(paragraph)
+    seen: set[str] = set()
+    while value is None and identity is not None and identity not in seen:
+        seen.add(identity)
+        definition = styles.definitions.get(identity)
+        if definition is None:
+            break
+        value = _ooxml.left_indent(definition.find(WORD + "pPr"))
+        parent = definition.find(WORD + "basedOn")
+        identity = None if parent is None else parent.get(WORD + "val")
+    return value
+
+
+def _table_property(table: ET.Element, styles: _Styles, name: str) -> ET.Element | None:
+    """The table property w:*name* of *table*: its own, else its table style chain's."""
+    properties = table.find(WORD + "tblPr")
+    found = None if properties is None else properties.find(WORD + name)
+    style = None if properties is None else properties.find(WORD + "tblStyle")
+    identity = None if style is None else style.get(WORD + "val")
+    seen: set[str] = set()
+    while found is None and identity is not None and identity not in seen:
+        seen.add(identity)
+        definition = styles.definitions.get(identity)
+        if definition is None:
+            break
+        found = definition.find(f"./{WORD}tblPr/{WORD}{name}")
+        parent = definition.find(WORD + "basedOn")
+        identity = None if parent is None else parent.get(WORD + "val")
+    return found
+
+
+def _table_indent(table: ET.Element, styles: _Styles) -> int | None:
+    """Where *table* starts, in twips from the margin; None if it floats, or Word centers it or
+    aligns it right."""
+    if table.find(f"./{WORD}tblPr/{WORD}tblpPr") is not None:
+        return None
+    alignment = _table_property(table, styles, "jc")
+    if alignment is not None and alignment.get(WORD + "val") in {"center", "right", "end"}:
+        return None
+    indent = _table_property(table, styles, "tblInd")
+    if indent is None or indent.get(WORD + "type") == "nil":
+        return 0
+    value = indent.get(WORD + "w", "")
+    if indent.get(WORD + "type", "dxa") != "dxa" or not re.fullmatch(r"-?[0-9]+", value):
+        return None
+    return int(value)
+
+
 def _unwrap(node: ET.Element, parents: dict[ET.Element, ET.Element]) -> None:
     """Replace *node* with its children."""
     parent = parents[node]
@@ -261,8 +368,8 @@ def _unlink_targetless_links(
             _unwrap(link, parents)
 
 
-def _text_boxes_after_paragraphs(root: ET.Element, report: TransformReport) -> None:
-    """Move the paragraphs of each text box after the paragraph it is anchored to.
+def _text_boxes_after_paragraphs(root: ET.Element, report: TransformReport) -> set[ET.Element]:
+    """Move the paragraphs of each text box after the paragraph it is anchored to; return them.
 
     Pandoc reads a VML text box where it is, splitting its paragraph, which a list item does
     not survive, and drops the text of a DrawingML one without a VML copy.
@@ -272,6 +379,7 @@ def _text_boxes_after_paragraphs(root: ET.Element, report: TransformReport) -> N
         paragraph: index for index, paragraph in enumerate(_ooxml.scoped_iter(root, WORD + "p"))
     }
     moved: dict[ET.Element, int] = {}
+    boxed: set[ET.Element] = set()
     for container in list(_ooxml.scoped_iter(root)):
         if container.tag not in {WORD + "pict", WORD + "drawing"}:
             continue
@@ -316,9 +424,11 @@ def _text_boxes_after_paragraphs(root: ET.Element, report: TransformReport) -> N
             )
         position = list(holder).index(paragraph) + 1 + moved.get(paragraph, 0)
         holder[position:position] = content
+        boxed.update(content)
         moved[paragraph] = moved.get(paragraph, 0) + len(content)
         if not _ooxml.unit_image_nodes(container):
             parents[container].remove(container)
+    return boxed
 
 
 def _keep_metadata_in_body(
@@ -349,41 +459,57 @@ def _keep_metadata_in_body(
 
 def _list_numbering(
     package: WordPackage, styles: _Styles, report: TransformReport
-) -> tuple[frozenset[str], frozenset[str], bytes | None]:
-    """Word's numbered lists, those of them that show no number or bullet, and the numbering
-    part rewritten if list-style links changed it."""
+) -> tuple[frozenset[str], frozenset[str], dict[tuple[str, str], _ooxml.ListLevel], bytes | None]:
+    """Word's numbered lists, those of them that show no number or bullet, the levels of each,
+    and the numbering part rewritten if list-style links changed it."""
     data = package.parts.get(package.numbering_part)
     if data is None:
-        return frozenset(), frozenset(), None
+        return frozenset(), frozenset(), {}, None
     try:
         numbering = ET.fromstring(data)
     except ET.ParseError as error:
         report.failed("lists", ConversionError(f"Cannot read Word numbering: {error}"))
-        return frozenset(), frozenset(), None
+        return frozenset(), frozenset(), {}, None
     linked = _ooxml.link_numbering_styles(numbering, styles.definitions)
     return (
         _ooxml.numbered_lists(numbering),
         _ooxml.unlabeled_lists(numbering),
+        _ooxml.list_levels(numbering),
         _ooxml.word_xml_bytes(numbering, data) if linked else None,
     )
 
 
-def _unnumber_unlabeled(root: ET.Element, styles: _Styles, unlabeled: Collection[str]) -> int:
+def _unnumber_unlabeled(
+    root: ET.Element,
+    styles: _Styles,
+    unlabeled: Collection[str],
+    levels: dict[tuple[str, str], _ooxml.ListLevel],
+) -> int:
     """Turn off the numbering of the paragraphs of lists that show no number or bullet, which
     Pandoc would number; return how many.
 
     Word uses such a list to indent its paragraphs, which it shows as plain paragraphs. Pandoc
-    keeps one after a list item in that item, and makes the others paragraphs.
+    keeps one after a list item in that item, and makes the others paragraphs. A paragraph
+    keeps the indent that its list level gave it, which says where Word shows it.
     """
     count = 0
     for paragraph in root.iter(WORD + "p"):
         try:
             number = _ooxml.numbering_reference(paragraph, styles.definitions)
+            ilvl = _ooxml.numbering_level(paragraph, styles.definitions)
         except ConversionError:
             continue
-        if number in unlabeled:
-            _ooxml.turn_off_numbering(paragraph)
-            count += 1
+        if number is None or number not in unlabeled:
+            continue
+        level = levels.get((number, ilvl))
+        if (
+            level is not None
+            and level.indent is not None
+            and _ooxml.left_indent(paragraph.find(WORD + "pPr")) is None
+        ):
+            _set_indent(paragraph, level.indent)
+        _ooxml.turn_off_numbering(paragraph)
+        count += 1
     return count
 
 
@@ -631,10 +757,13 @@ def _code_spans(
     return spans
 
 
-def _code_paragraph(lines: list[str], style: str) -> ET.Element:
-    """One paragraph in a code style, holding *lines* separated by line breaks."""
+def _code_paragraph(lines: list[str], style: str, indent: int | None) -> ET.Element:
+    """One paragraph in a code style, holding *lines* separated by line breaks, with the left
+    indent *indent* of the paragraphs it replaces."""
     paragraph = ET.Element(WORD + "p")
     ET.SubElement(ET.SubElement(paragraph, WORD + "pPr"), WORD + "pStyle", {WORD + "val": style})
+    if indent is not None:
+        _set_indent(paragraph, indent)
     run = ET.SubElement(paragraph, WORD + "r")
     for index, line in enumerate(lines):
         if index:
@@ -703,7 +832,11 @@ def _prepare_code(
             continue
         position = list(body).index(table)
         body.remove(table)
+        indent = _table_indent(table, styles)
         for offset, node in enumerate(content):
+            if indent is not None:
+                # Where Word shows the code, which says whether it is inside a list item.
+                _set_indent(node, indent + (_paragraph_indent(node, styles) or 0))
             body.insert(position + offset, node)
         blank_lines.update(node for node in content if empty(node))
         report.applied("code", "one-cell table(s) made code blocks")
@@ -748,9 +881,13 @@ def _prepare_code(
         while lines and not lines[-1]:
             lines.pop()
         position = list(body).index(group[0])
+        indent = _paragraph_indent(group[0], styles)
         for paragraph in group:
             body.remove(paragraph)
-        body.insert(position, _code_paragraph(lines, styles.style("paragraph", _CODE_BLOCK_STYLE)))
+        body.insert(
+            position,
+            _code_paragraph(lines, styles.style("paragraph", _CODE_BLOCK_STYLE), indent),
+        )
 
     in_blocks = {paragraph for group in groups for paragraph in group}
     for paragraph in list(_ooxml.scoped_iter(root, WORD + "p")):
@@ -962,6 +1099,191 @@ def _join_split_lists(root: ET.Element, list_of: Callable[[ET.Element], str | No
                 current = None
             gap.clear()
     return removed
+
+
+def _mark_list_content(
+    root: ET.Element,
+    styles: _Styles,
+    levels: dict[tuple[str, str], _ooxml.ListLevel],
+    list_of: Callable[[ET.Element], str | None],
+    boxed: Collection[ET.Element],
+    marker: str,
+    report: TransformReport,
+) -> None:
+    """Mark each table and paragraph between two items of a Word list in the body for the tree
+    to move into the item that Word shows it in, and report each that is in none.
+
+    Word numbers a list on past a table or a paragraph without a number, such as a note, and
+    an author shows one inside an item by indenting it to the item's text. Pandoc ends a list
+    at either: the items after it began a new list, each at the top level. Between two items
+    of a list, that is before an item of the list of an open item, with only tables and
+    paragraphs since the item before, each table and paragraph belongs to the deepest open
+    item whose text starts no further right than it does, give or take _INDENT_TOLERANCE, and
+    closes the items below that one; one that shows nothing, such as a paragraph that holds
+    only a bookmark, goes in the deepest. One that starts left of every open item's text is
+    outside the list, which ends there in the Markdown. It is reported, to indent in Word, if
+    the item after it is nested, deeper than the outermost open item, which the new list has
+    at its top level; after an item at the outermost level, as after a note between steps,
+    the Markdown shows what Word does.
+    The paragraphs of text boxes, which follow their paragraph, are not between the items of
+    a list.
+
+    Pandoc nests an item in the open item before it at a lower level, and goes on with the
+    list of an open item at its own level of the same abstract list; a list paragraph, such
+    as one whose numbering is off, joins the item before it. The open items, outermost first,
+    are those that the items after them can nest in. Paragraphs of *marker* and a step tell
+    the tree what goes where. Before the blocks between two items: "R" and how many items are
+    open. Before each block: "B" and the index of the open item it goes in, or "BX" where the
+    list has ended. Before the next item: "E" and a step for each list that Pandoc makes of
+    the items up to the next block, as _list_step gives it.
+    """
+    body = root.find(WORD + "body")
+    if body is None or not levels:
+        return
+    numbers = _paragraph_numbers(root)
+
+    def item(node: ET.Element) -> _OpenItem | None:
+        """*node* as an item of a Word list that Pandoc reads as one, with its level."""
+        number = list_of(node) if node.tag == WORD + "p" else None
+        if number is None:
+            return None
+        try:
+            ilvl = _ooxml.numbering_level(node, styles.definitions)
+        except ConversionError:
+            return None
+        level = levels.get((number, ilvl))
+        if level is None or not ilvl.isdigit():
+            return None
+        indent = _ooxml.left_indent(node.find(WORD + "pPr"))
+        if indent is None:
+            indent = level.indent if level.indent is not None else _paragraph_indent(node, styles)
+        return _OpenItem(int(ilvl), level.abstract, number, indent)
+
+    def attached(node: ET.Element) -> bool:
+        """Whether Pandoc reads *node* as a list paragraph, which joins the item before it."""
+        if node.tag != WORD + "p" or _ooxml.pandoc_heading(node, styles.definitions):
+            return False
+        try:
+            return _ooxml.numbering_reference(node, styles.definitions) is not None
+        except ConversionError:
+            return False
+
+    def holdable(node: ET.Element) -> bool:
+        """Whether a list item can hold *node*: a table, or a paragraph that is no heading."""
+        return node not in boxed and (
+            node.tag == WORD + "tbl"
+            or (node.tag == WORD + "p" and not _ooxml.pandoc_heading(node, styles.definitions))
+        )
+
+    marks: dict[ET.Element, list[str]] = {}
+
+    def place(region: list[ET.Element], stack: list[_OpenItem], following: _OpenItem) -> bool:
+        """Mark each block of *region* with the open item of *stack* that it goes in, and
+        close the items below it; False, marking none, if none goes in one. A block in none
+        is reported if the item *following* the region is deeper than the outermost open
+        item, which it would nest in, as the new list that Pandoc begins with that item has
+        it at its top level."""
+        steps: list[tuple[ET.Element, str]] = []
+        depth = len(stack)
+        for block in region:
+            if not stack:
+                steps.append((block, "BX"))
+                continue
+            if block.tag == WORD + "p" and not _ooxml.shows_content(block):
+                # It shows nothing, as a paragraph that holds only a bookmark: wherever it goes,
+                # the list goes on past it.
+                steps.append((block, f"B{len(stack) - 1}"))
+                continue
+            table = block.tag == WORD + "tbl"
+            indent = _table_indent(block, styles) if table else _paragraph_indent(block, styles)
+            if not table and indent is None:
+                indent = 0
+            target = next(
+                (
+                    index
+                    for index in reversed(range(len(stack)))
+                    if indent is not None
+                    and (start := stack[index].indent) is not None
+                    and start <= indent + _INDENT_TOLERANCE
+                ),
+                None,
+            )
+            if target is None:
+                if following.level > stack[0].level:
+                    first = next(block.iter(WORD + "p"), None)
+                    where = (
+                        f"paragraph {numbers[first] + 1}" if first in numbers else "the document"
+                    )
+                    report.skipped(
+                        "lists",
+                        UNINDENTED_IN_LIST,
+                        f"{where}: Word {'table' if table else 'paragraph'} between items of a "
+                        "list is not indented into the list; the items after it start a new list",
+                    )
+                stack.clear()
+                steps.append((block, "BX"))
+                continue
+            steps.append((block, f"B{target}"))
+            del stack[target + 1 :]
+        if all(step == "BX" for _block, step in steps):
+            return False
+        marks[region[0]] = [f"R{depth}"]
+        for block, step in steps:
+            marks.setdefault(block, []).append(step)
+        return True
+
+    stack: list[_OpenItem] = []
+    # The first item of the list that Pandoc is making, and the steps of the lists after
+    # marked blocks, with the item that they start at.
+    head: _OpenItem | None = None
+    steps: list[str] | None = None
+    ends: list[tuple[ET.Element, list[str]]] = []
+    attach = False
+    region: list[ET.Element] = []
+    for node in list(body):
+        if node.tag in _TRANSPARENT:
+            continue
+        found = item(node)
+        if found is None:
+            if attach and attached(node):
+                continue
+            # Pandoc ends its list here.
+            attach, head, steps = False, None, None
+            if stack:
+                region.append(node)
+            continue
+        if region:
+            if (
+                found.number in {open_item.number for open_item in stack}
+                and all(holdable(block) for block in region)
+                and place(region, stack, found)
+            ):
+                steps = []
+                ends.append((node, steps))
+            else:
+                stack.clear()
+            region = []
+        if head is None or not (
+            found.level > head.level
+            or (found.level == head.level and found.abstract == head.abstract)
+        ):
+            head = found
+            if steps is not None:
+                steps.append(_list_step(stack, found))
+        _open(stack, found)
+        attach = True
+    for node, found_steps in ends:
+        marks[node] = ["E" + "".join(found_steps)]
+    if not marks:
+        return
+    children: list[ET.Element] = []
+    for child in body:
+        for step in marks.get(child, []):
+            paragraph = ET.Element(WORD + "p")
+            paragraph.append(_ooxml.word_run(marker + step))
+            children.append(paragraph)
+        children.append(child)
+    body[:] = children
 
 
 def _report_drifted_bookmarks(root: ET.Element, report: TransformReport) -> None:
@@ -1260,12 +1582,14 @@ def prepare_document(
     # Pandoc reads only the first picture of a run, and none of its text.
     _ooxml.split_drawing_runs(root)
     _prepare_tables(root, report)
-    _text_boxes_after_paragraphs(root, report)
-    numbered, unlabeled, numbering = _list_numbering(package, styles, report)
+    boxed = _text_boxes_after_paragraphs(root, report)
+    numbered, unlabeled, levels, numbering = _list_numbering(package, styles, report)
     if numbering is not None:
         modified[package.numbering_part] = numbering
     with transform(report, "lists"):
-        report.applied("lists", _UNLABELED_ITEMS, _unnumber_unlabeled(root, styles, unlabeled))
+        report.applied(
+            "lists", _UNLABELED_ITEMS, _unnumber_unlabeled(root, styles, unlabeled, levels)
+        )
     parents = {child: parent for parent in root.iter() for child in parent}
 
     def in_table(node: ET.Element) -> bool:
@@ -1301,6 +1625,10 @@ def prepare_document(
         images = _prepare_images(root, relationships, package, modified, report)
     with transform(report, "lists"):
         report.applied("lists", _LIST_GAPS, _join_split_lists(root, list_of))
+    # Set before marking, so that the tree removes every marker even if marking fails.
+    list_marker = LIST_MARKER + uuid.uuid4().hex.upper()
+    with transform(report, "lists"):
+        _mark_list_content(root, styles, levels, list_of, boxed, list_marker, report)
     _report_drifted_bookmarks(root, report)
     bookmarks = _prepare_links(root, relationships, paths, report)
     _keep_metadata_in_body(root, styles, numbered, title)
@@ -1323,4 +1651,4 @@ def prepare_document(
         )
     prepared = work / "prepared.docx"
     _write_package(package, prepared, modified)
-    return PreparedDocument(prepared, images, probe, bookmarks)
+    return PreparedDocument(prepared, images, probe, bookmarks, list_marker)
