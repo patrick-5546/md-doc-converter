@@ -80,11 +80,13 @@ accepted.
   update the table of contents, and insert the cross-reference again, in Word.
   A web or e-mail address typed as text becomes a link.
 - **Fields** keep the text Word shows, such as caption numbers, and a check box
-  shows ☐ or ☒. Page numbers stay text. A table of contents keeps each entry's
-  link, number and title, but not its page number. Word shows a field's text
-  as of its last update, so update the fields before converting: in Word, press
-  Ctrl+A and then F9. A caption number that shows nothing until then, as in
-  `Figure 3-: Clock tree`, stays so, and the report names its paragraph.
+  shows ☐ or ☒. Page numbers stay text. A table of contents, or of figures,
+  keeps each entry's link, number and title, but not its page number. Word
+  shows a field's text as of its last update, so update the fields before
+  converting: in Word, press Ctrl+A and then F9, and have each table of contents
+  or figures updated entirely. A caption number that shows nothing until then,
+  as in `Figure 3-: Clock tree`, stays so, as does a table of figures that leaves
+  out a caption or numbers one differently; the report names each.
 - **Footnotes and endnotes** become footnotes, `[^1]`, numbered in order and
   defined at the end of the Markdown. VS Code's Markdown preview shows
   them only with the [Markdown Footnotes](https://marketplace.visualstudio.com/items?itemName=bierner.markdown-footnotes)

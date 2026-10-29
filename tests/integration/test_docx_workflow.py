@@ -43,9 +43,11 @@ from tests.support.docx import (
     W,
     bookmark,
     boundary_hyperlink_field,
+    caption_paragraph,
     cell,
     code_run,
     field,
+    figure_entry,
     font_run,
     formatted,
     grouped_image,
@@ -1553,6 +1555,104 @@ def test_caption_numbers_that_show_nothing_are_kept_and_reported(convert: Conver
     assert report.kinds[_prepare.EMPTY_SEQUENCE] == 2
     assert report.sections[_prepare.EMPTY_SEQUENCE] == "word"
     assert f"  2  {_prepare.EMPTY_SEQUENCE}" in report.issues()
+
+
+@pytest.mark.parametrize(
+    ("entries", "linked", "captions", "expected"),
+    [
+        pytest.param(
+            [("Figure 1-1: Power up", 101), ("Figure 1-2: Clock tree", 102)],
+            True,
+            [("1", "Power up", 101), ("2", "Clock tree", 102), ("3", "Reset steps", 103)],
+            [
+                (
+                    "fields: paragraph 6: Word caption 'Figure 1-3' is missing from the table "
+                    "of figures at paragraph 1; update the table of figures in Word"
+                )
+            ],
+            id="caption-left-out",
+        ),
+        pytest.param(
+            # A figure between them was deleted; entries without links match by their text.
+            [
+                ("Figure 1-1: Power up", 101),
+                ("Figure 1-2: Clock tree", 102),
+                ("Figure 1-3: Reset steps", 103),
+            ],
+            False,
+            [("1", "Power up", 101), ("2", "Reset steps", 103)],
+            [
+                (
+                    "fields: paragraph 3: Word table of figures numbers caption 'Figure 1-2', "
+                    "at paragraph 6, as 'Figure 1-3: Reset steps'; update the table of figures "
+                    "in Word"
+                )
+            ],
+            id="number-out-of-date",
+        ),
+        pytest.param(
+            [("Figure 1-1: Power up", 101), ("Figure 1-2: Clock tree", 102)],
+            True,
+            [("1", "Power up", 101), ("2", "Clock tree", 102)],
+            [],
+            id="up-to-date",
+        ),
+        pytest.param(
+            # Word can put a left-to-right mark, which shows nothing, in a caption's number.
+            [("Figure 1-1: Power up", 101), ("Figure 1-2: Clock tree", 102)],
+            True,
+            [("1", "Power up", 101), ("\u200e2", "Clock tree", 102)],
+            [],
+            id="mark-in-number",
+        ),
+        pytest.param(
+            # The caption's number, which shows nothing, is reported on its own.
+            [("Figure 1-1: Power up", 101), ("Figure 1-2: Reset steps", 102)],
+            True,
+            [("1", "Power up", 101), (None, "Reset steps", 102)],
+            [],
+            id="number-shows-nothing",
+        ),
+    ],
+)
+def test_captions_that_a_table_of_figures_leaves_out_or_numbers_differently_are_reported(
+    entries: list[tuple[str, int]],
+    linked: bool,
+    captions: list[tuple[str | None, str, int]],
+    expected: list[str],
+    convert: Converter,
+) -> None:
+    # Word shows a table of figures as it last updated it: the TOC field's cached entries.
+    last = len(entries) - 1
+    result, report, warnings = convert.reported(
+        [
+            *(
+                figure_entry(
+                    text,
+                    mark,
+                    linked=linked,
+                    code=' TOC \\h \\z \\c "Figure" ' if index == 0 else None,
+                    end=index == last,
+                )
+                for index, (text, mark) in enumerate(entries)
+            ),
+            paragraph("Clocks", "Heading1"),
+            *(
+                caption_paragraph("Figure", "1", number, title, mark=mark)
+                for number, title, mark in captions
+            ),
+        ],
+        styles=(word_style("Caption"), word_style("TableofFigures")),
+    )
+    prefix = "docx-to-md: warning: "
+    reported = [line.removeprefix(prefix) for line in warnings.splitlines() if "of figures" in line]
+    assert reported == expected
+    kinds = (_prepare.UNLISTED_CAPTION, _prepare.RENUMBERED_CAPTION)
+    assert sum(report.kinds[kind] for kind in kinds) == len(expected)
+    assert all(report.sections[kind] == "word" for kind in kinds if kind in report.kinds)
+    shows_nothing = any(number is None for number, _title, _mark in captions)
+    assert report.kinds[_prepare.EMPTY_SEQUENCE] == shows_nothing
+    assert "Clocks" in result
 
 
 def test_bookmarks_in_leading_title_paragraphs_keep_their_position(convert: Converter) -> None:

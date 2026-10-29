@@ -46,6 +46,12 @@ _EMPTY_HEADING = "Word heading has no text; omitted"
 _EMPTY_TABLE = "Word table is empty; omitted"
 _HIDDEN_RESULT = "Word field without a field name holds what Word does not show; kept"
 EMPTY_SEQUENCE = "Word caption number shows nothing until the fields are updated"
+UNLISTED_CAPTION = (
+    "Word caption missing from its table of figures; update the table of figures in Word"
+)
+RENUMBERED_CAPTION = (
+    "Word table of figures numbers a caption differently; update the table of figures in Word"
+)
 _PICTURE_HEADING = "Word heading has only a picture; kept as a paragraph"
 _LISTED_HEADING = "Word numbers this outline-level heading as a list item; kept as a list item"
 SKIPPED_LEVEL = "Word heading skips a level; kept at its level"
@@ -1467,6 +1473,32 @@ def _report_empty_sequences(root: ET.Element, report: TransformReport) -> None:
         )
 
 
+def _report_unlisted_captions(root: ET.Element, report: TransformReport) -> None:
+    """Report each caption that a table of figures leaves out, or numbers otherwise than the
+    caption does, as Word shows it until its author updates the table of figures."""
+    found = _ooxml.unlisted_captions(root)
+    numbers = _paragraph_numbers(root) if found else {}
+
+    def where(paragraph: ET.Element) -> str:
+        return f"paragraph {numbers[paragraph] + 1}" if paragraph in numbers else "the document"
+
+    for table, caption, entry in found:
+        if entry is None:
+            report.warn(
+                f"fields: {where(caption.paragraph)}: Word caption {caption.number!r} is missing "
+                f"from the table of figures at {where(table.paragraph)}; update the table of "
+                "figures in Word",
+                kind=UNLISTED_CAPTION,
+            )
+        else:
+            report.warn(
+                f"fields: {where(entry.paragraph)}: Word table of figures numbers caption "
+                f"{caption.number!r}, at {where(caption.paragraph)}, as {entry.text!r}; update "
+                "the table of figures in Word",
+                kind=RENUMBERED_CAPTION,
+            )
+
+
 def _omit_empty_tables(root: ET.Element, report: TransformReport) -> None:
     """Omit the tables that show nothing, and name each by the paragraph where it starts, or
     by the one that holds the text box it is in, as for an empty heading."""
@@ -1571,6 +1603,8 @@ def prepare_document(
         )
     with transform(report, "fields"):
         report.applied("fields", "simple field(s) kept", _ooxml.expand_simple_fields(root))
+        # Before the repairs unwrap the tables of figures, which span paragraphs.
+        _report_unlisted_captions(root, report)
         repairs, kept = _ooxml.repair_fields(root)
         for detail, count in repairs.items():
             report.applied("fields", detail, count)

@@ -206,6 +206,51 @@ def field(instruction: str, result: str | None = None, *, simple: bool = False) 
     return runs
 
 
+def caption_paragraph(
+    label: str, chapter: str, number: str | None, title: str, *, mark: int | None = None
+) -> ET.Element:
+    """A caption in Word's Caption style, such as "Figure 1-2: Title": *label*, the chapter
+    number of a STYLEREF field, a hyphen, the number of a SEQ field of *label*, or nothing,
+    and *title*. With *mark*, the bookmark _Toc*mark* is around it, as Word puts one for a
+    table of figures to link to."""
+    result = paragraph_of(
+        _ooxml.word_run(f"{label} "),
+        *field(" STYLEREF 1 \\s ", chapter),
+        _ooxml.word_run("-"),
+        *field(f" SEQ {label} \\* ARABIC \\s 1 ", number),
+        _ooxml.word_run(f": {title}"),
+        style="Caption",
+    )
+    if mark is not None:
+        start = {W + "id": str(mark), W + "name": f"_Toc{mark}"}
+        result.insert(1, ET.Element(W + "bookmarkStart", start))
+        result.append(ET.Element(W + "bookmarkEnd", {W + "id": str(mark)}))
+    return result
+
+
+def figure_entry(
+    text: str, mark: int, *, linked: bool = True, code: str | None = None, end: bool = False
+) -> ET.Element:
+    """An entry of a Word table of figures: *text*, a tab, and the page of the bookmark
+    _Toc*mark*, all a link to it if *linked*. *code* begins the table's TOC field with that
+    code before the entry, and *end* ends it after."""
+    result = ET.Element(W + "p")
+    ET.SubElement(ET.SubElement(result, W + "pPr"), W + "pStyle", {W + "val": "TableofFigures"})
+    if code is not None:
+        result.extend(field(code)[:3])
+    holder = (
+        ET.SubElement(result, W + "hyperlink", {W + "anchor": f"_Toc{mark}", W + "history": "1"})
+        if linked
+        else result
+    )
+    holder.append(_ooxml.word_run(text))
+    ET.SubElement(ET.SubElement(holder, W + "r"), W + "tab")
+    holder.extend(page_reference(f"_Toc{mark}"))
+    if end:
+        result.append(field("")[-1])
+    return result
+
+
 def toc_entry(
     anchor: str, number: str, title: str, page: str, *, begin: bool = False, end: bool = False
 ) -> ET.Element:

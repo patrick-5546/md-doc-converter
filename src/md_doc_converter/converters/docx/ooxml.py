@@ -1339,6 +1339,259 @@ def empty_sequences(root: ET.Element) -> list[ET.Element]:
     return found
 
 
+@dataclass(frozen=True)
+class Caption:
+    """A paragraph that a SEQ field numbers, such as a figure's caption: the identifier of the
+    field, what the paragraph shows up to the end of the number and in all, and whether the
+    number shows anything."""
+
+    paragraph: ET.Element
+    label: str
+    number: str
+    text: str
+    numbered: bool
+
+
+@dataclass(frozen=True)
+class FigureEntry:
+    """An entry of a table of figures: its paragraph, what it shows but its page number, and the
+    bookmark that it links to, if it does."""
+
+    paragraph: ET.Element
+    text: str
+    target: str | None
+
+
+@dataclass(frozen=True)
+class FigureTable:
+    r"""A table of figures, a TOC field with \c or \a: the paragraph where it starts, the SEQ
+    identifier that it lists the captions of, whether its entries show their numbers, which
+    \a leaves out, and its entries."""
+
+    paragraph: ET.Element
+    label: str
+    numbered: bool
+    entries: tuple[FigureEntry, ...]
+
+
+@dataclass
+class _Field:
+    """A field being read: its paragraph, its code, the paragraphs of its result and, once its
+    separator has come, its kind, the identifier of a SEQ field or the label of a table of
+    figures, and whether its result shows anything."""
+
+    paragraph: ET.Element | None
+    code: list[str]
+    entries: list[ET.Element]
+    separated: bool = False
+    kind: str = ""
+    label: str = ""
+    numbered: bool = True
+    shows: bool = False
+
+    def classify(self) -> None:
+        code = "".join(self.code)
+        sequence = re.match(r'\s*SEQ\s+(?:"([^"]*)"|([^\s\\]+))', code, re.IGNORECASE)
+        listing = re.search(r'\\([ca])\s+(?:"([^"]*)"|([^\s\\]+))', code)
+        if sequence is not None and not re.search(r"\\h\b", code):
+            self.kind, self.label = "sequence", sequence.group(1) or sequence.group(2) or ""
+        elif re.match(r"\s*TOC\b", code, re.IGNORECASE) and listing is not None:
+            self.kind, self.label = "figures", listing.group(2) or listing.group(3) or ""
+            self.numbered = listing.group(1) == "c"
+        elif re.match(r"\s*PAGEREF\b", code, re.IGNORECASE):
+            self.kind = "page"
+
+
+_SHOWN_TEXT = {
+    WORD + "tab": "\t",
+    WORD + "ptab": "\t",
+    WORD + "noBreakHyphen": "-",
+    WORD + "br": " ",
+    WORD + "cr": " ",
+}
+
+
+def _plain(text: str) -> str:
+    """*text* with each run of spaces, tabs and no-break spaces one space, no-break hyphens
+    plain, and no format characters, such as the left-to-right marks that Word puts in
+    caption numbers, which show nothing, as captions and their table-of-figures entries are
+    compared."""
+    text = text.replace(NO_BREAK_HYPHEN, "-")
+    return " ".join(
+        "".join(
+            " " if character in UNICODE_SPACES else character
+            for character in text
+            if unicodedata.category(character) != "Cf"
+        ).split()
+    )
+
+
+def figure_tables(root: ET.Element) -> tuple[list[FigureTable], list[Caption]]:
+    r"""The tables of figures of the document, and its captions, in document order.
+
+    A table of figures is a TOC field with \c, or \a, and the identifier of the SEQ fields that
+    number its captions; Word keeps its entries as it last updated it, each the text of a
+    caption, with \a without its label and number, and a page number, usually as a link to a
+    bookmark around the caption. A caption is a paragraph that holds a SEQ field that shows
+    its result; one with \h hides it.
+    """
+    parents = {child: parent for parent in root.iter() for child in parent}
+
+    def paragraph_of(node: ET.Element) -> ET.Element | None:
+        current = parents.get(node)
+        while current is not None and current.tag != WORD + "p":
+            current = parents.get(current)
+        return current
+
+    texts: dict[ET.Element, list[str]] = {}
+    targets: dict[ET.Element, str] = {}
+    open_fields: list[_Field] = []
+    tables: list[tuple[_Field, ET.Element]] = []
+    # Each caption's paragraph, identifier, the length of its text at the end of its number,
+    # and whether its number shows anything.
+    sequences: list[tuple[ET.Element, str, int, bool]] = []
+    for node in _shown(root):
+        if node.tag == WORD + "instrText":
+            if open_fields and not open_fields[-1].separated:
+                open_fields[-1].code.append(node.text or "")
+            continue
+        if node.tag == WORD + "fldChar":
+            kind = node.get(WORD + "fldCharType")
+            if kind == "begin":
+                open_fields.append(_Field(paragraph_of(node), [], []))
+            elif kind == "separate" and open_fields and not open_fields[-1].separated:
+                open_fields[-1].separated = True
+                open_fields[-1].classify()
+            elif kind == "end" and open_fields:
+                closed = open_fields.pop()
+                if not closed.separated:
+                    closed.classify()
+                owner = paragraph_of(node)
+                if closed.kind == "sequence" and owner is not None:
+                    length = sum(len(piece) for piece in texts.get(owner, []))
+                    sequences.append((owner, closed.label, length, closed.shows))
+                elif closed.kind == "figures" and closed.paragraph is not None:
+                    tables.append((closed, closed.paragraph))
+            continue
+        piece = (node.text or "") if node.tag in _TEXT_TAGS else _SHOWN_TEXT.get(node.tag)
+        if piece is None or not all(found.separated for found in open_fields):
+            continue
+        if any(found.kind == "page" for found in open_fields):
+            continue
+        paragraph = paragraph_of(node)
+        if paragraph is None:
+            continue
+        texts.setdefault(paragraph, []).append(piece)
+        for found in open_fields:
+            found.shows = found.shows or bool(piece.strip())
+            if found.kind == "figures" and paragraph not in found.entries:
+                found.entries.append(paragraph)
+        link = parents.get(node)
+        while link is not None and link.tag != WORD + "hyperlink":
+            link = parents.get(link)
+        if link is not None and link.get(WORD + "anchor") and paragraph not in targets:
+            targets[paragraph] = link.get(WORD + "anchor", "")
+
+    def text(paragraph: ET.Element, end: int | None = None) -> str:
+        return _plain("".join(texts.get(paragraph, []))[:end])
+
+    captions = [
+        Caption(paragraph, label, text(paragraph, length), text(paragraph), shows)
+        for paragraph, label, length, shows in sequences
+    ]
+    return [
+        FigureTable(
+            start,
+            table.label,
+            table.numbered,
+            tuple(
+                FigureEntry(paragraph, text(paragraph), targets.get(paragraph))
+                for paragraph in table.entries
+                if text(paragraph)
+            ),
+        )
+        for table, start in tables
+    ], captions
+
+
+def _shows_number(entry: str, number: str) -> bool:
+    """Whether the entry text *entry* starts with the caption number *number*."""
+    return entry.startswith(number) and not entry[len(number) : len(number) + 1].isalnum()
+
+
+def _title(caption: Caption) -> str:
+    """What *caption* shows after its number and the separator after it."""
+    return caption.text[len(caption.number) :].lstrip(" :.-\u2013\u2014")
+
+
+def unlisted_captions(root: ET.Element) -> list[tuple[FigureTable, Caption, FigureEntry | None]]:
+    """Each caption that a table of figures of its identifier does not list, without an entry,
+    and each that it lists with another number, with the entry, but not one whose own number
+    shows nothing.
+
+    An entry lists the caption around which is the bookmark that it links to, else the first
+    caption not yet listed that shows the entry's text, or ends as the entry does, as when only
+    its number changed.
+    """
+    tables, captions = figure_tables(root)
+    if not tables:
+        return []
+    marked: dict[str, list[ET.Element]] = {}
+    names: dict[str, str] = {}
+    parents = {child: parent for parent in root.iter() for child in parent}
+    for node in root.iter():
+        if node.tag not in {WORD + "bookmarkStart", WORD + "bookmarkEnd"}:
+            continue
+        if node.tag == WORD + "bookmarkStart":
+            names[node.get(WORD + "id", "")] = node.get(WORD + "name", "")
+        name = names.get(node.get(WORD + "id", ""))
+        holder = parents.get(node)
+        while holder is not None and holder.tag != WORD + "p":
+            holder = parents.get(holder)
+        if name and holder is not None:
+            marked.setdefault(name, []).append(holder)
+    found: list[tuple[FigureTable, Caption, FigureEntry | None]] = []
+    for table in tables:
+        listed = [
+            caption for caption in captions if caption.label.casefold() == table.label.casefold()
+        ]
+        by_paragraph = {caption.paragraph: caption for caption in listed}
+        matched: set[int] = set()
+        for entry in table.entries:
+            caption = next(
+                (
+                    by_paragraph[paragraph]
+                    for paragraph in marked.get(entry.target or "", [])
+                    if paragraph in by_paragraph
+                ),
+                None,
+            )
+            if caption is None:
+                unlisted = [candidate for candidate in listed if id(candidate) not in matched]
+                same = [
+                    candidate
+                    for candidate in unlisted
+                    if entry.text in {candidate.text, _title(candidate)}
+                ]
+                ending = [
+                    candidate
+                    for candidate in unlisted
+                    if _title(candidate) and entry.text.endswith(_title(candidate))
+                ]
+                caption = next(iter(same or ending), None)
+            if caption is None:
+                continue
+            matched.add(id(caption))
+            if (
+                table.numbered
+                and caption.numbered
+                and not _shows_number(entry.text, caption.number)
+            ):
+                found.append((table, caption, entry))
+        found.extend((table, caption, None) for caption in listed if id(caption) not in matched)
+    return found
+
+
 def scoped_iter(node: ET.Element, tag: str | None = None) -> Iterator[ET.Element]:
     """Pre-order elements outside text boxes, whose content the converters place differently."""
     stack = [node]
