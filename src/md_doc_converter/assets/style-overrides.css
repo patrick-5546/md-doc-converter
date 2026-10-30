@@ -4,8 +4,9 @@ Overrides for the pandoc rendering pipeline:
 - 1in margins all around (matching Microsoft Word "Normal" default)
 - Page numbers in the footer (only in PDF output)
 - Headings kept on the page of the text they introduce (PDF output)
-- Headings printed whole on the page that they start, so that their PDF
-  bookmarks show them once (PDF output)
+- Headings printed whole on the page that they start, and with the spaces
+  where they wrap, so that their PDF bookmarks show them as written (PDF
+  output)
 - Styling for the optional page header and footer text, whose content is
   generated for each render
 - Font stacks of fonts that Linux and Windows have, replacing
@@ -49,12 +50,15 @@ Overrides for the pandoc rendering pipeline:
   break-after: avoid;
 }
 
-/* A heading's text can rise above its line box: Noto Sans and Segoe UI are taller than the
-   headings' 1.25 line height. When a page starts with a heading, Chrome also prints that top
-   on the page before, out of sight, and the heading's PDF bookmark, which holds all the text
-   printed for it, then repeats it. A page break that Chrome chooses drops the heading's margin
-   but not its padding, which keeps the text on its own page. The margin is
-   github-markdown-css's 1.5rem less the padding, so headings keep their spacing. */
+/* A heading's PDF bookmark holds all the text that Chrome prints for the heading. Its text can
+   rise above its line box: Noto Sans and Segoe UI are taller than the headings' 1.25 line
+   height. When a page starts with a heading, Chrome also prints that top on the page before,
+   out of sight, and the bookmark then repeats the heading. A page break that Chrome chooses
+   drops the heading's margin but not its padding, which keeps the text on its own page. The
+   margin is github-markdown-css's 1.5rem less the padding, so headings keep their spacing.
+   Chrome prints no space where a line wraps, so the bookmark of a heading that wraps would run
+   its lines together: pre-wrap keeps that space, hanging at the end of the line.
+   pandoc-defaults.yaml has Pandoc write no line breaks of its own, which pre-wrap would print. */
 @media print {
   .markdown-body h1,
   .markdown-body h2,
@@ -64,6 +68,7 @@ Overrides for the pandoc rendering pipeline:
   .markdown-body h6 {
     padding-top: 0.25em;
     margin-top: calc(1.5rem - 0.25em);
+    white-space: pre-wrap;
   }
 }
 

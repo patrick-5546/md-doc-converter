@@ -178,6 +178,19 @@ def test_a_heading_that_starts_a_page_is_bookmarked_once_there(tmp_path: Path) -
     assert bookmarks(source.with_suffix(".pdf")) == [("Overview", "1"), ("Registers", "2")]
 
 
+def test_a_heading_that_wraps_keeps_its_spaces_in_its_bookmark(tmp_path: Path) -> None:
+    # Chrome prints no space where a line wraps, and the bookmark ran the lines together. The
+    # heading is also longer than the 72 columns at which Pandoc would break the HTML's lines.
+    heading = (
+        "Request and response ports, with every signal that each of them carries across the "
+        "boundary between the two"
+    )
+    source = tmp_path / "spec.md"
+    source.write_text(f"# Overview\n\n## {heading}\n\nThe ports.\n", encoding="utf-8")
+    run(*CLI, "md-to-pdf", source, cwd=tmp_path)
+    assert bookmarks(source.with_suffix(".pdf")) == [("Overview", "1"), (heading, "1")]
+
+
 @pytest.mark.parametrize("document", ["pdf", "pdf_without_math"], ids=["math", "no-math"])
 def test_text_fills_the_width_between_one_inch_margins(
     document: str, request: pytest.FixtureRequest
