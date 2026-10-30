@@ -241,7 +241,8 @@ The shared styles provide:
 
 - US Letter pages with one-inch margins;
 - page numbering and the optional header and footer text;
-- headings kept on the page of the text they introduce;
+- headings kept on the page of the text they introduce, and printed whole on
+  the page that they start, so that their PDF bookmarks show them once;
 - text and monospace font stacks of fonts that Linux and Windows have;
 - image, table, code-block, and page-width overflow protection;
 - Mermaid diagram scaling;

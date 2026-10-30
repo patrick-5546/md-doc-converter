@@ -154,6 +154,30 @@ def test_headings_become_nested_bookmarks(pdf: Path) -> None:
     assert titles(outline) == BOOKMARKS
 
 
+def bookmarks(pdf: Path) -> list[tuple[str | None, str | None]]:
+    """Each bookmark's title and page, in order, at every level."""
+    root = ET.fromstring(run("pdftohtml", "-xml", "-i", "-stdout", "-q", pdf))
+    return [(item.text, item.get("page")) for item in root.iter("item")]
+
+
+def test_a_heading_that_starts_a_page_is_bookmarked_once_there(tmp_path: Path) -> None:
+    # Its text rises above a line box shorter than the font, as Noto Sans and Segoe UI do above
+    # the headings' own. Chrome printed that top on the page before too, out of sight, and the
+    # bookmark then repeated the heading and led to that page. A forced break keeps the
+    # heading's margin, which a break that Chrome chooses drops; this one has none.
+    source = tmp_path / "spec.md"
+    source.write_text(
+        "# Overview\n\nThe first page.\n\n## Registers\n\nThe second page.\n", encoding="utf-8"
+    )
+    style = tmp_path / "pages.css"
+    style.write_text(
+        ".markdown-body h2 { break-before: page; margin-top: 0; line-height: 1; }\n",
+        encoding="utf-8",
+    )
+    run(*CLI, "md-to-pdf", source, "--extra-css", style, cwd=tmp_path)
+    assert bookmarks(source.with_suffix(".pdf")) == [("Overview", "1"), ("Registers", "2")]
+
+
 @pytest.mark.parametrize("document", ["pdf", "pdf_without_math"], ids=["math", "no-math"])
 def test_text_fills_the_width_between_one_inch_margins(
     document: str, request: pytest.FixtureRequest
