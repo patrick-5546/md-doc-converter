@@ -495,6 +495,33 @@ def test_npm_packages_and_one_browser_install_from_the_bundled_lockfile_once(
 
 
 @pytest.mark.parametrize(
+    ("deleted", "reinstalled"),
+    [
+        pytest.param("puppeteer", [BROWSER_INSTALL], id="browser"),
+        pytest.param("node/node_modules/katex", [NPM_CI, BROWSER_INSTALL], id="package"),
+    ],
+)
+def test_setup_reinstalls_what_was_deleted_from_a_current_toolchain(
+    deleted: str,
+    reinstalled: list[tuple[str, list[str]]],
+    fakes: FakeTools,
+    tmp_path: Path,
+) -> None:
+    # The stamp still matches the bundled lockfile, as when a folder was deleted by hand; setup
+    # repairs what doctor reports, and a missing browser alone needs no npm install.
+    npm = str(fakes.write() / "npm")
+    tools = Toolchain(tmp_path / "home")
+    assert install.install_packages(tools, npm, force=False)
+    shutil.rmtree(tools.root / deleted)
+    assert packages_current(tools)
+    assert install.install_packages(tools, npm, force=False)
+    calls = [(call["tool"], call["arguments"]) for call in fakes.calls()]
+    assert calls == [NPM_CI, BROWSER_INSTALL, *reinstalled]
+    assert checks.check_packages(tools).status == "ok"
+    assert checks.check_browser(tools).status == "ok"
+
+
+@pytest.mark.parametrize(
     ("tool", "message"), [("npm", "npm ci failed"), ("puppeteer", "browser install failed")]
 )
 def test_failed_install_leaves_no_stamp(

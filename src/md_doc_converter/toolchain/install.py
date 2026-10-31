@@ -24,6 +24,7 @@ from md_doc_converter.toolchain.checks import (
     SUPPORTED_PLATFORMS,
     check_browser,
     check_node,
+    check_packages,
     installed_version,
 )
 from md_doc_converter.toolchain.environment import (
@@ -37,7 +38,6 @@ from md_doc_converter.toolchain.environment import (
     Toolchain,
     current_platform,
     host_platform,
-    packages_current,
     toolchain,
     write_stamp,
 )
@@ -94,10 +94,20 @@ def supported_platform() -> bool:
 
 
 def install_packages(tools: Toolchain, npm: str, *, force: bool) -> bool:
-    """Install the bundled npm lockfile; return whether anything was installed."""
-    if packages_current(tools) and not force:
+    """Install the bundled npm lockfile and the browser that it pins; return whether anything
+    was installed.
+
+    Unless *force* is set, what passes doctor's checks stays: a browser that is missing, as
+    when its folder was deleted, is installed alone, and a missing package reinstalls the
+    lockfile.
+    """
+    environment = {**os.environ, "PUPPETEER_CACHE_DIR": str(tools.puppeteer_cache)}
+    if not force and check_packages(tools).status == "ok":
         print(f"npm packages: up to date in {tools.node_modules}")
-        return False
+        if check_browser(tools).status == "ok":
+            return False
+        install_browser(tools, environment)
+        return True
     tools.node_dir.mkdir(parents=True, exist_ok=True)
     tools.stamp.unlink(missing_ok=True)
     for name in MANIFESTS:
@@ -107,7 +117,6 @@ def install_packages(tools: Toolchain, npm: str, *, force: bool) -> bool:
     # rendering does not use. Nor are the optional packages used: ZenUML's canvas, for one,
     # draws in Node.js, while Mermaid draws in the browser. The tidy-tree layout, optional for
     # mermaid-cli, is a direct dependency, so it is installed.
-    environment = {**os.environ, "PUPPETEER_CACHE_DIR": str(tools.puppeteer_cache)}
     command = [npm, "ci", "--ignore-scripts", "--omit=optional", "--no-audit", "--no-fund"]
     try:
         subprocess.run(command, cwd=tools.node_dir, env=environment, check=True)

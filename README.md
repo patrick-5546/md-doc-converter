@@ -145,8 +145,9 @@ even when another one is installed. Without it, md-doc-converter uses the
 Pandoc on `PATH`, and `doctor` warns when that is another version, which may
 format some converted Markdown slightly differently.
 
-`setup` skips what is already current, and reinstalls the npm packages and the
-browser when a new md-doc-converter version changes them. `setup --force`
+`setup` skips what is already current. It reinstalls the npm packages and the
+browser when a new md-doc-converter version changes them or a package is
+missing, and the browser alone when only it is missing. `setup --force`
 reinstalls everything. To remove the toolchain, delete its directory; to remove
 the command, run `uv tool uninstall md-doc-converter`.
 
