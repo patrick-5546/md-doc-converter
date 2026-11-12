@@ -1,8 +1,8 @@
 # Excel and CSV conversion
 
 ```sh
-md-doc-converter excel-to-md data/pins.xlsx    # data/<sheet name>.md for each worksheet
-md-doc-converter excel-to-csv data/pins.xlsx   # data/<sheet name>.csv for each worksheet
+md-doc-converter excel-to-md data/pins.xlsx    # a page in data/ for each worksheet
+md-doc-converter excel-to-csv data/pins.xlsx   # a CSV file in data/ for each worksheet
 md-doc-converter csv-to-md data                # a page beside each CSV in data/ and its subfolders
 ```
 
@@ -14,29 +14,21 @@ neither Pandoc nor Node.js.
 
 ## Workbooks
 
-`excel-to-md` writes each worksheet as a page, `<sheet name>.md`.
-`excel-to-csv` writes `<sheet name>.csv` instead, from which `csv-to-md` writes
-the same table. A page's title is its worksheet's name, as Excel shows it; its
-file name leaves out the spaces and dots around that name, has `-` for each
-space in it, as Azure DevOps Wiki names a page, and `_` for each character that
-Windows or Azure DevOps Wiki does not allow in one, such as `>` and `#`. A name
-that Windows keeps for a device, such as `CON`, gets `_` after it, and a name
-that another worksheet's file already has, in any case, is numbered, as
-`Notes-2`. The empty rows and columns around the cells that hold text are left
-out, so the first row with text is the table's header, and empty worksheets and
-chart sheets are skipped. Formulas are written as the values Excel saved with
-them; a workbook saved by a program that does not calculate formulas, such as a
-script, has none, and those cells come out empty.
+`excel-to-md` writes a page for each worksheet, and `excel-to-csv` a CSV file,
+from which `csv-to-md` writes the same table. Empty worksheets and chart sheets
+are skipped.
 
-Each cell is written as Excel shows it in a column wide enough for it, as
-Excel's own CSV export writes it: `TRUE` and `FALSE`, and a number in its number
-format. The General format shows at most 11 characters besides a minus sign, so
-`0.1+0.2` shows as `0.3`, `31/3` as `10.33333333`, and `123456789012` as
-`1.23457E+11`. Digits with decimals, a thousands separator, and a percent sign
-or an exponent, as in `#,##0.00`, `0%` and `0.00E+00`, show as in Excel; other
-number formats, such as ones with text or a section for negative numbers, show
-their numbers as General does. Dates and times are written as ISO 8601 writes
-them, such as `2026-11-10 09:30`, whatever their format.
+- A page's title is its worksheet's name, and its file's name comes from it: a
+  worksheet `Pin Assignments` becomes `Pin-Assignments.md`, titled "Pin
+  Assignments".
+- In a file name, each space becomes `-`, as Azure DevOps Wiki names pages, and
+  each character that Windows or Azure DevOps Wiki does not allow, such as `>`
+  or `#`, becomes `_`. A repeated name is numbered, as `Notes-2`.
+- The empty rows and columns around the cells that hold text are left out, so
+  the first row with text is the table's header.
+- Formulas are written as the values Excel saved with them. A workbook saved by
+  a program that does not calculate formulas, such as a script, has none, and
+  those cells come out empty.
 
 A workbook that is encrypted, in the Excel 97-2003 format (`.xls`), or whose
 contents expand to more than 1,024 MiB is refused.
@@ -45,8 +37,7 @@ For clean output, each worksheet should:
 
 - contain one table, whose first row is its header;
 - contain no populated cells outside the table;
-- be named for the page it becomes: a worksheet `Pin Assignments` becomes
-  `Pin-Assignments.md`, titled "Pin Assignments".
+- be named as its page should be titled.
 
 ## CSV files
 
@@ -65,6 +56,21 @@ line: a comma, or a semicolon or tab, as Excel writes in some languages and
 regions. `--delimiter` selects one for every file.
 
 ## Cell contents
+
+A workbook's cells are written as Excel shows them in a column wide enough for
+them, as Excel's own CSV export writes them:
+
+- `TRUE` and `FALSE`;
+- a number in the General format in at most 11 characters besides a minus
+  sign, so `0.1+0.2` shows as `0.3`, `31/3` as `10.33333333`, and
+  `123456789012` as `1.23457E+11`;
+- a number in a format of digits, with decimals, a thousands separator, and a
+  percent sign or an exponent, such as `#,##0.00`, `0%` and `0.00E+00`, as
+  Excel shows it;
+- a number in any other format, such as one with text or a section for
+  negative numbers, as General shows it;
+- dates and times in ISO 8601, such as `2026-11-10 09:30`, whatever their
+  format.
 
 Cell contents and page titles stay literal: backslashes, pipes, HTML-like text,
 entity names, code delimiters, and Markdown punctuation remain text, not
