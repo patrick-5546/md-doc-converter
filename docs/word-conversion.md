@@ -118,7 +118,12 @@ accepted.
   one with dotted lines, as countless dots, whose SVG is then hundreds of times
   the drawing's size: an SVG more than 20 times the size of its drawing, and
   over a mebibyte, gives way to a PNG of the same part of the page, at 192
-  pixels per inch, whose text is not searchable, and the report names it. An
+  pixels per inch, whose text is not searchable, and the report names it. Azure
+  DevOps Wiki shows an SVG through a sanitizer that removes its `<use>`
+  elements, with which Poppler draws each letter and picture, and that refuses
+  an SVG over 5 MB. So each `<use>` is replaced by a copy of what it shows, and
+  an SVG that is then over 5 MB gives way to a PNG too; an SVG whose `<use>`
+  elements cannot all be copied exactly keeps them, and the report names it. An
   SVG image that contains a script is replaced by the PNG copy that Word keeps
   with it.
 - **Spaces:** no-break and other Unicode spaces become plain spaces, except

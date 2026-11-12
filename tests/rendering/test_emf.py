@@ -138,6 +138,8 @@ def test_real_drawings_that_libreoffice_cannot_export_as_svg_convert(tmp_path: P
         assert isinstance(result, bytes), result
         assert findings == []
         svgs[name] = ET.fromstring(result)
+        # Each letter and picture is drawn where pdftocairo showed it with a <use>.
+        assert not list(svgs[name].iter(SVG + "use"))
     assert size_mm(svgs["space"]) == pytest.approx((60, 20), abs=0.1)
     assert size_mm(svgs["bitmap"]) == pytest.approx((30, 15), abs=0.1)
     assert list(svgs["bitmap"].iter(SVG + "image"))

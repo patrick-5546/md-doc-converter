@@ -112,6 +112,7 @@ def test_the_python_version_is_the_supported_one() -> None:
             id="svg-growth",
         ),
         pytest.param(r"at (\d+)\s+pixels per inch", str(_media._PNG_RESOLUTION), id="png-pixels"),
+        pytest.param(r"over (\d+) MB", f"{_media._WIKI_SVG_SIZE / 1e6:g}", id="wiki-svg-size"),
     ],
 )
 def test_limits_are_the_codes(pattern: str, value: str) -> None:

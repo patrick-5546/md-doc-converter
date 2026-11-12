@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import html
 import re
@@ -415,6 +416,9 @@ VectorResult = tuple[bytes | str, list[str]]
 _WHOLE_PAGE = "kept LibreOffice's whole page around the drawing"
 _DRAWN_AS_PNG = "published as a PNG, as its SVG would be too large; its text is not searchable"
 _UNSEARCHABLE = "its text is not searchable"
+# Azure DevOps wikis remove the <use> elements of the SVGs they show, and pdftocairo draws each
+# letter and picture of a drawing with one, so a wiki would show its lines without its text.
+_KEPT_USES = "its SVG keeps <use> elements, whose text and pictures Azure DevOps wikis do not show"
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 # LibreOffice can draw some drawings, such as dotted lines in EMF+, as countless separate dots,
 # whose SVG is then hundreds of times the size of the drawing: too large to publish or to show.
@@ -423,6 +427,9 @@ PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 _SVG_GROWTH = 20
 _LARGE_SVG = 1 << 20
 _PNG_RESOLUTION = 192
+# Azure DevOps wikis show an SVG only through a sanitizer, which refuses one over 5 MB; such an
+# SVG, without its <use> elements, gives way to a PNG too.
+_WIKI_SVG_SIZE = 5_000_000
 
 
 def _page_png(pdf: Path, svg: bytes, work: Path, cairo: str) -> bytes:
@@ -606,12 +613,221 @@ def _page_svg(
     return svg.read_bytes()
 
 
+_SVG = "{http://www.w3.org/2000/svg}"
+_XLINK = "{http://www.w3.org/1999/xlink}"
+_XML = "{http://www.w3.org/XML/1998/namespace}"
+_HREFS = frozenset({_XLINK + "href", "href"})
+# The attributes of a <use> that place what it shows, rather than apply to it.
+_PLACEMENT = _HREFS | {"x", "y", "width", "height", "transform"}
+_URL_REFERENCE = re.compile(r"""url\(\s*["']?#([^"')\s]+)""")
+# How many <use> elements deep one may show another.
+_USE_DEPTH = 8
+
+
+def _local(name: str) -> str:
+    return name.rsplit("}", 1)[-1]
+
+
+def _shown_by(
+    use: ET.Element, ids: dict[str, ET.Element], parents: dict[ET.Element, ET.Element]
+) -> list[ET.Element] | str:
+    """Copies of what *use* shows, placed where it shows them; or why they cannot be."""
+    reference = next((value for key, value in use.attrib.items() if key in _HREFS), "")
+    target = ids.get(urllib.parse.unquote(reference[1:])) if reference.startswith("#") else None
+    if target is None:
+        return f"a <use> shows {reference!r}, which is not in the SVG"
+    container: ET.Element | None = use
+    while container is not None:
+        if container is target:
+            return "a <use> shows what contains it"
+        container = parents.get(container)
+    name = _local(target.tag)
+    # A symbol is drawn in a viewport of its own, which clips it unless its overflow shows.
+    if name == "svg" or (
+        name == "symbol"
+        and (target.get("viewBox") is not None or target.get("overflow") != "visible")
+    ):
+        return f"a <use> shows a <{name}> that clips what it shows"
+    x, y = (use.get(axis, "0").strip() for axis in ("x", "y"))
+    if not (re.fullmatch(_NUMBER, x) and re.fullmatch(_NUMBER, y)):
+        return f"a <use> is placed at {x!r}, {y!r} rather than at numbers"
+    move = f"translate({x},{y})" if float(x) or float(y) else ""
+    transform = " ".join(part for part in (use.get("transform"), move) if part)
+    shows = list(target) if name == "symbol" else [target]
+    copies: list[ET.Element] = []
+    for node in shows:
+        # A path without data, as pdftocairo writes for a space, draws nothing.
+        if _local(node.tag) == "path" and not node.get("d", "").strip():
+            continue
+        shown = copy.deepcopy(node)
+        shown.tail = None
+        for part in shown.iter():
+            part.attrib.pop("id", None)
+        copies.append(shown)
+    others = {key: value for key, value in use.attrib.items() if key not in _PLACEMENT}
+    if not others:
+        # A group that only moves what it holds is the same as moving each part.
+        for shown in copies:
+            if transform:
+                shown.set("transform", " ".join(filter(None, (transform, shown.get("transform")))))
+        placed = copies
+    elif _local(parents[use].tag) == "clipPath":
+        return "a <use> in a clipping path has attributes of its own"
+    else:
+        group = ET.Element(_SVG + "g", others)
+        if transform:
+            group.set("transform", transform)
+        group.extend(copies)
+        placed = [group]
+    if placed:
+        placed[-1].tail = use.tail
+    return placed
+
+
+def _references(root: ET.Element) -> set[str]:
+    """The fragment identities that the SVG *root* refers to."""
+    names: set[str] = set()
+    for node in root.iter():
+        for key, value in node.attrib.items():
+            if key in _HREFS:
+                if value.startswith("#"):
+                    names.add(urllib.parse.unquote(value[1:]))
+            elif "url(" in value:
+                names.update(urllib.parse.unquote(name) for name in _URL_REFERENCE.findall(value))
+    return names
+
+
+def _drop_unshown_definitions(root: ET.Element) -> None:
+    """Remove the symbols and definitions of the SVG *root* that nothing refers to any longer."""
+    while True:
+        referenced = _references(root)
+        parents = {child: parent for parent in root.iter() for child in parent}
+        dropped = False
+        for node in list(root.iter()):
+            parent = parents.get(node)
+            if parent is None:
+                continue
+            # pdftocairo groups its symbols in a <g> of their own in <defs>.
+            holder = (
+                parents.get(parent) if parent.tag == _SVG + "g" and not parent.attrib else parent
+            )
+            if node.tag != _SVG + "symbol" and (holder is None or holder.tag != _SVG + "defs"):
+                continue
+            if any(part.get("id") in referenced for part in node.iter() if part.get("id")):
+                continue
+            parent.remove(node)
+            dropped = True
+        if not dropped:
+            break
+    parents = {child: parent for parent in root.iter() for child in parent}
+    for definitions in list(root.iter(_SVG + "defs")):
+        for group in list(definitions):
+            if group.tag == _SVG + "g" and not group.attrib and not len(group):
+                definitions.remove(group)
+        if not len(definitions) and definitions in parents:
+            parents[definitions].remove(definitions)
+
+
+def _xml_text(value: str) -> str:
+    return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _xml_attribute(value: str) -> str:
+    return (
+        _xml_text(value)
+        .replace('"', "&quot;")
+        .replace("\n", "&#10;")
+        .replace("\r", "&#13;")
+        .replace("\t", "&#9;")
+    )
+
+
+def _svg_bytes(root: ET.Element) -> bytes:
+    """The SVG *root* as a file, with the usual prefixes of its namespaces.
+
+    ElementTree would name the namespaces that no prefix is registered for ns0 and ns1, and the
+    registered prefixes are shared by the whole process.
+    """
+    parts = ['<?xml version="1.0" encoding="UTF-8"?>\n']
+
+    def qualified(name: str) -> str:
+        for namespace, prefix in ((_SVG, ""), (_XLINK, "xlink:"), (_XML, "xml:")):
+            if name.startswith(namespace):
+                return prefix + name[len(namespace) :]
+        return name
+
+    def write(node: ET.Element, declarations: str = "") -> None:
+        tag = qualified(node.tag)
+        parts.append(f"<{tag}{declarations}")
+        parts.extend(f' {qualified(key)}="{_xml_attribute(value)}"' for key, value in node.items())
+        if node.text or len(node):
+            parts.append(">")
+            if node.text:
+                parts.append(_xml_text(node.text))
+            for child in node:
+                write(child)
+            parts.append(f"</{tag}>")
+        else:
+            parts.append("/>")
+        if node.tail:
+            parts.append(_xml_text(node.tail))
+
+    write(root, f' xmlns="{_SVG[1:-1]}" xmlns:xlink="{_XLINK[1:-1]}"')
+    parts.append("\n")
+    return "".join(parts).encode("utf-8")
+
+
+def _without_uses(svg: bytes) -> bytes | str:
+    """*svg* with each <use> element replaced by a copy of what it shows, and the definitions
+    that nothing shows any longer left out; or why it could not be done."""
+    if b"<use" not in svg:
+        return svg
+    try:
+        root = ET.fromstring(svg)
+    except ET.ParseError as error:
+        return f"it could not be read: {error}"
+    for node in root.iter():
+        if not node.tag.startswith(_SVG) or any(
+            key.startswith("{") and not key.startswith((_XLINK, _XML)) for key in node.attrib
+        ):
+            return "it has elements or attributes that are not SVG's"
+        # A style sheet's selectors could pick out what a <use> shows.
+        if node.tag == _SVG + "style":
+            return "it has a style sheet"
+    ids = {node.get("id", ""): node for node in root.iter() if node.get("id")}
+    for _depth in range(_USE_DEPTH):
+        parents = {child: parent for parent in root.iter() for child in parent}
+        uses = list(root.iter(_SVG + "use"))
+        if not uses:
+            break
+        placed: dict[ET.Element, list[ET.Element]] = {}
+        for use in uses:
+            shown = _shown_by(use, ids, parents)
+            if isinstance(shown, str):
+                return shown
+            placed[use] = shown
+        for parent in {parents[use] for use in uses}:
+            parent[:] = [node for child in parent for node in placed.get(child, [child])]
+    if next(root.iter(_SVG + "use"), None) is not None:
+        return f"its <use> elements show others more than {_USE_DEPTH} deep"
+    _drop_unshown_definitions(root)
+    try:
+        result = _svg_bytes(root)
+        validate_svg_bytes(result, "the SVG without <use> elements")
+    except (ConversionError, RecursionError) as error:
+        return str(error) or "its elements nest too deeply"
+    # Its line endings are kept as pdftocairo wrote them.
+    return result.replace(b"\n", b"\r\n") if b"\r\n" in svg else result
+
+
 def _convert_vectors(drawings: dict[str, tuple[bytes, str]], work: Path) -> dict[str, VectorResult]:
     """Convert EMF/WMF drawings, by name, to SVGs cropped to each drawing, or each to a PNG of
     the same part of the page where its SVG would be too large.
 
     One LibreOffice run with one profile exports every drawing as a tagged PDF; Poppler turns
     each into an SVG with pdftocairo, finds its frame with pdfinfo and its words with pdftotext.
+    Each <use> element of an SVG, which Azure DevOps wikis remove, is then replaced by a copy of
+    what it shows.
     """
     office = executables.libreoffice()
     cairo, info = executables.poppler("pdftocairo"), executables.poppler("pdfinfo")
@@ -664,14 +880,34 @@ def _convert_vectors(drawings: dict[str, tuple[bytes, str]], work: Path) -> dict
         except (ConversionError, OSError) as error:
             results[name] = (str(error), findings)
             continue
+        kept: str | None = None
         if len(svg) > max(_LARGE_SVG, _SVG_GROWTH * len(data)):
-            size = f"{len(svg) / (1 << 20):.0f} MiB, {len(svg) // len(data)} times its drawing"
+            size: str | None = (
+                f"{len(svg) / (1 << 20):.0f} MiB, {len(svg) // len(data)} times its drawing"
+            )
+        else:
+            shown = _without_uses(svg)
+            if isinstance(shown, str):
+                kept = f"{_KEPT_USES}: {shown}"
+            else:
+                svg = shown
+            size = (
+                f"{len(svg) / 1e6:.1f} MB, more than the {_WIKI_SVG_SIZE / 1e6:g} MB that "
+                "Azure DevOps wikis show"
+                if len(svg) > _WIKI_SVG_SIZE
+                else None
+            )
+        if size is not None:
             try:
                 svg = _page_png(pdf, svg, svgs, cairo)
             except (ConversionError, OSError) as error:
                 findings.append(f"its SVG is {size}, and could not be drawn as a PNG: {error}")
             else:
                 findings.append(f"{_DRAWN_AS_PNG} (an SVG of {size})")
+                # The PNG shows what the SVG's <use> elements would not.
+                kept = None
+        if kept is not None:
+            findings.append(kept)
         results[name] = (svg, findings)
     return results
 
@@ -822,7 +1058,12 @@ class ImageStager:
         label = suffix[1:].upper()
         for message in self._findings.pop(digest, []):
             kind = next(
-                (kind for kind in (_WHOLE_PAGE, _DRAWN_AS_PNG) if message.startswith(kind)), None
+                (
+                    kind
+                    for kind in (_WHOLE_PAGE, _DRAWN_AS_PNG, _KEPT_USES)
+                    if message.startswith(kind)
+                ),
+                None,
             )
             if kind is not None:
                 report.warn(f"{preferred.as_posix()}: {message}", kind=kind, section="markdown")

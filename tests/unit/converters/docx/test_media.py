@@ -272,6 +272,133 @@ def test_a_large_svg_is_kept_when_its_png_cannot_be_drawn(convert: Convert) -> N
     )
 
 
+# pdftocairo draws each letter of a drawing's text with a <use> of its glyph's symbol, and each
+# picture with a <use> of its image, which a mask can show through another <use>.
+USES_PAGE = (
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '
+    'width="612pt" height="792pt" viewBox="0 0 612 792">\n'
+    "<defs>\n<g>\n"
+    '<symbol overflow="visible" id="glyph0-1">\n'
+    '<path style="stroke:none;" d="M 0 -2 L 1 0 Z"/>\n</symbol>\n'
+    '<symbol overflow="visible" id="glyph0-2">\n<path style="stroke:none;" d=""/>\n</symbol>\n'
+    "</g>\n"
+    '<image id="image7" width="2" height="2" xlink:href="data:image/png;base64,AAAA"/>\n'
+    '<mask id="mask0">\n<use xlink:href="#image7"/>\n</mask>\n'
+    '<image id="image6" width="2" height="2" xlink:href="data:image/jpeg;base64,BBBB"/>\n'
+    "</defs>\n"
+    '<g id="surface1">\n<g style="fill:rgb(0%,0%,0%);">\n'
+    '<use xlink:href="#glyph0-1" x="300" y="395"/>\n'
+    '<use xlink:href="#glyph0-2" x="302" y="395"/>\n'
+    '<use xlink:href="#glyph0-1" x="304" y="395" transform="rotate(90)"/>\n'
+    "</g>\n"
+    '<use xlink:href="#image6" mask="url(#mask0)" transform="matrix(0.5,0,0,0.5,305,390)"/>\n'
+    "</g>\n</svg>\n"
+)
+# The same drawing without <use> elements, which Azure DevOps wikis remove: each glyph and
+# picture where it was shown, without the empty glyph, and the definitions that showed them.
+WITHOUT_USES_PAGE = (
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '
+    'width="612pt" height="792pt" viewBox="0 0 612 792">\n'
+    "<defs>\n"
+    '<mask id="mask0">\n'
+    '<image width="2" height="2" xlink:href="data:image/png;base64,AAAA"/>\n</mask>\n'
+    "</defs>\n"
+    '<g id="surface1">\n<g style="fill:rgb(0%,0%,0%);">\n'
+    '<path style="stroke:none;" d="M 0 -2 L 1 0 Z" transform="translate(300,395)"/>\n'
+    '<path style="stroke:none;" d="M 0 -2 L 1 0 Z" transform="rotate(90) translate(304,395)"/>\n'
+    "</g>\n"
+    '<g mask="url(#mask0)" transform="matrix(0.5,0,0,0.5,305,390)">'
+    '<image width="2" height="2" xlink:href="data:image/jpeg;base64,BBBB"/></g>\n'
+    "</g>\n</svg>\n"
+)
+# A symbol with a viewBox is drawn in a viewport that clips it, which a copy would not.
+CLIPPED_USES_PAGE = USES_PAGE.replace(
+    '<symbol overflow="visible" id="glyph0-1">', '<symbol id="glyph0-1" viewBox="0 0 1 1">'
+)
+
+
+def cropped(page: str) -> str:
+    """*page*, cropped to the frame of the drawing in its middle."""
+    return page.replace(
+        'width="612pt" height="792pt" viewBox="0 0 612 792"',
+        'width="28.346pt" height="28.346pt" viewBox="291.827 381.827 28.346 28.346"',
+    )
+
+
+def test_a_drawing_shows_its_text_and_pictures_without_use_elements(convert: Convert) -> None:
+    results, _tools = convert({"drawing": {"cairo": USES_PAGE}})
+    assert results["drawing"] == (cropped(WITHOUT_USES_PAGE), [])
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n"], ids=["lf", "crlf"])
+def test_replacing_use_elements_keeps_the_line_endings_of_pdftocairo(newline: str) -> None:
+    def page(text: str) -> bytes:
+        return text.replace("\n", newline).encode()
+
+    assert _media._without_uses(page(USES_PAGE)) == page(WITHOUT_USES_PAGE)
+    # A drawing without one is kept as it is.
+    assert _media._without_uses(page(CAIRO_PAGE)) == page(CAIRO_PAGE)
+
+
+def test_use_elements_that_cannot_be_replaced_are_kept_and_reported(convert: Convert) -> None:
+    results, _tools = convert({"drawing": {"cairo": CLIPPED_USES_PAGE}})
+    assert results["drawing"] == (
+        cropped(CLIPPED_USES_PAGE),
+        [f"{_media._KEPT_USES}: a <use> shows a <symbol> that clips what it shows"],
+    )
+
+
+# A glyph drawn over and over: an SVG well under a mebibyte with <use> elements, and over the
+# 5 MB that Azure DevOps wikis show without them.
+REPEATED_GLYPH_PAGE = USES_PAGE.replace(
+    'd="M 0 -2 L 1 0 Z"', 'd="M 0 -2' + " L 1 0" * 300 + ' Z"'
+).replace(
+    '<use xlink:href="#glyph0-2" x="302" y="395"/>\n',
+    '<use xlink:href="#glyph0-1" x="302" y="395"/>\n' * 3000,
+)
+
+
+def test_a_drawing_too_large_for_wikis_without_use_elements_is_drawn_as_a_png(
+    convert: Convert,
+) -> None:
+    assert len(REPEATED_GLYPH_PAGE) < 1 << 20
+    results, tools = convert({"drawing": {"cairo": REPEATED_GLYPH_PAGE}})
+    png, findings = results["drawing"]
+    assert png == PNG
+    assert len(findings) == 1
+    assert findings[0].startswith(f"{_media._DRAWN_AS_PNG} (an SVG of 5.")
+    assert findings[0].endswith(" MB, more than the 5 MB that Azure DevOps wikis show)")
+    assert tools.kinds() == ["pdf", "cairo", "struct", "words", "png"]
+
+
+@pytest.mark.parametrize("drawn", [True, False], ids=["png", "no-png"])
+def test_kept_use_elements_are_reported_unless_a_png_shows_the_drawing(
+    drawn: bool, convert: Convert, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Over the 5 MB that Azure DevOps wikis show, but not far larger than its drawing.
+    monkeypatch.setattr(_media, "_LARGE_SVG", 1 << 30)
+    large = CLIPPED_USES_PAGE.replace("</svg>", '<path d="M 0 0"/>\n' * 300_000 + "</svg>")
+    results, _tools = convert({"drawing": {"cairo": large, "png": PNG if drawn else False}})
+    result, findings = results["drawing"]
+    if drawn:
+        # The PNG shows what the <use> elements would not.
+        assert result == PNG
+        assert len(findings) == 1
+        assert findings[0].startswith(f"{_media._DRAWN_AS_PNG} (an SVG of 5.")
+    else:
+        assert isinstance(result, str)
+        assert len(findings) == 2
+        assert findings[0].startswith("its SVG is 5.")
+        assert findings[0].endswith(
+            "could not be drawn as a PNG: PDF-to-PNG conversion failed: synthetic crash"
+        )
+        assert findings[1] == (
+            f"{_media._KEPT_USES}: a <use> shows a <symbol> that clips what it shows"
+        )
+
+
 def test_a_unitless_pdftocairo_page_is_measured_in_points(convert: Convert) -> None:
     # Poppler before 25.04 with Cairo 1.17.6 or newer writes the page size without a unit.
     unitless = CAIRO_PAGE.replace('width="612pt" height="792pt"', 'width="612" height="792"')
@@ -504,6 +631,7 @@ def test_a_drawing_s_notes_are_reported_by_kind(
     notes = [
         f"{_media._WHOLE_PAGE}: synthetic reason",
         f"{_media._UNSEARCHABLE}: synthetic reason",
+        f"{_media._KEPT_USES}: synthetic reason",
     ]
 
     def convert_vectors(
@@ -520,9 +648,10 @@ def test_a_drawing_s_notes_are_reported_by_kind(
     finally:
         stager.close()
     assert report.findings == [f"d.emf: {note}" for note in notes]
-    # Only the whole page shows in the Markdown; the unsearchable text is a detail.
-    assert report.kinds == {_media._WHOLE_PAGE: 1}
-    assert report.sections == {_media._WHOLE_PAGE: "markdown"}
+    # The whole page and the kept <use> elements show in the Markdown; the unsearchable text is
+    # a detail.
+    assert report.kinds == {_media._WHOLE_PAGE: 1, _media._KEPT_USES: 1}
+    assert report.sections == {_media._WHOLE_PAGE: "markdown", _media._KEPT_USES: "markdown"}
 
 
 def test_a_drawing_drawn_as_a_png_is_published_as_one(
