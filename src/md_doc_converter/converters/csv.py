@@ -3,7 +3,8 @@
 A folder's CSV files are those in it and its subfolders whose names end in .csv, in any case,
 except entries whose names begin with "." and, as gitignore.py decides, what Git ignores. Each
 is read as UTF-8 without its byte-order mark, its delimiter is detected from its header line,
-and markdown/tables.py writes its page, keeping each cell literal.
+and markdown/tables.py writes its page without the empty rows and columns around its text,
+keeping each cell literal.
 """
 
 import argparse
@@ -14,7 +15,7 @@ from pathlib import Path
 
 from md_doc_converter import gitignore
 from md_doc_converter.console import Console, activated
-from md_doc_converter.markdown.tables import table_page
+from md_doc_converter.markdown.tables import table_page, trim_empty_edges
 
 # The delimiters that detection chooses from, by name; on a tie the first wins.
 DELIMITERS = {"comma": ",", "semicolon": ";", "tab": "\t"}
@@ -46,7 +47,7 @@ def csv_to_md(csv_path: Path, delimiter: str | None = None) -> str:
     reader = csv.reader(
         io.StringIO(text, newline=""), delimiter=delimiter or detect_delimiter(text)
     )
-    rows = list(reader)
+    rows = trim_empty_edges(list(reader))
     if not rows:
         return ""
     try:

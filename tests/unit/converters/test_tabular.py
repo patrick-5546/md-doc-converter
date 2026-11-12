@@ -204,10 +204,12 @@ def test_any_csv_rows_read_back_through_both_readers(
         write_csv(source, table, delimiter)
         markdown = csv_to_md.csv_to_md(source, delimiter)
     contents = rendered_table(markdown, pandoc, reader)
-    assert [shown(cell) for cell in contents.headers] == [shown(cell) for cell in table[0]]
-    assert [shown(cell) for cell in contents.cells] == [
-        shown(cell) for row in table[1:] for cell in row
-    ]
+    # Every column has a name, so only the empty rows after the last that holds text go.
+    header, *rows = table
+    while rows and not any(rows[-1]):
+        rows.pop()
+    assert [shown(cell) for cell in contents.headers] == [shown(cell) for cell in header]
+    assert [shown(cell) for cell in contents.cells] == [shown(cell) for row in rows for cell in row]
     assert contents.markup == []
 
 
@@ -358,6 +360,36 @@ def test_excel_to_md_writes_the_pages_csv_to_md_writes_from_excel_to_csv(
         assert direct[:2] + direct[3:] == two_steps[:2] + two_steps[3:]
         # Pages have LF line endings on every system.
         assert b"\r" not in (pages / name).read_bytes() + (tmp_path / "csv" / name).read_bytes()
+
+
+def test_the_empty_rows_and_columns_around_a_table_are_left_out(tmp_path: Path) -> None:
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "Margin"
+    sheet["C3"], sheet["D3"], sheet["C4"], sheet["D5"] = "Signal", "Width", "ready", 1
+    sheet["F8"].font = Font(bold=True)
+    source = tmp_path / "margin.xlsx"
+    workbook.save(source)
+    workbook.close()
+
+    assert main(["excel-to-csv", str(source)]) == 0
+    assert main(["excel-to-md", str(source)]) == 0
+
+    assert (tmp_path / "Margin.csv").read_bytes() == b"Signal,Width\r\nready,\r\n,1\r\n"
+    assert (
+        (tmp_path / "Margin.md")
+        .read_text(encoding="utf-8")
+        .endswith("| Signal | Width |\n| --- | --- |\n| ready | |\n| | 1 |\n")
+    )
+    # A CSV file with empty rows and columns around its text, as Excel can save one, makes the
+    # same table.
+    (tmp_path / "Saved.csv").write_text(
+        ",,,\n,,,\n,,Signal,Width\n,,ready,\n,,,1\n,,,\n", encoding="utf-8"
+    )
+    assert csv_to_md.csv_to_md(tmp_path / "Saved.csv").endswith(
+        "| Signal | Width |\n| --- | --- |\n| ready | |\n| | 1 |\n"
+    )
 
 
 @pytest.mark.parametrize("command", ["excel-to-md", "excel-to-csv"])

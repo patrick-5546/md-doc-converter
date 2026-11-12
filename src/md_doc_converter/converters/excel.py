@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from md_doc_converter.converters.packages import is_compound_file, too_large
-from md_doc_converter.markdown.tables import table_page
+from md_doc_converter.markdown.tables import table_page, trim_empty_edges
 
 if TYPE_CHECKING:
     from openpyxl.worksheet.worksheet import Worksheet
@@ -26,16 +26,14 @@ WINDOWS = sys.platform == "win32"
 
 def _cells(sheet: Worksheet) -> list[list[str]]:
     """The text of *sheet*'s cells, row by row, as csv.writer writes them: an empty cell is ""
-    and any other value its str(). Trailing empty rows and columns are left out."""
-    rows = [
-        ["" if value is None else str(value) for value in row]
-        for row in sheet.iter_rows(values_only=True)
-    ]
-    width = max((index + 1 for row in rows for index, cell in enumerate(row) if cell), default=0)
-    rows = [row[:width] for row in rows]
-    while rows and not any(rows[-1]):
-        rows.pop()
-    return rows
+    and any other value its str(). The empty rows and columns around the cells that hold text
+    are left out."""
+    return trim_empty_edges(
+        [
+            ["" if value is None else str(value) for value in row]
+            for row in sheet.iter_rows(values_only=True)
+        ]
+    )
 
 
 def worksheets(excel_path: str) -> list[tuple[str, list[list[str]]]]:

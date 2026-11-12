@@ -88,6 +88,20 @@ def table_row(cells: list[str]) -> str:
     return "|" + "|".join(f" {cell} " if cell else " " for cell in cells) + "|"
 
 
+def trim_empty_edges(rows: list[list[str]]) -> list[list[str]]:
+    """*rows* without the empty rows above and below the cells that hold text, and without the
+    empty columns left and right of them. A cell is empty when it is ""; rows may differ in
+    length."""
+    filled = [row for row in rows if any(row)]
+    if not filled:
+        return []
+    top = next(index for index, row in enumerate(rows) if any(row))
+    bottom = len(rows) - next(index for index, row in enumerate(reversed(rows)) if any(row))
+    left = min(next(index for index, cell in enumerate(row) if cell) for row in filled)
+    right = max(max(index for index, cell in enumerate(row) if cell) for row in filled) + 1
+    return [row[left:right] for row in rows[top:bottom]]
+
+
 def table_page(rows: list[list[str]], *, stem: str, source: str, command: str) -> str:
     """The page *stem*.md that *command* writes from *source*, with *rows* as its table.
 

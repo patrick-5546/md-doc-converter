@@ -16,7 +16,8 @@ neither Pandoc nor Node.js.
 
 `excel-to-md` writes each worksheet as a page, `<sheet name>.md`.
 `excel-to-csv` writes `<sheet name>.csv` instead, from which `csv-to-md` writes
-the same page. Trailing empty rows and columns are left out, and empty
+the same page. The empty rows and columns around the cells that hold text are
+left out, so the first row with text is the table's header, and empty
 worksheets and chart sheets are skipped. Formulas are written as the values
 Excel saved with them; a workbook saved by a program that does not calculate
 formulas, such as a script, has none, and those cells come out empty.
@@ -28,7 +29,7 @@ before any file is written.
 
 For clean output, each worksheet should:
 
-- contain one table beginning in the first row and first column;
+- contain one table, whose first row is its header;
 - contain no populated cells outside the table;
 - be named for the page it becomes: a worksheet `Pin-Assignments` becomes
   `Pin-Assignments.md`, titled "Pin Assignments".
@@ -40,9 +41,9 @@ whose name ends in `.csv`, in any case; for a folder, `-o` keeps the relative
 subfolders. As in a [folder that is rendered](rendering.md#folder-input),
 entries whose names begin with `.` are skipped, and so are Git-ignored files,
 unless Git ignores the folder itself. Each page has a heading from the file
-name, with hyphens as spaces, a note that it is generated, and the table. Short
-rows are padded; rows wider than the header fail instead of silently dropping
-cells.
+name, with hyphens as spaces, a note that it is generated, and the table,
+without the empty rows and columns around its text. Short rows are padded; rows
+wider than the header fail instead of silently dropping cells.
 
 CSV files are read as UTF-8, with or without the byte-order mark that Excel's
 "CSV UTF-8" format writes. Each file's delimiter is detected from its header
