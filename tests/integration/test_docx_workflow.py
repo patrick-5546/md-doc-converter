@@ -451,6 +451,57 @@ def test_numbered_outline_level_heading_stays_a_list_item(convert: Converter) ->
     assert "lists:" not in warnings
 
 
+def numbered_heading_styles() -> tuple[ET.Element, ET.Element]:
+    """Styles that give their paragraphs outline levels 1 and 2 and list 1's numbering; the
+    second, based on the first, takes the numbering over at its own list level."""
+    first = word_style("OutlineNumbered1", number="1")
+    second = word_style("OutlineNumbered2", based_on="OutlineNumbered1")
+    for style, level in ((first, "0"), (second, "1")):
+        properties = style.find(W + "pPr")
+        if properties is None:
+            properties = ET.SubElement(style, W + "pPr")
+            ET.SubElement(ET.SubElement(properties, W + "numPr"), W + "ilvl", {W + "val": level})
+        ET.SubElement(properties, W + "outlineLvl", {W + "val": level})
+    return first, second
+
+
+def test_a_numbered_heading_style_makes_headings(convert: Converter) -> None:
+    result, report, warnings = convert.reported(
+        [
+            paragraph("Purpose", "OutlineNumbered1"),
+            paragraph("Text one"),
+            paragraph("Signals", "OutlineNumbered2"),
+            paragraph("Text two"),
+        ],
+        styles=numbered_heading_styles(),
+        extras={"word/numbering.xml": numbering_xml()},
+    )
+    assert result.startswith("# Purpose\n\nText one\n\n## Signals\n\nText two\n")
+    assert not any("outline-level heading" in line for line in report.summary())
+    assert "headings:" not in warnings
+
+
+def test_a_paragraph_numbered_in_a_numbered_heading_style_stays_a_list_item(
+    convert: Converter,
+) -> None:
+    directly = paragraph("Signals", "OutlineNumbered1")
+    properties = directly.find(W + "pPr")
+    assert properties is not None
+    numbering = ET.SubElement(properties, W + "numPr")
+    ET.SubElement(numbering, W + "ilvl", {W + "val": "0"})
+    ET.SubElement(numbering, W + "numId", {W + "val": "1"})
+    result, report, _warnings = convert.reported(
+        [directly, paragraph("Text")],
+        styles=numbered_heading_styles(),
+        extras={"word/numbering.xml": numbering_xml()},
+    )
+    assert re.search(r"^\d+\.\s+Signals$", result, re.MULTILINE)
+    assert (
+        "    not applied (1): Word numbers this outline-level heading as a list item; "
+        "kept as a list item" in report.summary()
+    )
+
+
 def test_headings_keep_their_trailing_punctuation(convert: Converter) -> None:
     outlined = numbered("Gamma.")
     properties = outlined.find(W + "pPr")

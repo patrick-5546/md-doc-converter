@@ -34,7 +34,11 @@ accepted.
   a repeated heading also names the headings of the sections that hold it: two
   `## Overview` headings under `# Block A` and `# Block B` become
   `## Block A - Overview` and `## Block B - Overview`; the title, which holds
-  every heading, names none.
+  every heading, names none. A paragraph that Word numbers and gives an outline
+  level stays a numbered list item, and the report names it, unless its
+  paragraph style gives it both, as a numbered heading style does: then it is a
+  heading, as Word's navigation pane and tables of contents show it, without
+  its number.
 - **Lists** use `-` for bullets and keep Word's numbers; a lettered or Roman
   level is numbered with digits, the only numbering Markdown has. An empty
   bullet is omitted, and so is an empty numbered item at the start or end of

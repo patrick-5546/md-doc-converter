@@ -546,6 +546,18 @@ def _is_title(paragraph: ET.Element, styles: _Styles) -> bool:
     return style is not None and (style.casefold() == "title" or "title" in styles.chain(style))
 
 
+def _numbered_by_its_style(paragraph: ET.Element) -> bool:
+    """Whether *paragraph* sets neither its outline level nor its list numbering itself, so that
+    a numbered heading's style gives it both."""
+    properties = paragraph.find(WORD + "pPr")
+    if properties is None:
+        return True
+    numbering = properties.find(WORD + "numPr")
+    return properties.find(WORD + "outlineLvl") is None and (
+        numbering is None or numbering.find(WORD + "numId") is None
+    )
+
+
 def _prepare_headings(
     root: ET.Element,
     styles: _Styles,
@@ -557,9 +569,11 @@ def _prepare_headings(
 
     A heading by Word's outline level or style keeps its level, up to 6; one that shows no
     text, or only a picture, is a paragraph. A numbered heading by outline level, not by a
-    heading style, stays the list item that Word numbers. A heading more than one level below
-    the heading before it keeps its level too, and is reported, as markdownlint's MD001 would
-    report it; headings in tables are left out of that.
+    heading style, stays the list item that Word numbers, unless its paragraph style gives it
+    both the outline level and the numbering, as a numbered heading style does: that is a
+    heading, as Word's navigation pane and tables of contents show it. A heading more than one
+    level below the heading before it keeps its level too, and is reported, as markdownlint's
+    MD001 would report it; headings in tables are left out of that.
 
     A paragraph in Word's Title style before the first heading is the only level 1 heading,
     and the headings outside tables move down one level; a level 6 one, which has no level
@@ -606,6 +620,7 @@ def _prepare_headings(
             not _ooxml.pandoc_heading(paragraph, styles.definitions)
             and not in_table(paragraph)
             and list_item(paragraph)
+            and not _numbered_by_its_style(paragraph)
         ):
             report.skipped("headings", _LISTED_HEADING, f"paragraph {index + 1}: {_LISTED_HEADING}")
             continue
