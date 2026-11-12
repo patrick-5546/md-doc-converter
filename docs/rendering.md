@@ -6,10 +6,9 @@ md-doc-converter md-to-pdf docs            # docs/docs.pdf, from every page in d
 ```
 
 `md-to-html` and `md-to-pdf` render one Markdown file, or a folder of Markdown
-files, and `--help` lists each command's options. Rendering needs Node.js and
-the toolchain that `md-doc-converter setup` installs, including Pandoc;
-`md-doc-converter doctor` checks all of them, and a render that is missing one
-fails before it writes anything.
+files. Rendering needs Node.js and the toolchain that `md-doc-converter setup`
+installs; see [Requirements](../README.md#requirements). A render that is
+missing one fails before it writes anything.
 
 ## Output
 
@@ -64,7 +63,6 @@ or a link to a heading that does not exist:
 
 ```text
 md-to-html: rendering docs
-md-to-html: warning: docs/setup.md: broken anchor '#instal' (no matching heading or anchor)
 md-to-html: warning: docs/notes.md:12: Duplicate note reference '1'
 rendered docs -> docs/docs.html
 ```

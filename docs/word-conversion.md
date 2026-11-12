@@ -5,18 +5,11 @@ md-doc-converter docx-to-md docs/spec.docx                     # docs/spec.md, d
 md-doc-converter docx-to-md docs/spec.docx -o wiki/review.md   # wiki/review.md, wiki/.images/review/
 ```
 
-`docx-to-md` writes the Markdown beside the Word document, or to the `-o` file,
-and the document's images to `.images/<name>/` beside the Markdown. It needs
-Pandoc, which `md-doc-converter setup --no-render` installs, and for EMF and
-WMF drawings, LibreOffice and Poppler, which Linux distributions package and
-winget installs on Windows; `md-doc-converter doctor` checks them.
-`md-doc-converter docx-to-md --help` lists its options; this guide explains the
-ones that need more than a line.
-
-Pandoc reads a prepared copy of the document, transforms rewrite what it reads
-into the Markdown described below, and Pandoc writes it as GitHub Flavored
-Markdown. An element that a transform cannot handle stays as Pandoc reads it,
-and the report says so.
+`docx-to-md` writes the Markdown, as GitHub Flavored Markdown, beside the Word
+document, or to the `-o` file, and the document's images to `.images/<name>/`
+beside the Markdown. It needs Pandoc, and LibreOffice and Poppler for EMF and
+WMF drawings; see [Requirements](../README.md#requirements). This guide explains
+the options that need more than a line.
 
 ## What the Markdown holds
 
@@ -241,7 +234,8 @@ sharing the document, share the summary, not the warnings, which can quote it.
 `--verbose` also shows the details that worked out, such as an image published
 under another name because its own was taken, and the status of each transform,
 such as `fields` or `tables`: `applied`, `partial`, `not applied`, `not needed`
-or `not requested`.
+or `not requested`. An element that a transform cannot handle stays as Pandoc
+reads it.
 
 `docx-to-md` exits with status 0 when it converts the document; 1 when it
 refuses the document, Pandoc cannot read it, a path is invalid, an earlier

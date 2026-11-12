@@ -172,8 +172,6 @@ Rendering downloads only the files that your `--extra-css` stylesheet names by
 URL and, with `--download-images`, the images that a document shows by URL. It
 is safe for documents from elsewhere; see
 [Images and documents from elsewhere](docs/rendering.md#images-and-documents-from-elsewhere).
-Rendered HTML embeds its images, stylesheets and fonts, so opening it, or
-printing it to PDF, needs no network.
 
 ## Package mirrors
 

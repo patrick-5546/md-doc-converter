@@ -9,8 +9,7 @@ md-doc-converter csv-to-md data                # a page beside each CSV in data/
 Each worksheet or CSV file becomes a Markdown page that holds its table, written
 beside the input unless `-o` names a folder. Each command lists the files it
 writes; with `--dry-run`, `excel-to-md` and `csv-to-md` list them without
-writing. `--help` lists each command's options. Excel and CSV conversion need
-neither Pandoc nor Node.js.
+writing.
 
 ## Workbooks
 
