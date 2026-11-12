@@ -392,9 +392,10 @@ def test_cells_are_written_as_excel_shows_them(tmp_path: Path) -> None:
 
 
 def test_other_number_formats_are_written_as_general(tmp_path: Path) -> None:
-    # Excel shows these as "(5)" and "Width: 7.5"; their first sections are not digits alone.
-    general = [(-5, "#,##0;(#,##0)", "-5"), (7.5, '"Width: "0.0', "7.5")]
-    assert values_csv(tmp_path, general) == ["-5", "7.5"]
+    # Excel shows these as "(0)" and "Width: 0.7"; their first sections are not digits alone,
+    # so they are written as General rounds them.
+    general = [(-1 / 3, "#,##0;(#,##0)", "-0.333333333"), (2 / 3, '"Width: "0.0', "0.666666667")]
+    assert values_csv(tmp_path, general) == ["-0.333333333", "0.666666667"]
 
 
 def values_csv(
