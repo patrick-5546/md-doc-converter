@@ -51,7 +51,12 @@ def csv_to_md(csv_path: Path, delimiter: str | None = None) -> str:
     if not rows:
         return ""
     try:
-        return table_page(rows, stem=csv_path.stem, source=csv_path.name, command="csv-to-md")
+        return table_page(
+            rows,
+            title=csv_path.stem.replace("-", " "),
+            source=csv_path.name,
+            command="csv-to-md",
+        )
     except ValueError as error:
         raise ValueError(f"{csv_path}: {error}") from error
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import datetime
+import ntpath
 import re
 import subprocess
 import sys
@@ -309,17 +310,17 @@ def test_excel_to_csv_writes_a_csv_file_for_each_table(
     assert main(["excel-to-csv", str(source), "-o", str(out)]) == 0
 
     assert sorted(path.name for path in out.iterdir()) == [
-        "Clocks & Resets.csv",
+        "Clocks-&-Resets.csv",
         "Pin-Assignments.csv",
     ]
     assert (out / "Pin-Assignments.csv").read_bytes() == (
         b'Signal,Width,Note\r\nready,1,\r\n<mask> | `x`,2.5,"two\nlines"\r\n'
     )
     # openpyxl wrote no cached value for the formula, so its cell is empty.
-    assert (out / "Clocks & Resets.csv").read_bytes() == b"Name,,Edge\r\n"
+    assert (out / "Clocks-&-Resets.csv").read_bytes() == b"Name,,Edge\r\n"
     assert capsys.readouterr().out == (
         f"Written: {out / 'Pin-Assignments.csv'}\nSkipped (empty): Empty\n"
-        f"Written: {out / 'Clocks & Resets.csv'}\n"
+        f"Written: {out / 'Clocks-&-Resets.csv'}\n"
     )
 
 
@@ -333,17 +334,17 @@ def test_excel_to_md_writes_the_pages_csv_to_md_writes_from_excel_to_csv(
 
     assert capsys.readouterr().out == (
         f"Written: {pages / 'Pin-Assignments.md'}\nSkipped (empty): Empty\n"
-        f"Written: {pages / 'Clocks & Resets.md'}\n"
+        f"Written: {pages / 'Clocks-&-Resets.md'}\n"
     )
     assert (pages / "Pin-Assignments.md").read_text(encoding="utf-8") == (
-        "# Pin Assignments\n\n"
+        "# Pin-Assignments\n\n"
         "> Generated from the Pin-Assignments worksheet of pins.xlsx using md-doc-converter "
         "(excel-to-md) — do not manually modify\n\n"
         "| Signal | Width | Note |\n| --- | --- | --- |\n| ready | 1 | |\n"
         "| &lt;mask&gt; \\| \\`x\\` | 2.5 | two<br>lines |\n"
     )
     # The name stays text, here an ampersand, which could start an entity such as &copy;.
-    assert (pages / "Clocks & Resets.md").read_text(encoding="utf-8").splitlines()[:3] == [
+    assert (pages / "Clocks-&-Resets.md").read_text(encoding="utf-8").splitlines()[:3] == [
         "# Clocks &amp; Resets",
         "",
         (
@@ -354,12 +355,14 @@ def test_excel_to_md_writes_the_pages_csv_to_md_writes_from_excel_to_csv(
     assert main(["excel-to-csv", str(source), "-o", str(tmp_path / "csv")]) == 0
     assert main(["csv-to-md", str(tmp_path / "csv")]) == 0
     names = sorted(path.name for path in pages.iterdir())
-    assert names == ["Clocks & Resets.md", "Pin-Assignments.md"]
+    assert names == ["Clocks-&-Resets.md", "Pin-Assignments.md"]
     for name in names:
         direct = (pages / name).read_text(encoding="utf-8").splitlines()
         two_steps = (tmp_path / "csv" / name).read_text(encoding="utf-8").splitlines()
-        # Only the notes, which name the sources, differ.
-        assert direct[:2] + direct[3:] == two_steps[:2] + two_steps[3:]
+        # Only the headings, from the worksheet's name and from the file's name with hyphens as
+        # spaces, and the notes, which name the sources, differ.
+        assert direct[1:2] + direct[3:] == two_steps[1:2] + two_steps[3:]
+        assert direct[0].replace("-", " ") == two_steps[0]
         # Pages have LF line endings on every system.
         assert b"\r" not in (pages / name).read_bytes() + (tmp_path / "csv" / name).read_bytes()
 
@@ -445,24 +448,42 @@ def test_the_empty_rows_and_columns_around_a_table_are_left_out(tmp_path: Path) 
     )
 
 
-@pytest.mark.parametrize("command", ["excel-to-md", "excel-to-csv"])
-@pytest.mark.parametrize("name", ["a<b", 'say "hi"', "a|b", "CON", "nul", "COM1"])
-def test_a_worksheet_that_cannot_name_a_file_on_windows_is_refused(
-    command: str, name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_worksheet_names_become_file_names_that_windows_and_wikis_accept(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(excel_to_csv, "WINDOWS", True)
     workbook = openpyxl.Workbook()
-    fine = workbook.active
-    assert fine is not None
-    fine.title = "Fine"
-    fine.append(["Name"])
-    workbook.create_sheet(name).append(["Name"])
-    workbook.save(tmp_path / "book.xlsx")
+    titles = ["Notes ", "Inputs->", "notes", "Q#1 <draft>.", 'a|b "c"', "CON", "nul.old"]
+    for index, title in enumerate(titles):
+        sheet = workbook.active if index == 0 else workbook.create_sheet()
+        assert sheet is not None
+        sheet.title = title
+        sheet.append(["Value"])
+    source = tmp_path / "names.xlsx"
+    workbook.save(source)
     workbook.close()
-    with pytest.raises(SystemExit, match=f"the worksheet {re.escape(repr(name))} cannot name a"):
-        main([command, str(tmp_path / "book.xlsx")])
-    # Not even the other worksheet's file is written.
-    assert [path.name for path in tmp_path.iterdir()] == ["book.xlsx"]
+
+    assert main(["excel-to-md", str(source), "-o", str(tmp_path / "md")]) == 0
+    assert main(["excel-to-csv", str(source), "-o", str(tmp_path / "csv")]) == 0
+
+    names = ["Notes", "Inputs-_", "notes-2", "Q_1-_draft_", "a_b-_c_", "CON_", "nul_.old"]
+    assert capsys.readouterr().out.splitlines()[: len(names)] == [
+        f"Written: {tmp_path / 'md' / name}.md" for name in names
+    ]
+    assert sorted(path.name for path in (tmp_path / "csv").iterdir()) == sorted(
+        f"{name}.csv" for name in names
+    )
+    # A name that Windows keeps for a device, such as NUL, would swallow the file there.
+    assert not any(ntpath.isreserved(f"{name}.md") for name in names)
+    # A page keeps its worksheet's name as its title.
+    assert (tmp_path / "md" / "Notes.md").read_text(encoding="utf-8").startswith("# Notes\n")
+    assert (
+        (tmp_path / "md" / "Inputs-_.md").read_text(encoding="utf-8").startswith("# Inputs-&gt;\n")
+    )
+    assert (
+        (tmp_path / "md" / "Q_1-_draft_.md")
+        .read_text(encoding="utf-8")
+        .startswith("# Q#1 &lt;draft&gt;.\n")
+    )
 
 
 def test_excel_to_md_dry_run_names_the_pages_beside_the_workbook(
@@ -474,7 +495,7 @@ def test_excel_to_md_dry_run_names_the_pages_beside_the_workbook(
 
     assert capsys.readouterr().out == (
         f"Would write: {tmp_path / 'Pin-Assignments.md'}\nSkipped (empty): Empty\n"
-        f"Would write: {tmp_path / 'Clocks & Resets.md'}\n"
+        f"Would write: {tmp_path / 'Clocks-&-Resets.md'}\n"
     )
     assert sorted(path.name for path in tmp_path.iterdir()) == ["pins.xlsx"]
 

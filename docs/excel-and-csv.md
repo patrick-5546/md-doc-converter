@@ -16,11 +16,17 @@ neither Pandoc nor Node.js.
 
 `excel-to-md` writes each worksheet as a page, `<sheet name>.md`.
 `excel-to-csv` writes `<sheet name>.csv` instead, from which `csv-to-md` writes
-the same page. The empty rows and columns around the cells that hold text are
-left out, so the first row with text is the table's header, and empty
-worksheets and chart sheets are skipped. Formulas are written as the values
-Excel saved with them; a workbook saved by a program that does not calculate
-formulas, such as a script, has none, and those cells come out empty.
+the same table. A page's title is its worksheet's name, as Excel shows it; its
+file name leaves out the spaces and dots around that name, has `-` for each
+space in it, as Azure DevOps Wiki names a page, and `_` for each character that
+Windows or Azure DevOps Wiki does not allow in one, such as `>` and `#`. A name
+that Windows keeps for a device, such as `CON`, gets `_` after it, and a name
+that another worksheet's file already has, in any case, is numbered, as
+`Notes-2`. The empty rows and columns around the cells that hold text are left
+out, so the first row with text is the table's header, and empty worksheets and
+chart sheets are skipped. Formulas are written as the values Excel saved with
+them; a workbook saved by a program that does not calculate formulas, such as a
+script, has none, and those cells come out empty.
 
 Each cell is written as Excel shows it in a column wide enough for it, as
 Excel's own CSV export writes it: `TRUE` and `FALSE`, and a number in its number
@@ -33,15 +39,13 @@ their numbers as General does. Dates and times are written as ISO 8601 writes
 them, such as `2026-11-10 09:30`, whatever their format.
 
 A workbook that is encrypted, in the Excel 97-2003 format (`.xls`), or whose
-contents expand to more than 1,024 MiB is refused. On Windows, a workbook with
-a worksheet that cannot name a file there, such as `a<b` or `CON`, is refused
-before any file is written.
+contents expand to more than 1,024 MiB is refused.
 
 For clean output, each worksheet should:
 
 - contain one table, whose first row is its header;
 - contain no populated cells outside the table;
-- be named for the page it becomes: a worksheet `Pin-Assignments` becomes
+- be named for the page it becomes: a worksheet `Pin Assignments` becomes
   `Pin-Assignments.md`, titled "Pin Assignments".
 
 ## CSV files

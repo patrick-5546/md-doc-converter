@@ -102,16 +102,16 @@ def trim_empty_edges(rows: list[list[str]]) -> list[list[str]]:
     return [row[left:right] for row in rows[top:bottom]]
 
 
-def table_page(rows: list[list[str]], *, stem: str, source: str, command: str) -> str:
-    """The page *stem*.md that *command* writes from *source*, with *rows* as its table.
+def table_page(rows: list[list[str]], *, title: str, source: str, command: str) -> str:
+    """The page that *command* writes from *source*, with *rows* as its table.
 
-    The page has a heading from *stem*, with hyphens as spaces, a note that it is generated,
-    and the table, whose first row is its header. Short rows are padded. A row wider than the
-    header raises ValueError, naming the row by its number, rather than losing cells.
+    The page has *title*, as text, as its heading, a note that it is generated, and the table,
+    whose first row is its header. Short rows are padded. A row wider than the header raises
+    ValueError, naming the row by its number, rather than losing cells.
     """
     header, *data = rows
     lines = [
-        f"# {literal_cell(stem.replace('-', ' '))}",
+        f"# {literal_cell(title)}",
         "",
         (
             f"> Generated from {literal_cell(source)} using md-doc-converter ({command}) "

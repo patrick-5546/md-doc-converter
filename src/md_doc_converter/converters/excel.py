@@ -25,8 +25,6 @@ if TYPE_CHECKING:
     from openpyxl.cell.cell import Cell, MergedCell
     from openpyxl.worksheet.worksheet import Worksheet
 
-# Windows cannot name a file as some worksheets are named, such as with "<" or "CON".
-WINDOWS = sys.platform == "win32"
 # Excel's General format shows a number in at most 11 characters, besides a minus sign.
 _GENERAL_WIDTH = 11
 # The number formats written as Excel shows them: digits with or without a thousands
@@ -34,6 +32,8 @@ _GENERAL_WIDTH = 11
 _DIGITS = re.compile(r"(?P<group>#,##)?0(?:\.(?P<decimals>0+))?(?:(?P<percent>%)|E\+00)?")
 # The color or condition of a format section, such as [Red], and a locale, such as [$-409].
 _BRACKETS = re.compile(r"\[[^\]]*\]")
+# What Windows and Azure DevOps wikis do not allow in a file name.
+_UNSAFE = re.compile(r'[<>:"/\\|?*#\x00-\x1f\x7f-\x9f]')
 
 
 def _general(value: Decimal) -> str:
@@ -142,27 +142,35 @@ def worksheets(excel_path: str) -> list[tuple[str, list[list[str]]]]:
         workbook.close()
 
 
-def _tables(excel_path: str, suffix: str) -> list[tuple[str, list[list[str]]]]:
-    """The worksheets of *excel_path*, refusing one that cannot name its file, before any file
-    is written."""
-    sheets = worksheets(excel_path)
-    for name, rows in sheets:
-        # A device name such as NUL would swallow the file, and Windows forbids < > " | in one.
-        if WINDOWS and rows and ntpath.isreserved(name + suffix):
-            raise ValueError(
-                f"the worksheet {name!r} cannot name a file on Windows; rename it in the workbook"
-            )
-    return sheets
+def _file_name(title: str, used: set[str]) -> str:
+    """A file name for the worksheet *title* that Windows and Azure DevOps wikis accept, without
+    the spaces and dots around it, with - for each space in it, as wikis name a page, and _ for
+    each character they do not allow, and that is not in *used*, ignoring case: a second Notes is
+    Notes-2. A name that Windows keeps for a device, such as CON, gets _ after it, before any
+    dot. The name is added to *used*."""
+    name = re.sub(r"^[\s.]+|[\s.]+$", "", _UNSAFE.sub("_", title))
+    name = re.sub(r"\s", "-", name) or "Sheet"
+    stem, dot, rest = name.partition(".")
+    # Such a name, such as NUL, would swallow the file on Windows.
+    if ntpath.isreserved(stem):
+        name = f"{stem}_{dot}{rest}"
+    candidate, number = name, 1
+    while candidate.casefold() in used:
+        number += 1
+        candidate = f"{name}-{number}"
+    used.add(candidate.casefold())
+    return candidate
 
 
 def excel_to_csv(excel_path: str, output_dir: str | None = None) -> None:
     out = Path(output_dir) if output_dir else Path(excel_path).parent
-    for name, rows in _tables(excel_path, ".csv"):
+    used: set[str] = set()
+    for title, rows in worksheets(excel_path):
         if not rows:
-            print(f"Skipped (empty): {name}")
+            print(f"Skipped (empty): {title}")
             continue
         out.mkdir(parents=True, exist_ok=True)
-        csv_path = out / f"{name}.csv"
+        csv_path = out / f"{_file_name(title, used)}.csv"
         with csv_path.open("w", newline="", encoding="utf-8") as stream:
             csv.writer(stream).writerows(rows)
         print(f"Written: {csv_path}")
@@ -171,17 +179,18 @@ def excel_to_csv(excel_path: str, output_dir: str | None = None) -> None:
 def excel_to_md(excel_path: str, output_dir: str | None = None, dry_run: bool = False) -> None:
     workbook = Path(excel_path)
     out = Path(output_dir) if output_dir else workbook.parent
-    for name, rows in _tables(excel_path, ".md"):
+    used: set[str] = set()
+    for title, rows in worksheets(excel_path):
         if not rows:
-            print(f"Skipped (empty): {name}")
+            print(f"Skipped (empty): {title}")
             continue
         page = table_page(
             rows,
-            stem=name,
-            source=f"the {name} worksheet of {workbook.name}",
+            title=title.strip(),
+            source=f"the {title.strip()} worksheet of {workbook.name}",
             command="excel-to-md",
         )
-        md_path = out / f"{name}.md"
+        md_path = out / f"{_file_name(title, used)}.md"
         if dry_run:
             print(f"Would write: {md_path}")
             continue
