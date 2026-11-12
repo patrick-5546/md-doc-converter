@@ -114,8 +114,13 @@ accepted.
   an invisible copy of the words that a search of a PDF of the page still
   finds; symbols that no font has, such as Word's Wingdings arrows, are left
   out of the copy. LibreOffice before 7.4 cannot report the drawing's frame, so
-  its whole page is kept, and reported. An SVG image that contains a script is
-  replaced by the PNG copy that Word keeps with it.
+  its whole page is kept, and reported. LibreOffice can draw a drawing, such as
+  one with dotted lines, as countless dots, whose SVG is then hundreds of times
+  the drawing's size: an SVG more than 20 times the size of its drawing, and
+  over a mebibyte, gives way to a PNG of the same part of the page, at 192
+  pixels per inch, whose text is not searchable, and the report names it. An
+  SVG image that contains a script is replaced by the PNG copy that Word keeps
+  with it.
 - **Spaces:** no-break and other Unicode spaces become plain spaces, except
   spaces that indent a line, which stay no-break spaces so that the indent
   shows. Zero-width spaces are dropped, and so are the left-to-right marks that

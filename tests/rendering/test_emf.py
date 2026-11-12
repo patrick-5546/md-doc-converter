@@ -1,8 +1,10 @@
-"""Real EMF conversion with LibreOffice and Poppler: cropping, one run and searchable text."""
+"""Real EMF conversion with LibreOffice and Poppler: cropping, one run, searchable text, and a
+PNG for a drawing whose SVG is too large."""
 
 from __future__ import annotations
 
 import re
+import struct
 import subprocess
 import sys
 from pathlib import Path
@@ -139,3 +141,33 @@ def test_real_drawings_that_libreoffice_cannot_export_as_svg_convert(tmp_path: P
     assert size_mm(svgs["space"]) == pytest.approx((60, 20), abs=0.1)
     assert size_mm(svgs["bitmap"]) == pytest.approx((30, 15), abs=0.1)
     assert list(svgs["bitmap"].iter(SVG + "image"))
+
+
+def test_real_drawing_whose_svg_is_too_large_is_a_png_of_the_drawing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Every SVG is too large for these limits.
+    monkeypatch.setattr(_media, "_LARGE_SVG", 0)
+    monkeypatch.setattr(_media, "_SVG_GROWTH", 0)
+    work = tmp_path / "work"
+    [(png, findings)] = _media._convert_vectors(
+        {"diagram": (synthetic_emf(), ".emf")}, work
+    ).values()
+    assert isinstance(png, bytes)
+    assert png.startswith(_media.PNG_SIGNATURE)
+    assert len(findings) == 1
+    assert findings[0].startswith(_media._DRAWN_AS_PNG)
+    # The IHDR chunk gives the width and height: the 10 mm drawing at 192 pixels per inch.
+    assert struct.unpack(">II", png[16:24]) == (76, 76)
+    # A part of the page as large without the drawing, at its top left, looks different.
+    blank = tmp_path / "blank"
+    subprocess.run(
+        [
+            *(poppler("pdftocairo"), "-png", "-singlefile", "-r", "192", "-W", "76", "-H", "76"),
+            str(work / "pdf" / "diagram.pdf"),
+            str(blank),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    assert png != blank.with_name("blank.png").read_bytes()

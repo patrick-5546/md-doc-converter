@@ -70,10 +70,17 @@ LAYER = (
     '<tspan x="306" textLength="10" lengthAdjust="spacingAndGlyphs">line</tspan></text></g>'
 )
 # What each tool writes for a drawing: "pdf" whether LibreOffice exports one; "cairo" and
-# "words" what pdftocairo and pdftotext write, or None for nothing; "struct" what pdfinfo
-# prints. False makes a tool fail.
-Outputs = dict[str, str | bool | None]
-DEFAULTS: Outputs = {"pdf": True, "cairo": CAIRO_PAGE, "struct": FIGURE, "words": NO_WORDS}
+# "words" what pdftocairo and pdftotext write, or None for nothing; "png" what pdftocairo writes
+# as a PNG; "struct" what pdfinfo prints. False makes a tool fail.
+Outputs = dict[str, str | bytes | bool | None]
+PNG = _media.PNG_SIGNATURE + b"synthetic drawing"
+DEFAULTS: Outputs = {
+    "pdf": True,
+    "cairo": CAIRO_PAGE,
+    "png": PNG,
+    "struct": FIGURE,
+    "words": NO_WORDS,
+}
 POPPLER = {"pdftocairo": "cairo", "pdfinfo": "struct", "pdftotext": "words"}
 
 
@@ -102,28 +109,37 @@ class FakeDrawingTools:
                 raise crash
             return ""
         pdf = next(Path(arg) for arg in args if arg.endswith(".pdf"))
-        written = self.output(pdf.stem, POPPLER[tool])
+        written = self.output(pdf.stem, self.kind(args))
         if written is False:
             raise crash
         if tool == "pdfinfo":
             return str(written)
-        if isinstance(written, str):
+        if isinstance(written, bytes):
+            # pdftocairo names a single PNG for its output root.
+            Path(args[-1] + ".png").write_bytes(written)
+        elif isinstance(written, str):
             Path(args[-1]).write_text(written, encoding="utf-8", newline="\n")
         return ""
 
-    def output(self, name: str, kind: str) -> str | bool | None:
+    def output(self, name: str, kind: str) -> str | bytes | bool | None:
         return self.outputs[name].get(kind, DEFAULTS[kind])
 
+    @staticmethod
+    def kind(call: list[str]) -> str:
+        if "-png" in call:
+            return "png"
+        return POPPLER.get(Path(call[0]).name, "pdf")
+
     def kinds(self) -> list[str]:
-        return [POPPLER.get(Path(call[0]).name, "pdf") for call in self.calls]
+        return [self.kind(call) for call in self.calls]
 
     def inputs(self, index: int) -> list[str]:
         call = self.calls[index]
         return [Path(source).stem for source in call[call.index("--outdir") + 2 :]]
 
 
-# Each drawing's result, as text, and the findings about its conversion, by name.
-Results = dict[str, tuple[str, list[str]]]
+# Each drawing's result, as text, or a PNG, and the findings about its conversion, by name.
+Results = dict[str, tuple[str | bytes, list[str]]]
 Convert = Callable[..., tuple[Results, FakeDrawingTools]]
 
 
@@ -152,7 +168,12 @@ def convert(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.Monkey
             patch.setattr(_reference, "run_command", tools)
             results = _media._convert_vectors(drawings, work)
         decoded = {
-            name: (result.decode() if isinstance(result, bytes) else result, findings)
+            name: (
+                result.decode()
+                if isinstance(result, bytes) and not result.startswith(_media.PNG_SIGNATURE)
+                else result,
+                findings,
+            )
             for name, (result, findings) in results.items()
         }
         return decoded, tools
@@ -213,6 +234,42 @@ def test_frames_are_read_as_pdfinfo_prints_numbers(convert: Convert) -> None:
     exponent = FIGURE.replace("291.827 381.827", "2.91827e+02 3.81827E2")
     results, _tools = convert({"drawing": {"struct": exponent}})
     assert results["drawing"] == (CROPPED_PAGE, [])
+
+
+# LibreOffice can draw a dotted line as countless dots: an SVG of more than a mebibyte.
+DOTTED_PAGE = CAIRO_PAGE.replace(
+    '<path d="M 300 390 L 310 400"/>', '<path d="M 300 390 L 300 390"/>\n' * 40_000
+)
+
+
+def test_a_drawing_whose_svg_is_far_larger_than_it_is_drawn_as_a_png(convert: Convert) -> None:
+    results, tools = convert({"drawing": {"cairo": DOTTED_PAGE}})
+    png, findings = results["drawing"]
+    assert png == PNG
+    assert len(findings) == 1
+    assert findings[0].startswith(f"{_media._DRAWN_AS_PNG} (an SVG of 1 MiB, ")
+    assert tools.kinds() == ["pdf", "cairo", "struct", "words", "png"]
+    drawing = tools.calls[-1]
+    # The drawing's frame in points, at 192 pixels per inch.
+    assert [drawing[drawing.index(option) + 1] for option in ("-r", "-x", "-y", "-W", "-H")] == [
+        "192",
+        "778",
+        "1018",
+        "76",
+        "76",
+    ]
+
+
+def test_a_large_svg_is_kept_when_its_png_cannot_be_drawn(convert: Convert) -> None:
+    results, _tools = convert({"drawing": {"cairo": DOTTED_PAGE, "png": False}})
+    svg, findings = results["drawing"]
+    assert isinstance(svg, str)
+    assert svg.startswith("<?xml")
+    assert len(findings) == 1
+    assert findings[0].startswith("its SVG is 1 MiB, ")
+    assert findings[0].endswith(
+        ", and could not be drawn as a PNG: PDF-to-PNG conversion failed: synthetic crash"
+    )
 
 
 def test_a_unitless_pdftocairo_page_is_measured_in_points(convert: Convert) -> None:
@@ -302,6 +359,7 @@ def test_a_failed_conversion_affects_only_its_drawing(
 ) -> None:
     results, _tools = convert({"a": outputs, "b": {}})
     result, findings = results["a"]
+    assert isinstance(result, str)
     assert error in result
     assert findings == []
     assert results["b"] == (CROPPED_PAGE, [])
@@ -310,6 +368,7 @@ def test_a_failed_conversion_affects_only_its_drawing(
 def test_missing_office_is_a_clear_conditional_failure(convert: Convert) -> None:
     results, tools = convert({"a": {}, "b": {}}, missing=("libreoffice", "soffice"))
     for result, findings in results.values():
+        assert isinstance(result, str)
         assert "requires LibreOffice" in result
         assert findings == []
     assert tools.calls == []
@@ -464,6 +523,33 @@ def test_a_drawing_s_notes_are_reported_by_kind(
     # Only the whole page shows in the Markdown; the unsearchable text is a detail.
     assert report.kinds == {_media._WHOLE_PAGE: 1}
     assert report.sections == {_media._WHOLE_PAGE: "markdown"}
+
+
+def test_a_drawing_drawn_as_a_png_is_published_as_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    note = f"{_media._DRAWN_AS_PNG} (an SVG of 12 MiB, 300 times its drawing)"
+
+    def convert_vectors(
+        drawings: dict[str, tuple[bytes, str]], _work: Path
+    ) -> dict[str, _media.VectorResult]:
+        return dict.fromkeys(drawings, (PNG, [note]))
+
+    monkeypatch.setattr(_media, "_convert_vectors", convert_vectors)
+    drawing = synthetic_emf()
+    report = TransformReport()
+    stager = _media.ImageStager(tmp_path, _package({"word/media/drawing.emf": drawing}))
+    try:
+        published = stager.publish(
+            "part:word/media/drawing.emf", drawing, PurePosixPath("d.emf"), report
+        )
+    finally:
+        stager.close()
+    assert published == PurePosixPath("d.png")
+    assert (stager.root / "d.png").read_bytes() == PNG
+    assert report.findings == [f"d.emf: {note}"]
+    assert report.kinds == {_media._DRAWN_AS_PNG: 1}
+    assert report.sections == {_media._DRAWN_AS_PNG: "markdown"}
 
 
 def _package(parts: dict[str, bytes], shown: Collection[str] = ()) -> _models.WordPackage:

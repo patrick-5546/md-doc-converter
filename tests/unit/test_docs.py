@@ -17,6 +17,7 @@ import pytest
 from md_doc_converter import __main__ as _main
 from md_doc_converter.__main__ import COMMANDS
 from md_doc_converter.converters import packages
+from md_doc_converter.converters.docx import media as _media
 from md_doc_converter.rendering.pipeline import PDF_TIMEOUT_DEFAULT
 from md_doc_converter.toolchain.environment import NODE_MINIMUM, PANDOC_VERSION
 from tests.support.project import PROJECT_ROOT
@@ -105,6 +106,12 @@ def test_the_python_version_is_the_supported_one() -> None:
         ),
         pytest.param(r"up to (\d+) seconds by default", str(PDF_TIMEOUT_DEFAULT), id="pdf-guide"),
         pytest.param(r"in seconds \((\d+);", str(PDF_TIMEOUT_DEFAULT), id="pdf-setting"),
+        pytest.param(
+            r"more than (\d+) times the size of its drawing",
+            str(_media._SVG_GROWTH),
+            id="svg-growth",
+        ),
+        pytest.param(r"at (\d+)\s+pixels per inch", str(_media._PNG_RESOLUTION), id="png-pixels"),
     ],
 )
 def test_limits_are_the_codes(pattern: str, value: str) -> None:

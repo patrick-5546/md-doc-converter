@@ -407,12 +407,63 @@ def _size_in_points(path: Path) -> None:
     path.write_text(text[: start.start()] + tag + text[start.end() :], encoding="utf-8", newline="")
 
 
-# A converted drawing's SVG, or why it could not be converted, and notes on the conversion.
+# A converted drawing's SVG, or its PNG, or why it could not be converted, and notes on the
+# conversion.
 VectorResult = tuple[bytes | str, list[str]]
-# The notes: the drawing could not be cut from LibreOffice's page, which the Markdown shows; or
-# its words could not be kept searchable, a detail.
+# The notes: the drawing could not be cut from LibreOffice's page, or it is published as a PNG,
+# which the Markdown shows; or its words could not be kept searchable, a detail.
 _WHOLE_PAGE = "kept LibreOffice's whole page around the drawing"
+_DRAWN_AS_PNG = "published as a PNG, as its SVG would be too large; its text is not searchable"
 _UNSEARCHABLE = "its text is not searchable"
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+# LibreOffice can draw some drawings, such as dotted lines in EMF+, as countless separate dots,
+# whose SVG is then hundreds of times the size of the drawing: too large to publish or to show.
+# An SVG that is more than this many times the size of its drawing, and over a mebibyte, gives
+# way to a PNG of the same part of the page, at twice the resolution of Word's 100% zoom.
+_SVG_GROWTH = 20
+_LARGE_SVG = 1 << 20
+_PNG_RESOLUTION = 192
+
+
+def _page_png(pdf: Path, svg: bytes, work: Path, cairo: str) -> bytes:
+    """A PNG of the part of LibreOffice's page *pdf* that the SVG *svg* of the page shows."""
+    start = re.search(rb"<svg\b[^>]*>", svg)
+    view_box = re.search(rb"""(?<=\s)viewBox\s*=\s*(["'])(.*?)\1""", start[0]) if start else None
+    numbers = (
+        re.split(r"[\s,]+", view_box[2].decode("ascii", "replace").strip()) if view_box else []
+    )
+    try:
+        left, top, width, height = (float(part) for part in numbers)
+    except ValueError as error:
+        raise ConversionError("the drawing's viewBox is not four numbers") from error
+    # pdftocairo's SVG measures the page in points, and the PNG in pixels.
+    scale = _PNG_RESOLUTION / 72
+    root = work / f"{pdf.stem}-png"
+    _reference.run_command(
+        [
+            cairo,
+            "-png",
+            "-singlefile",
+            "-r",
+            str(_PNG_RESOLUTION),
+            "-x",
+            str(round(left * scale)),
+            "-y",
+            str(round(top * scale)),
+            "-W",
+            str(max(1, round(width * scale))),
+            "-H",
+            str(max(1, round(height * scale))),
+            str(pdf),
+            str(root),
+        ],
+        "PDF-to-PNG conversion",
+        quiet=True,
+    )
+    png = root.with_name(f"{root.name}.png")
+    if not _produced(png):
+        raise ConversionError("PDF-to-PNG conversion produced no PNG")
+    return png.read_bytes()
 
 
 def _number(value: float) -> str:
@@ -556,7 +607,8 @@ def _page_svg(
 
 
 def _convert_vectors(drawings: dict[str, tuple[bytes, str]], work: Path) -> dict[str, VectorResult]:
-    """Convert EMF/WMF drawings, by name, to SVGs cropped to each drawing.
+    """Convert EMF/WMF drawings, by name, to SVGs cropped to each drawing, or each to a PNG of
+    the same part of the page where its SVG would be too large.
 
     One LibreOffice run with one profile exports every drawing as a tagged PDF; Poppler turns
     each into an SVG with pdftocairo, finds its frame with pdfinfo and its words with pdftotext.
@@ -602,7 +654,7 @@ def _convert_vectors(drawings: dict[str, tuple[bytes, str]], work: Path) -> dict
         # The drawings that it exported still convert.
         failure = error
     results: dict[str, VectorResult] = {}
-    for name in drawings:
+    for name, (data, _suffix) in drawings.items():
         pdf = pdfs / f"{name}.pdf"
         findings: list[str] = []
         try:
@@ -611,8 +663,16 @@ def _convert_vectors(drawings: dict[str, tuple[bytes, str]], work: Path) -> dict
             svg = _page_svg(pdf, svgs, findings, cairo=cairo, info=info, pdftotext=pdftotext)
         except (ConversionError, OSError) as error:
             results[name] = (str(error), findings)
-        else:
-            results[name] = (svg, findings)
+            continue
+        if len(svg) > max(_LARGE_SVG, _SVG_GROWTH * len(data)):
+            size = f"{len(svg) / (1 << 20):.0f} MiB, {len(svg) // len(data)} times its drawing"
+            try:
+                svg = _page_png(pdf, svg, svgs, cairo)
+            except (ConversionError, OSError) as error:
+                findings.append(f"its SVG is {size}, and could not be drawn as a PNG: {error}")
+            else:
+                findings.append(f"{_DRAWN_AS_PNG} (an SVG of {size})")
+        results[name] = (svg, findings)
     return results
 
 
@@ -623,7 +683,8 @@ def media_name(part: str, folder: str) -> PurePosixPath:
 
 
 class ImageStager:
-    """Publish each distinct image once under a unique name, converting EMF/WMF to SVG.
+    """Publish each distinct image once under a unique name, converting EMF/WMF to SVG, or to
+    PNG where its SVG would be too large.
 
     LibreOffice starts converting the drawings that the document's body shows when the stager
     is created, in the background, while the document is read; `close` waits for it.
@@ -691,7 +752,8 @@ class ImageStager:
         if suffix in VECTOR_SUFFIXES:
             converted = self._convert(data, suffix, preferred, report)
             if converted is not None:
-                content, preferred = converted, preferred.with_suffix(".svg")
+                drawn = ".png" if converted.startswith(PNG_SIGNATURE) else ".svg"
+                content, preferred = converted, preferred.with_suffix(drawn)
         elif suffix == ".svg":
             try:
                 validate_svg_bytes(data, preferred.as_posix())
@@ -759,10 +821,11 @@ class ImageStager:
         cached = self._converted[digest]
         label = suffix[1:].upper()
         for message in self._findings.pop(digest, []):
-            if message.startswith(_WHOLE_PAGE):
-                report.warn(
-                    f"{preferred.as_posix()}: {message}", kind=_WHOLE_PAGE, section="markdown"
-                )
+            kind = next(
+                (kind for kind in (_WHOLE_PAGE, _DRAWN_AS_PNG) if message.startswith(kind)), None
+            )
+            if kind is not None:
+                report.warn(f"{preferred.as_posix()}: {message}", kind=kind, section="markdown")
             else:
                 report.warn(f"{preferred.as_posix()}: {message}", section="detail")
         if isinstance(cached, str):
@@ -772,7 +835,9 @@ class ImageStager:
                 f"{preferred.as_posix()}: {cached}",
             )
             return None
-        report.applied("image-conversion", f"{label} to SVG")
+        report.applied(
+            "image-conversion", f"{label} to {'PNG' if cached.startswith(PNG_SIGNATURE) else 'SVG'}"
+        )
         return cached
 
     def _store(self, results: dict[str, VectorResult]) -> None:
