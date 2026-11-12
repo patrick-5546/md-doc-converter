@@ -72,8 +72,11 @@ accepted.
   brackets keep a backslash only where Markdown could read them as markup, as
   in `\<speeds>`: `bits [3:0]`, `a -> b` and `x <= 4` stay as typed.
 - **Links** keep their targets, and a ScreenTip becomes the link's title. A
-  link to a Word bookmark, such as a cross-reference that Word links, leads to
-  the heading the bookmark marks, or to the section that holds it. A
+  link to another local file leads to it from the Markdown's folder; one to a
+  file that does not exist, such as a link that a document library saved
+  relative to itself, stays as Word wrote it, and the report names it. A link
+  to a Word bookmark, such as a cross-reference that Word links, leads to the
+  heading the bookmark marks, or to the section that holds it. A
   table-of-contents entry or cross-reference whose bookmark starts before the
   paragraph it marks, as when text was typed at the start of a heading, leads
   where the bookmark starts, as it does in Word, and the report names it:

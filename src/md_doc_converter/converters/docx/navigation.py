@@ -241,9 +241,13 @@ def rewrite_references(
             fragment = urllib.parse.quote(anchors[fragment], safe="")
         elif original_path == output and not parsed.path:
             relative = ""
-        else:
+        elif original_path.exists():
             relative = Path(os.path.relpath(original_path, output.parent)).as_posix()
             fragment = parsed.fragment
+        else:
+            # A missing file keeps its target as written: resolved, it would depend on this
+            # machine's folders, and decoded, an escaped character such as %2F would change it.
+            return target
         return (
             urllib.parse.urlunsplit(
                 (

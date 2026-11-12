@@ -227,13 +227,19 @@ class _Styles:
 
 
 def rebase_link(target: str, paths: ConversionPaths) -> str:
-    """A relative link of the Word document, made relative to the Markdown output."""
+    """A relative link of the Word document, made relative to the Markdown output.
+
+    A link to a file that does not exist stays as Word wrote it: rebased, it would name the
+    folders of the machine that converted the document.
+    """
     parsed = _reference.split_uri(target)
     if parsed.scheme or parsed.netloc or not parsed.path:
         return target
     target_path = paths.source_entry.parent / urllib.parse.unquote(parsed.path)
     if target_path.resolve() == paths.source or _publication.same_file(target_path, paths.source):
         return urllib.parse.urlunsplit(("", "", "", parsed.query, parsed.fragment))
+    if not target_path.exists():
+        return target
     relative = os.path.relpath(target_path.resolve(), paths.output.parent)
     return urllib.parse.urlunsplit(
         (

@@ -4211,6 +4211,31 @@ def test_broken_local_hyperlink_is_kept_and_reported(convert: Converter) -> None
     assert "    issue (1): a local link target does not exist" in summary
 
 
+def test_a_missing_local_target_keeps_its_path_wherever_the_markdown_goes(
+    convert: Converter, tmp_path: Path
+) -> None:
+    targets = {
+        # A link saved relative to a document library, which leads nowhere from a downloaded
+        # copy; it climbs above every folder here.
+        "Library": "../" * 40 + "Team%20Library/plans/roadmap.docx",
+        # An escaped slash and dot segments are part of what Word wrote, not to be decoded or
+        # resolved.
+        "Escaped": "missing/a%2Fb.docx#Part%202",
+        "Dotted": "./missing/../other/./notes.docx",
+    }
+    output = tmp_path / "wiki" / "pages" / "guide.md"
+    result, report, _warnings = convert.reported(
+        [hyperlink(label, relation=label) for label in targets],
+        output=output,
+        relations=tuple(
+            (label, "hyperlink", target, "External") for label, target in targets.items()
+        ),
+    )
+    for label, target in targets.items():
+        assert f"[{label}]({target})" in result
+    assert "    issue (3): a local link target does not exist" in report.summary()
+
+
 def test_malformed_uri_is_kept_and_reported(convert: Converter) -> None:
     result, _report, warnings = convert.reported(
         [hyperlink("Broken", relation="broken")],
