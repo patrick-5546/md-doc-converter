@@ -106,12 +106,6 @@ def test_the_python_version_is_the_supported_one() -> None:
         ),
         pytest.param(r"up to (\d+) seconds by default", str(PDF_TIMEOUT_DEFAULT), id="pdf-guide"),
         pytest.param(r"in seconds \((\d+);", str(PDF_TIMEOUT_DEFAULT), id="pdf-setting"),
-        pytest.param(
-            r"more than (\d+) times the size of its drawing",
-            str(_media._SVG_GROWTH),
-            id="svg-growth",
-        ),
-        pytest.param(r"at (\d+)\s+pixels per inch", str(_media._PNG_RESOLUTION), id="png-pixels"),
         pytest.param(r"over (\d+) MB", f"{_media._WIKI_SVG_SIZE / 1e6:g}", id="wiki-svg-size"),
         pytest.param(r"at most (\d+) characters", str(excel._GENERAL_WIDTH), id="general-width"),
     ],

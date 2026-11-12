@@ -21,120 +21,8 @@ and the report says so.
 ## What the Markdown holds
 
 The Markdown shows the document as Word shows it with every tracked change
-accepted.
-
-- **Headings** keep Word's levels 1 to 6; levels 7 to 9 become paragraphs. A
-  paragraph in Word's Title style before the first heading becomes the only `#`
-  heading, and every other heading moves down one level; a Heading 6 then has
-  no level left, so it becomes a paragraph, and the report names it. A heading
-  keeps the punctuation that ends it, and its level when it skips one, such as
-  a Heading 3 right after a Heading 1: markdownlint reports both, and the
-  report names each skip, to fix in Word. A heading with no text is omitted,
-  and a line break in one becomes a space. With `--qualify-duplicate-headings`,
-  a repeated heading also names the headings of the sections that hold it: two
-  `## Overview` headings under `# Block A` and `# Block B` become
-  `## Block A - Overview` and `## Block B - Overview`; the title, which holds
-  every heading, names none. A paragraph that Word numbers and gives an outline
-  level stays a numbered list item, and the report names it, unless its
-  paragraph style gives it both, as a numbered heading style does: then it is a
-  heading, as Word's navigation pane and tables of contents show it, without
-  its number.
-- **Lists** use `-` for bullets and keep Word's numbers; a lettered or Roman
-  level is numbered with digits, the only numbering Markdown has. An empty
-  bullet is omitted, and so is an empty numbered item at the start or end of
-  its list. A paragraph of a list that shows no number or bullet at any level,
-  which Word uses to indent paragraphs, is a paragraph, in the list item before
-  it if there is one. An empty paragraph between two items of a list is
-  omitted, so that the list goes on, as in Word, rather than beginning again. A
-  table or paragraph between two items of a list, indented to the text of an
-  item or further, which Word shows inside that item, is in the Markdown item
-  too, and the list goes on after it. One that is not indented into the list
-  ends the Markdown list, and the items after it start a new one, numbered as in
-  Word. If the item after it is nested in an earlier item, which the new list
-  has at its top level, the report names it, to indent in Word.
-- **Line breaks** are Markdown hard line breaks, a backslash at the end of the
-  line; two in a row start a new paragraph. In a table cell they are `<br>`.
-- **Tables** are Markdown tables, with Word's first row as the header, or
-  minimal HTML where Markdown cannot hold them, such as merged cells, a nested
-  table, or a heading or nested list in a cell. In a cell, line breaks,
-  paragraphs and a one-level list become lines separated by `<br>`; in the
-  header, whose line breaks usually narrow a column, they become spaces, unless
-  the table has only that row. Rows that show nothing are omitted, except the
-  first after the header, such as a template's row to fill in. A table that
-  shows nothing is omitted too, and the report names it. Column widths,
-  colors, borders and cell alignment are not kept.
-- **Code:** text in a monospace font, such as Consolas, becomes code: whole
-  paragraphs of it, or a one-cell table of them, a fenced `text` block, and
-  shorter runs inline code. Curly quotes and dashes in code become ASCII.
-- **Formatting:** bold, italic and strikethrough stay Markdown, except where
-  Markdown would not read them, as in `**Note:**next`, where they become
-  `<strong>`, `<em>` and `<del>`. Underline, subscript, superscript and
-  highlight become `<u>`, `<sub>`, `<sup>` and `<mark>`, except underline in
-  links, headings and code. Paragraphs in Word's quote styles become block
-  quotes. Text that Markdown would read as markup, such as `<speeds>`, a
-  backtick, a leading `#` or a line of `---`, stays text. Brackets and angle
-  brackets keep a backslash only where Markdown could read them as markup, as
-  in `\<speeds>`: `bits [3:0]`, `a -> b` and `x <= 4` stay as typed.
-- **Links** keep their targets, and a ScreenTip becomes the link's title. A
-  link to another local file leads to it from the Markdown's folder; one to a
-  file that does not exist, such as a link that a document library saved
-  relative to itself, stays as Word wrote it, and the report names it. A link
-  to a Word bookmark, such as a cross-reference that Word links, leads to the
-  heading the bookmark marks, or to the section that holds it. A
-  table-of-contents entry or cross-reference whose bookmark starts before the
-  paragraph it marks, as when text was typed at the start of a heading, leads
-  where the bookmark starts, as it does in Word, and the report names it:
-  update the table of contents, and insert the cross-reference again, in Word.
-  A web or e-mail address typed as text becomes a link.
-- **Fields** keep the text Word shows, such as caption numbers, and a check box
-  shows ☐ or ☒. Page numbers stay text. A table of contents, or of figures,
-  keeps each entry's link, number and title, but not its page number. Word
-  shows a field's text as of its last update, so update the fields before
-  converting: in Word, press Ctrl+A and then F9, and have each table of contents
-  or figures updated entirely. A caption number that shows nothing until then,
-  as in `Figure 3-: Clock tree`, stays so, as does a table of figures that leaves
-  out a caption or numbers one differently; the report names each.
-- **Footnotes and endnotes** become footnotes, `[^1]`, numbered in order and
-  defined at the end of the Markdown. VS Code's Markdown preview shows
-  them only with the [Markdown Footnotes](https://marketplace.visualstudio.com/items?itemName=bierner.markdown-footnotes)
-  extension; GitHub, GitLab and `md-to-html` show them.
-- **Equations** are TeX: `` $`x`$ `` inline and a ```` ```math ```` block on
-  their own line, as GitHub writes them, or with `--math dollars`, `$x$` and
-  `$$x$$`, for renderers that read only those, such as Azure DevOps Wiki.
-- **Text boxes:** the text of a text box follows the paragraph that holds it.
-  A drawing of shapes and text boxes, such as a block diagram drawn in Word, has
-  no picture, so only its labels are kept, after its paragraph, and the report
-  lists it to check in Word.
-- **Images** keep their place, without Word's display size. An image's alt
-  text is the title of its figure caption, or else Word's alt text; otherwise
-  it is empty, and reported, to add in Word. EMF and WMF drawings, which Word
-  keeps for drawings pasted from Visio and other programs, become SVG, cropped
-  to the drawing: LibreOffice draws each as a PDF, which Poppler turns into
-  SVG. Its text is drawn as shapes, so that it looks the same everywhere, with
-  an invisible copy of the words that a search of a PDF of the page still
-  finds; symbols that no font has, such as Word's Wingdings arrows, are left
-  out of the copy. LibreOffice before 7.4 cannot report the drawing's frame, so
-  its whole page is kept, and reported. LibreOffice can draw a drawing, such as
-  one with dotted lines, as countless dots, whose SVG is then hundreds of times
-  the drawing's size: an SVG more than 20 times the size of its drawing, and
-  over a mebibyte, gives way to a PNG of the same part of the page, at 192
-  pixels per inch, whose text is not searchable, and the report names it. Azure
-  DevOps Wiki shows an SVG through a sanitizer that removes its `<use>`
-  elements, with which Poppler draws each letter and picture, and that refuses
-  an SVG over 5 MB. So each `<use>` is replaced by a copy of what it shows, and
-  an SVG that is then over 5 MB gives way to a PNG too; an SVG whose `<use>`
-  elements cannot all be copied exactly keeps them, and the report names it. An
-  SVG image that contains a script is replaced by the PNG copy that Word keeps
-  with it.
-- **Spaces:** no-break and other Unicode spaces become plain spaces, except
-  spaces that indent a line, which stay no-break spaces so that the indent
-  shows. Zero-width spaces are dropped, and so are the left-to-right marks that
-  Word puts in cross-references, unless the document has right-to-left text.
-- **Symbols:** an arrow in a symbol font, such as Wingdings, becomes the arrow
-  that every font has, such as → or ↖, by its direction. Pandoc reads these
-  arrows as characters that few fonts have, which PDFs and browsers show as
-  boxes. A no-break hyphen, as in Word's caption numbers, becomes a hyphen,
-  which every font has and a search for `Table 2-1` finds.
+accepted. The sections below list where it differs; "(reported)" marks what
+[the report](#the-report) names.
 
 For example, a short document with a Title paragraph, a cross-reference to a
 bookmarked paragraph, text in a monospace font, a captioned figure, and a table
@@ -166,9 +54,150 @@ Figure 1: Block diagram
 
 The Title paragraph is the only `#` heading, and the other headings moved down
 a level; `Reset`, a level 3 heading in a level 1 section, keeps its level, and
-the report names it. The cross-reference leads to the
-section that holds its bookmark, and the figure's alt text is its caption's
-title.
+the report names it. The cross-reference leads to the section that holds its
+bookmark, and the figure's alt text is its caption's title.
+
+### Headings
+
+- Word's heading levels 1 to 6 stay headings; levels 7 to 9 become paragraphs
+  (reported).
+- Word's heading numbers, such as 2.1, are not kept.
+- A paragraph in Word's Title style before the first heading becomes the only
+  `#` heading, and every other heading moves down a level. A Heading 6 then
+  becomes a paragraph (reported).
+- A heading that skips a level, such as a Heading 3 right after a Heading 1,
+  keeps its level (reported).
+- A line break in a heading becomes a space (reported).
+- A heading with no text is omitted (reported).
+- A paragraph that has an outline level and Word's numbering is a heading when
+  its style gives it both, as a numbered heading style does, and otherwise a
+  numbered list item (reported).
+- With `--qualify-duplicate-headings`, a repeated heading also names the
+  headings of the sections that hold it: two `## Overview` headings under
+  `# Block A` and `# Block B` become `## Block A - Overview` and
+  `## Block B - Overview`. The title, which holds every heading, is not named.
+
+### Lists
+
+- Bullets become `-`, and numbered items keep Word's numbers; a lettered or
+  Roman level is numbered with digits, the only numbering Markdown has.
+- An empty bullet is omitted, and so is an empty numbered item at the start or
+  end of its list.
+- A list paragraph that shows no number or bullet, which Word uses to indent
+  text, is a plain paragraph, inside the item before it.
+- A table or paragraph between two items stays in the list when Word indents it
+  into an item, and otherwise ends the list. If the item after it is nested, it
+  is then at the new list's top level (reported).
+
+### Tables
+
+- Tables become Markdown tables, with Word's first row as the header.
+- A table that Markdown cannot hold, such as one with merged cells, a nested
+  table, or a heading or nested list in a cell, becomes minimal HTML
+  (reported).
+- In a cell, line breaks, paragraphs and a one-level list become lines
+  separated by `<br>`; in the header, they become spaces, unless the table has
+  only that row.
+- Rows that show nothing are omitted, except the first after the header, such
+  as a template's row to fill in.
+- A table that shows nothing is omitted (reported).
+- Column widths, colors, borders and cell alignment are not kept.
+
+### Code
+
+- Text in a monospace font, such as Consolas, becomes code: whole paragraphs of
+  it, or a one-cell table of them, a fenced `text` block, and shorter runs
+  inline code.
+- Curly quotes and dashes in code become ASCII.
+
+### Formatting
+
+- Bold, italic and strikethrough stay Markdown, or become `<strong>`, `<em>`
+  and `<del>` where Markdown would not read them, as in `**Note:**next`.
+- Underline, subscript, superscript and highlight become `<u>`, `<sub>`,
+  `<sup>` and `<mark>`; underline in links, headings and code is not kept.
+- Paragraphs in Word's quote styles become block quotes.
+- A line break becomes a Markdown hard line break, a backslash at the end of
+  the line; two in a row start a new paragraph.
+- Text that Markdown would read as markup, such as `<speeds>`, a backtick, a
+  leading `#` or a line of `---`, stays text. A backslash escapes only what
+  Markdown would read, as in `\<speeds>`, so `bits [3:0]`, `a -> b` and
+  `x <= 4` stay as typed.
+
+### Links
+
+- Links keep their targets, and a ScreenTip becomes the link's title.
+- A link to another local file leads to it from the Markdown's folder; one to
+  a file that does not exist stays as Word wrote it (reported).
+- A link to a Word bookmark, such as a cross-reference, leads to the heading
+  the bookmark marks, or else to the section that holds it (reported).
+- A table-of-contents entry or cross-reference whose bookmark starts before
+  the paragraph it marks, as when text was typed at the start of a heading,
+  leads where the bookmark starts, as in Word (reported). Update the table of
+  contents, and insert the cross-reference again, in Word.
+- A web or e-mail address typed as text becomes a link.
+
+### Fields
+
+- Fields keep the text Word shows, such as caption numbers; a check box shows
+  ☐ or ☒, and page numbers stay text.
+- A table of contents, or of figures, keeps each entry's link, number and
+  title, but not its page number.
+- Word shows a field's text as of its last update, so update the fields before
+  converting: in Word, press Ctrl+A and then F9, and have each table of
+  contents or figures updated entirely.
+- A caption number that shows nothing until then, as in
+  `Figure 3-: Clock tree`, stays so (reported).
+- A table of figures that leaves out a caption, or numbers one differently,
+  stays so (reported).
+
+### Footnotes and endnotes
+
+- Footnotes and endnotes become footnotes, `[^1]`, numbered in order and
+  defined at the end of the Markdown.
+- GitHub, GitLab and `md-to-html` show them; VS Code's Markdown preview needs
+  the [Markdown Footnotes](https://marketplace.visualstudio.com/items?itemName=bierner.markdown-footnotes)
+  extension.
+
+### Equations
+
+- Equations are TeX: `` $`x`$ `` inline and a ```` ```math ```` block on their
+  own line, as GitHub writes them.
+- With `--math dollars`, they are `$x$` and `$$x$$`, for renderers that read
+  only those, such as Azure DevOps Wiki.
+
+### Text boxes
+
+- The text of a text box follows the paragraph that holds it.
+- A drawing of shapes and text boxes, such as a block diagram drawn in Word,
+  keeps only its labels, after its paragraph (reported).
+
+### Images
+
+- Images keep their place, but not Word's display size.
+- An image's alt text is the title of its figure caption, or else Word's alt
+  text; without either, it is empty (reported).
+- EMF and WMF drawings, which Word keeps for drawings pasted from Visio and
+  other programs, become SVG cropped to the drawing. Their text is drawn as
+  shapes, with an invisible copy that a search of a PDF of the page finds.
+- A drawing whose SVG would be far larger than the drawing, or over 5 MB,
+  which Azure DevOps Wiki does not show, becomes a PNG, whose text is not
+  searchable (reported).
+- With LibreOffice before 7.4, a drawing keeps the whole page around it
+  (reported).
+- An SVG image that contains a script is replaced by the PNG copy that Word
+  keeps with it (reported).
+
+### Spaces and symbols
+
+- No-break and other Unicode spaces become plain spaces, except those that
+  indent a line, which stay no-break spaces so that the indent shows.
+- Zero-width spaces are dropped, and so are the left-to-right marks that Word
+  puts in cross-references, unless the document has right-to-left text.
+- An arrow in a symbol font, such as Wingdings, becomes the arrow that every
+  font has, such as → or ↖, by its direction.
+- A no-break hyphen, as in Word's caption numbers, becomes a hyphen, which a
+  search for `Table 2-1` finds.
 
 ## What is left out
 
