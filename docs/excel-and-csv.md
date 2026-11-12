@@ -22,6 +22,16 @@ worksheets and chart sheets are skipped. Formulas are written as the values
 Excel saved with them; a workbook saved by a program that does not calculate
 formulas, such as a script, has none, and those cells come out empty.
 
+Each cell is written as Excel shows it in a column wide enough for it, as
+Excel's own CSV export writes it: `TRUE` and `FALSE`, and a number in its number
+format. The General format shows at most 11 characters besides a minus sign, so
+`0.1+0.2` shows as `0.3`, `31/3` as `10.33333333`, and `123456789012` as
+`1.23457E+11`. Digits with decimals, a thousands separator, and a percent sign
+or an exponent, as in `#,##0.00`, `0%` and `0.00E+00`, show as in Excel; other
+number formats, such as ones with text or a section for negative numbers, show
+their numbers as General does. Dates and times are written as ISO 8601 writes
+them, such as `2026-11-10 09:30`, whatever their format.
+
 A workbook that is encrypted, in the Excel 97-2003 format (`.xls`), or whose
 contents expand to more than 1,024 MiB is refused. On Windows, a workbook with
 a worksheet that cannot name a file there, such as `a<b` or `CON`, is refused

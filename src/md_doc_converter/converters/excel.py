@@ -2,15 +2,19 @@
 docs/excel-and-csv.md describes.
 
 openpyxl reads the workbook with data_only=True, so a formula's cell holds the value that Excel
-saved with it. A worksheet's cells become the rows that csv.writer writes, so that excel-to-md's
-page is the one that csv-to-md writes from excel-to-csv's file; markdown/tables.py writes it.
+saved with it. Each cell is written as Excel shows it, in a column wide enough for it; the
+worksheet's cells become the rows that csv.writer writes, so that excel-to-md's page is the one
+that csv-to-md writes from excel-to-csv's file; markdown/tables.py writes it.
 """
 
 import argparse
 import csv
+import datetime
 import ntpath
+import re
 import sys
 import zipfile
+from decimal import ROUND_HALF_UP, Decimal, localcontext
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -18,22 +22,91 @@ from md_doc_converter.converters.packages import is_compound_file, too_large
 from md_doc_converter.markdown.tables import table_page, trim_empty_edges
 
 if TYPE_CHECKING:
+    from openpyxl.cell.cell import Cell, MergedCell
     from openpyxl.worksheet.worksheet import Worksheet
 
 # Windows cannot name a file as some worksheets are named, such as with "<" or "CON".
 WINDOWS = sys.platform == "win32"
+# Excel's General format shows a number in at most 11 characters, besides a minus sign.
+_GENERAL_WIDTH = 11
+# The number formats written as Excel shows them: digits with or without a thousands
+# separator, decimals, and a percent sign or an exponent. Others are written as General.
+_DIGITS = re.compile(r"(?P<group>#,##)?0(?:\.(?P<decimals>0+))?(?:(?P<percent>%)|E\+00)?")
+# The color or condition of a format section, such as [Red], and a locale, such as [$-409].
+_BRACKETS = re.compile(r"\[[^\]]*\]")
+
+
+def _general(value: Decimal) -> str:
+    """*value* as Excel's General format shows it: as written when it fits in 11 characters,
+    rounded to fit when it has decimals, and otherwise as a number like 1.23457E+11."""
+    if not value:
+        return "0"
+    sign, number = ("-" if value < 0 else ""), abs(value)
+    exponent = number.adjusted()
+    with localcontext() as context:
+        context.rounding = ROUND_HALF_UP
+        if -5 < exponent < _GENERAL_WIDTH:
+            # The point and the digits before it, at least the 0 of 0.5, leave the decimals.
+            decimals = max(_GENERAL_WIDTH - max(exponent + 1, 1) - 1, 0)
+            text = format(number, f".{decimals}f")
+            if "." in text:
+                text = text.rstrip("0").rstrip(".")
+            if text != "0" and len(text) <= _GENERAL_WIDTH:
+                return sign + text
+        mantissa, power = format(number, ".5E").split("E")
+    if "." in mantissa:
+        mantissa = mantissa.rstrip("0").rstrip(".")
+    return f"{sign}{mantissa}E{int(power):+03d}"
+
+
+def _formatted(value: Decimal, number_format: str) -> str:
+    """*value* as Excel shows it in the number format *number_format*."""
+    sections = number_format.split(";")
+    # A format's first section is for every number when it is alone, else for positive numbers,
+    # and for zero unless a third section is. Excel shows a negative number with the second
+    # section, which may drop its sign, and zero with the third; those are written as General.
+    if (value < 0 and len(sections) > 1) or (value == 0 and len(sections) > 2):
+        return _general(value)
+    match = _DIGITS.fullmatch(_BRACKETS.sub("", sections[0]).strip())
+    if match is None:
+        return _general(value)
+    decimals = len(match["decimals"] or "")
+    with localcontext() as context:
+        context.rounding = ROUND_HALF_UP
+        if match["percent"]:
+            return format(value * 100, f"{',' if match['group'] else ''}.{decimals}f") + "%"
+        if match[0].endswith("E+00"):
+            mantissa, power = format(value, f".{decimals}E").split("E")
+            return f"{mantissa}E{int(power):+03d}"
+        return format(value, f"{',' if match['group'] else ''}.{decimals}f")
+
+
+def _shown(cell: Cell | MergedCell) -> str:
+    """The text of *cell* as Excel shows it: TRUE or FALSE, a number in its number format, a date
+    or time as ISO 8601 writes it, and any other value as it is."""
+    value = cell.value
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    if isinstance(value, int | float):
+        # The shortest decimal that is the float, which is what Excel rounds.
+        return _formatted(Decimal(repr(value)), cell.number_format)
+    if isinstance(value, datetime.datetime):
+        if value.time() == datetime.time():
+            return value.date().isoformat()
+        return value.isoformat(" ", "seconds" if value.second else "minutes")
+    if isinstance(value, datetime.time):
+        return value.isoformat("seconds" if value.second else "minutes")
+    if isinstance(value, datetime.date):
+        return value.isoformat()
+    return str(value)
 
 
 def _cells(sheet: Worksheet) -> list[list[str]]:
-    """The text of *sheet*'s cells, row by row, as csv.writer writes them: an empty cell is ""
-    and any other value its str(). The empty rows and columns around the cells that hold text
-    are left out."""
-    return trim_empty_edges(
-        [
-            ["" if value is None else str(value) for value in row]
-            for row in sheet.iter_rows(values_only=True)
-        ]
-    )
+    """The text of *sheet*'s cells, row by row, as csv.writer writes them: an empty cell is "".
+    The empty rows and columns around the cells that hold text are left out."""
+    return trim_empty_edges([[_shown(cell) for cell in row] for row in sheet.iter_rows()])
 
 
 def worksheets(excel_path: str) -> list[tuple[str, list[list[str]]]]:

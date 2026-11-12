@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import csv
+import datetime
 import re
 import subprocess
 import sys
 import tempfile
 import unicodedata
+from collections.abc import Sequence
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import override
@@ -360,6 +362,57 @@ def test_excel_to_md_writes_the_pages_csv_to_md_writes_from_excel_to_csv(
         assert direct[:2] + direct[3:] == two_steps[:2] + two_steps[3:]
         # Pages have LF line endings on every system.
         assert b"\r" not in (pages / name).read_bytes() + (tmp_path / "csv" / name).read_bytes()
+
+
+def test_cells_are_written_as_excel_shows_them(tmp_path: Path) -> None:
+    shown_values = [
+        (True, "General", "TRUE"),
+        (False, "General", "FALSE"),
+        (0.1 + 0.2, "General", "0.3"),
+        (31 / 3, "General", "10.33333333"),
+        (-1 / 3, "General", "-0.333333333"),
+        (0.000123456789, "General", "0.000123457"),
+        (0.0000123, "General", "1.23E-05"),
+        (123456789012, "General", "1.23457E+11"),
+        (12345678901, "General", "12345678901"),
+        (0.2928, "0%", "29%"),
+        (0.12345, "0.00%", "12.35%"),
+        (2.675, "0.00", "2.68"),
+        (-2.5, "0.00", "-2.50"),
+        (1234567.891, "#,##0.00", "1,234,567.89"),
+        (1234567, "[Red]#,##0", "1,234,567"),
+        (31415.9, "0.00E+00", "3.14E+04"),
+        (datetime.datetime(2026, 11, 10), "m/d/yyyy", "2026-11-10"),
+        (datetime.datetime(2026, 11, 10, 9, 30), "m/d/yyyy h:mm", "2026-11-10 09:30"),
+    ]
+    assert values_csv(tmp_path, shown_values) == [text for *_, text in shown_values]
+
+
+def test_other_number_formats_are_written_as_general(tmp_path: Path) -> None:
+    # Excel shows these as "(5)" and "Width: 7.5"; their first sections are not digits alone.
+    general = [(-5, "#,##0;(#,##0)", "-5"), (7.5, '"Width: "0.0', "7.5")]
+    assert values_csv(tmp_path, general) == ["-5", "7.5"]
+
+
+def values_csv(
+    folder: Path, values: Sequence[tuple[bool | float | datetime.datetime, str, str]]
+) -> list[str]:
+    """The cells that excel-to-csv writes of a column of *values*, each in its number format."""
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "Values"
+    sheet.append(["Shown"])
+    for row, (value, number_format, _text) in enumerate(values, 2):
+        sheet.cell(row, 1, value).number_format = number_format
+    source = folder / "values.xlsx"
+    workbook.save(source)
+    workbook.close()
+    excel_to_csv.excel_to_csv(str(source))
+    with (folder / "Values.csv").open(newline="", encoding="utf-8") as stream:
+        header, *rows = csv.reader(stream)
+    assert header == ["Shown"]
+    return [cell for row in rows for cell in row]
 
 
 def test_the_empty_rows_and_columns_around_a_table_are_left_out(tmp_path: Path) -> None:
