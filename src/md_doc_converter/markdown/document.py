@@ -102,17 +102,16 @@ def _element_ids(value: object, found: set[str]) -> None:
             attributes = content[0]
             if isinstance(attributes, list) and attributes and isinstance(attributes[0], str):
                 found.add(attributes[0])
-        elif tag in {"RawInline", "RawBlock"}:
-            if (
-                isinstance(content, list)
-                and len(content) == 2
-                and content[0] == "html"
-                and isinstance(content[1], str)
-            ):
-                parser = _HTMLAnchors()
-                parser.feed(content[1])
-                parser.close()
-                found.update(parser.found)
+        elif tag in {"RawInline", "RawBlock"} and (
+            isinstance(content, list)
+            and len(content) == 2
+            and content[0] == "html"
+            and isinstance(content[1], str)
+        ):
+            parser = _HTMLAnchors()
+            parser.feed(content[1])
+            parser.close()
+            found.update(parser.found)
         for child in value.values():
             _element_ids(child, found)
 
@@ -184,14 +183,13 @@ def _transform_targets(value: object, transform: TargetTransform) -> None:
             if not isinstance(target, list) or len(target) != 2 or not isinstance(target[0], str):
                 raise MarkdownError(f"pandoc JSON contained a malformed {tag} target")
             target[0] = transform(target[0], tag == "Image")
-        elif tag in {"RawInline", "RawBlock"}:
-            if (
-                isinstance(content, list)
-                and len(content) == 2
-                and content[0] == "html"
-                and isinstance(content[1], str)
-            ):
-                content[1] = _HTMLTargets(content[1], transform).rewritten()
+        elif tag in {"RawInline", "RawBlock"} and (
+            isinstance(content, list)
+            and len(content) == 2
+            and content[0] == "html"
+            and isinstance(content[1], str)
+        ):
+            content[1] = _HTMLTargets(content[1], transform).rewritten()
         for child in value.values():
             _transform_targets(child, transform)
 
