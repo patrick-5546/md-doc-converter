@@ -45,7 +45,8 @@ _UNSAVED_EXTENSION = r".* extension is not supported and will be removed"
 # A worksheet cell that holds nothing: its reference first, then attributes such as its style,
 # and no value or formula, as Excel writes each of the 16,384 cells of a formatted row.
 _EMPTY_CELL = re.compile(rb'<c r="[A-Z]{1,3}[0-9]{1,7}"(?:\s+[a-z]+="[^"<>]*")*\s*/>')
-# A worksheet cell that does not give its reference first, such as <c> or <c s="1" r="B2">.
+# A worksheet cell that does not give its reference first: one without attributes, or one such
+# as <c s="1" r="B2">.
 _UNREFERENCED_CELL = re.compile(rb'<c(?![\w:.-])(?! r=")')
 _WORKSHEET_PART = re.compile(r"xl/worksheets/[^/]+\.xml")
 # The size of the pieces that a worksheet is read in to drop its empty cells.
