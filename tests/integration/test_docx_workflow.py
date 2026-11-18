@@ -3120,9 +3120,11 @@ def test_libreoffice_converts_the_drawings_of_the_body_while_pandoc_reads_it(
 def test_the_programs_that_convert_drawings_in_the_background_count_toward_its_time(
     convert: Converter, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    # On Windows, synthetic-tool.exe, which the time in programs names alike.
+    # On Windows, ScriptMaker makes synthetic-tool.exe only from a script whose first line runs
+    # "python", and the time in programs names it alike.
+    python = "python" if sys.platform == "win32" else sys.executable
     (tmp_path / "bin").mkdir()
-    tool = write_executable(tmp_path / "bin", "synthetic-tool", f"#!{sys.executable}\n")
+    tool = write_executable(tmp_path / "bin", "synthetic-tool", f"#!{python}\n")
 
     def convert_vectors(
         drawings: dict[str, tuple[bytes, str]], _work: Path
