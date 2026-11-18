@@ -10,6 +10,8 @@ import subprocess
 import sys
 import tempfile
 import unicodedata
+import warnings
+import zipfile
 from collections.abc import Sequence
 from html.parser import HTMLParser
 from pathlib import Path
@@ -447,6 +449,64 @@ def test_the_empty_rows_and_columns_around_a_table_are_left_out(tmp_path: Path) 
     assert csv_to_md.csv_to_md(tmp_path / "Saved.csv").endswith(
         "| Signal | Width |\n| --- | --- |\n| ready | |\n| | 1 |\n"
     )
+
+
+def test_only_the_cells_that_a_worksheet_stores_are_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "Far"
+    sheet.append(["Signal", "Width"])
+    sheet.append(["ready", 1])
+    # A formatted cell far below the table extends the worksheet to 200,000 cells.
+    sheet.cell(100_000, 2).font = Font(bold=True)
+    source = tmp_path / "far.xlsx"
+    workbook.save(source)
+    workbook.close()
+    shown = mock.Mock(wraps=excel_to_csv._shown)
+    monkeypatch.setattr(excel_to_csv, "_shown", shown)
+
+    assert main(["excel-to-md", str(source)]) == 0
+
+    assert (
+        (tmp_path / "Far.md")
+        .read_text(encoding="utf-8")
+        .endswith("| Signal | Width |\n| --- | --- |\n| ready | 1 |\n")
+    )
+    assert shown.call_count < 10
+
+
+def test_openpyxl_does_not_warn_of_what_it_would_leave_out_of_a_saved_workbook(
+    tmp_path: Path,
+) -> None:
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "Rules"
+    sheet.append(["Signal"])
+    source = tmp_path / "rules.xlsx"
+    workbook.save(source)
+    workbook.close()
+    # Excel keeps data validation that lists another worksheet's cells in an extension, which
+    # openpyxl can read but not write.
+    with zipfile.ZipFile(source) as archive:
+        parts = {name: archive.read(name) for name in archive.namelist()}
+    parts["xl/worksheets/sheet1.xml"] = parts["xl/worksheets/sheet1.xml"].replace(
+        b"</worksheet>",
+        b'<extLst><ext uri="{CCE6A557-97BC-4B89-ADB6-D9C93CAAB3DF}"/></extLst></worksheet>',
+    )
+    with zipfile.ZipFile(source, "w") as archive:
+        for name, data in parts.items():
+            archive.writestr(name, data)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        assert main(["excel-to-csv", str(source)]) == 0
+
+    assert [str(warning.message) for warning in caught] == []
+    assert (tmp_path / "Rules.csv").read_bytes() == b"Signal\r\n"
 
 
 def test_worksheet_names_become_file_names_that_windows_and_wikis_accept(

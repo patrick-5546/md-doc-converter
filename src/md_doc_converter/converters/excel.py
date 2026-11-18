@@ -1,10 +1,11 @@
 """Convert each worksheet of an Excel workbook to a Markdown page or a CSV file, as
 docs/excel-and-csv.md describes.
 
-openpyxl reads the workbook with data_only=True, so a formula's cell holds the value that Excel
-saved with it. Each cell is written as Excel shows it, in a column wide enough for it; the
-worksheet's cells become the rows that csv.writer writes, so that excel-to-md's page is the one
-that csv-to-md writes from excel-to-csv's file; markdown/tables.py writes it.
+openpyxl reads the workbook read-only with data_only=True, so a formula's cell holds the value
+that Excel saved with it, and only the cells that the workbook stores are read. Each cell is
+written as Excel shows it, in a column wide enough for it; the worksheet's cells become the rows
+that csv.writer writes, so that excel-to-md's page is the one that csv-to-md writes from
+excel-to-csv's file; markdown/tables.py writes it.
 """
 
 import argparse
@@ -13,17 +14,18 @@ import datetime
 import ntpath
 import re
 import sys
+import warnings
 import zipfile
 from decimal import ROUND_HALF_UP, Decimal, localcontext
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from md_doc_converter.converters.packages import is_compound_file, too_large
-from md_doc_converter.markdown.tables import table_page, trim_empty_edges
+from md_doc_converter.markdown.tables import table_page
 
 if TYPE_CHECKING:
     from openpyxl.cell.cell import Cell, MergedCell
-    from openpyxl.worksheet.worksheet import Worksheet
+    from openpyxl.worksheet._read_only import ReadOnlyWorksheet
 
 # Excel's General format shows a number in at most 11 characters, besides a minus sign.
 _GENERAL_WIDTH = 11
@@ -34,6 +36,9 @@ _DIGITS = re.compile(r"(?P<group>#,##)?0(?:\.(?P<decimals>0+))?(?:(?P<percent>%)
 _BRACKETS = re.compile(r"\[[^\]]*\]")
 # What Windows and Azure DevOps wikis do not allow in a file name.
 _UNSAFE = re.compile(r'[<>:"/\\|?*#\x00-\x1f\x7f-\x9f]')
+# openpyxl warns, as it reads a worksheet, that it would leave out an extension that it cannot
+# write, such as Excel's data validation lists, were the workbook saved; conversion only reads it.
+_UNSAVED_EXTENSION = r".* extension is not supported and will be removed"
 
 
 def _general(value: Decimal) -> str:
@@ -103,10 +108,28 @@ def _shown(cell: Cell | MergedCell) -> str:
     return str(value)
 
 
-def _cells(sheet: Worksheet) -> list[list[str]]:
+def _cells(sheet: ReadOnlyWorksheet) -> list[list[str]]:
     """The text of *sheet*'s cells, row by row, as csv.writer writes them: an empty cell is "".
-    The empty rows and columns around the cells that hold text are left out."""
-    return trim_empty_edges([[_shown(cell) for cell in row] for row in sheet.iter_rows()])
+    The empty rows and columns around the cells that hold text are left out.
+
+    Only the cells that the workbook stores are read, not every cell of the worksheet's extent,
+    which a formatted cell far from the others extends, and which Excel can save larger still.
+    """
+    sheet.reset_dimensions()
+    shown: dict[tuple[int, int], str] = {}
+    # openpyxl's type stubs give a read-only worksheet's rows the cells of a full one.
+    for row in sheet.rows:
+        for cell in row:
+            if cell.value is not None and (text := _shown(cell)):
+                shown[cell.row, cell.column] = text
+    if not shown:
+        return []
+    rows = [row for row, _column in shown]
+    columns = [column for _row, column in shown]
+    return [
+        [shown.get((row, column), "") for column in range(min(columns), max(columns) + 1)]
+        for row in range(min(rows), max(rows) + 1)
+    ]
 
 
 def worksheets(excel_path: str) -> list[tuple[str, list[list[str]]]]:
@@ -132,14 +155,17 @@ def worksheets(excel_path: str) -> list[tuple[str, list[list[str]]]]:
         raise ValueError(f"{excel_path} {problem}")
 
     try:
-        workbook = openpyxl.load_workbook(path, data_only=True)
-    # openpyxl rejects other file types by name, and a damaged file as a zip archive.
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", _UNSAVED_EXTENSION, UserWarning)
+            workbook = openpyxl.load_workbook(path, read_only=True, data_only=True)
+            try:
+                return [(sheet.title, _cells(sheet)) for sheet in workbook.worksheets]
+            finally:
+                workbook.close()
+    # openpyxl rejects other file types by name, and a damaged file as a zip archive, which it
+    # reads as each worksheet is read.
     except (InvalidFileException, zipfile.BadZipFile, KeyError) as error:
         raise ValueError(f"not an Excel workbook: {excel_path} ({error})") from error
-    try:
-        return [(sheet.title, _cells(sheet)) for sheet in workbook.worksheets]
-    finally:
-        workbook.close()
 
 
 def _file_name(title: str, used: set[str]) -> str:
