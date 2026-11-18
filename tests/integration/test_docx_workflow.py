@@ -1601,7 +1601,8 @@ def test_caption_numbers_that_show_nothing_are_kept_and_reported(convert: Conver
     for number in (3, 4):
         assert (
             f"fields: paragraph {number}: Word caption number (SEQ field) shows nothing until "
-            "the fields are updated; in Word, press Ctrl+A and then F9"
+            "the fields are updated; see Updating the fields in Word, in md-doc-converter's "
+            "Word conversion guide"
         ) in warnings
     assert report.kinds[_prepare.EMPTY_SEQUENCE] == 2
     assert report.sections[_prepare.EMPTY_SEQUENCE] == "word"

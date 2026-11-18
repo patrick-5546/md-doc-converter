@@ -137,8 +137,8 @@ bookmark, and the figure's alt text is its caption's title.
 - A table of contents, or of figures, keeps each entry's link, number and
   title, but not its page number.
 - Word shows a field's text as of its last update, so update the fields before
-  converting: in Word, press Ctrl+A and then F9, and have each table of
-  contents or figures updated entirely.
+  converting, as [Updating the fields in Word](#updating-the-fields-in-word)
+  describes.
 - A caption number that shows nothing until then, as in
   `Figure 3-: Clock tree`, stays so (reported).
 - A table of figures that leaves out a caption, or numbers one differently,
@@ -262,6 +262,46 @@ A document encrypted with a password or by rights management, one in the Word
 97-2003 format (`.doc`), and one whose contents expand to more than 1,024 MiB
 are refused before conversion; a crafted file can expand to far more than its
 own size. Convert an unencrypted `.docx` copy.
+
+## Updating the fields in Word
+
+To update every field before converting, such as caption numbers,
+cross-references, and tables of contents or of figures:
+
+1. In Word for Windows or Mac, not Word for the web, select the whole document
+   with Ctrl+A (Cmd+A on a Mac), then press F9, or Fn+F9 where F9 is a media
+   key. For each table of contents or of figures, choose **Update entire
+   table**.
+2. That updates the fields of the body, not those in headers, footers, notes,
+   or text boxes. To update them all, or where the keys do nothing, run this
+   macro from Normal.dotm, the template that Word keeps your macros in: a
+   `.docx` cannot hold a macro, and Word asks to save it as a macro-enabled
+   document if one is added to it. Press Alt+F11, select **Normal** in the
+   project list, choose **Insert** > **Module**, and paste the macro; then, in
+   the document, press Alt+F8 and run it.
+
+   ```vb
+   Sub UpdateAllFields()
+       Dim story As Range
+       For Each story In ActiveDocument.StoryRanges
+           Do Until story Is Nothing
+               story.Fields.Update
+               Set story = story.NextStoryRange
+           Loop
+       Next
+       ' The tables last, so that they list the updated captions and headings.
+       Dim contents As TableOfContents
+       For Each contents In ActiveDocument.TablesOfContents
+           contents.Update
+       Next
+       Dim figures As TableOfFigures
+       For Each figures In ActiveDocument.TablesOfFigures
+           figures.Update
+       Next
+   End Sub
+   ```
+
+3. Save the document, and convert it.
 
 ## After converting
 

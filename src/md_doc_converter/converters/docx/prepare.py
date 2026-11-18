@@ -1492,7 +1492,8 @@ def _report_empty_sequences(root: ET.Element, report: TransformReport) -> None:
         where = f"paragraph {numbers[paragraph] + 1}" if paragraph in numbers else "the document"
         report.warn(
             f"fields: {where}: Word caption number (SEQ field) shows nothing until the fields "
-            "are updated; in Word, press Ctrl+A and then F9",
+            "are updated; see Updating the fields in Word, in md-doc-converter's Word "
+            "conversion guide",
             kind=EMPTY_SEQUENCE,
         )
 
