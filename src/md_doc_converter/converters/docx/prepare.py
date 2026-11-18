@@ -52,6 +52,9 @@ UNLISTED_CAPTION = (
 RENUMBERED_CAPTION = (
     "Word table of figures numbers a caption differently; update the table of figures in Word"
 )
+ZERO_REFERENCE = (
+    "Word cross-reference to a paragraph number shows 0; insert the cross-reference again in Word"
+)
 _PICTURE_HEADING = "Word heading has only a picture; kept as a paragraph"
 _LISTED_HEADING = "Word numbers this outline-level heading as a list item; kept as a list item"
 SKIPPED_LEVEL = "Word heading skips a level; kept at its level"
@@ -1494,6 +1497,20 @@ def _report_empty_sequences(root: ET.Element, report: TransformReport) -> None:
         )
 
 
+def _report_zero_references(root: ET.Element, report: TransformReport) -> None:
+    """Report each cross-reference to a paragraph number that shows 0, as Word gives the
+    number of a paragraph that has none; the Markdown keeps the 0, as Word shows it."""
+    found = _ooxml.zero_paragraph_references(root)
+    numbers = _paragraph_numbers(root) if found else {}
+    for paragraph in found:
+        where = f"paragraph {numbers[paragraph] + 1}" if paragraph in numbers else "the document"
+        report.warn(
+            f"fields: {where}: Word cross-reference to a paragraph number shows 0, as for a "
+            "paragraph without a number; insert the cross-reference again in Word",
+            kind=ZERO_REFERENCE,
+        )
+
+
 def _report_unlisted_captions(root: ET.Element, report: TransformReport) -> None:
     """Report each caption that a table of figures leaves out, or numbers otherwise than the
     caption does, as Word shows it until its author updates the table of figures."""
@@ -1635,6 +1652,7 @@ def prepare_document(
                 where = f"paragraph {number}" if number else "the document"
                 report.skipped("fields", _HIDDEN_RESULT, f"{where}: {_HIDDEN_RESULT}")
         _report_empty_sequences(root, report)
+        _report_zero_references(root, report)
         report.applied("fields", "check box(es) shown", _ooxml.form_check_boxes(root))
         report.applied("fields", "page number(s) kept as text", _ooxml.unlink_page_references(root))
     with transform(report, "hidden-text"):

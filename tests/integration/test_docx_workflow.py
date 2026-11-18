@@ -1608,6 +1608,39 @@ def test_caption_numbers_that_show_nothing_are_kept_and_reported(convert: Conver
     assert f"  2  {_prepare.EMPTY_SEQUENCE}" in report.issues()
 
 
+def test_cross_references_to_a_paragraph_number_that_show_0_are_kept_and_reported(
+    convert: Converter,
+) -> None:
+    # Word gives 0 as the number of a paragraph that has none, as a heading that lost its number.
+    def see(code: str, shown: str, *, simple: bool = False) -> ET.Element:
+        return paragraph_of(
+            _ooxml.word_run("See "), *field(code, shown, simple=simple), _ooxml.word_run(".")
+        )
+
+    result, report, warnings = convert.reported(
+        [
+            bookmark("_Ref1", "Errors", "Heading1"),
+            see(" REF _Ref1 \\r \\h ", "0"),
+            see(" REF _Ref1 \\w \\h ", "9.2"),
+            # Without \n, \r or \w, a cross-reference shows the text of its bookmark.
+            see(" REF _Ref1 \\h ", "0"),
+            see(" REF _Ref1 \\n ", "0", simple=True),
+            # Word can put a left-to-right mark, which shows nothing, before the number.
+            see(" REF _Ref1 \\r \\h ", "\u200e0"),
+        ]
+    )
+    assert "See [0](#errors)." in result
+    reported = [line for line in warnings.splitlines() if "shows 0" in line]
+    assert reported == [
+        f"docx-to-md: warning: fields: paragraph {number}: Word cross-reference to a paragraph "
+        "number shows 0, as for a paragraph without a number; insert the cross-reference again "
+        "in Word"
+        for number in (2, 5, 6)
+    ]
+    assert report.kinds[_prepare.ZERO_REFERENCE] == 3
+    assert report.sections[_prepare.ZERO_REFERENCE] == "word"
+
+
 @pytest.mark.parametrize(
     ("entries", "linked", "captions", "expected"),
     [

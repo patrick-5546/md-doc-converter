@@ -143,6 +143,8 @@ bookmark, and the figure's alt text is its caption's title.
   `Figure 3-: Clock tree`, stays so (reported).
 - A table of figures that leaves out a caption, or numbers one differently,
   stays so (reported).
+- A cross-reference to a paragraph number that shows 0, as Word shows one to a
+  paragraph without a number, stays so (reported).
 
 ### Footnotes and endnotes
 

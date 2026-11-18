@@ -1292,15 +1292,50 @@ def split_drawing_runs(root: ET.Element) -> None:
 @dataclass
 class _Result:
     """A field whose result is open: its begin, its code so far, and whether its separator
-    has come, and then anything that shows."""
+    has come, and then anything that shows, and the text of its result."""
 
     begin: ET.Element
     code: list[str]
+    text: list[str]
     separated: bool = False
     shows: bool = False
 
 
 _SEQUENCE = re.compile(r"\s*SEQ\b", re.IGNORECASE)
+# A cross-reference to a paragraph's number: a REF field with the \n, \r or \w switch.
+_PARAGRAPH_NUMBER = re.compile(
+    r'\s*REF\s+(?:"[^"]*"|\S+)(?=.*\\[nrw]\b)', re.IGNORECASE | re.DOTALL
+)
+
+
+def _fields(root: ET.Element) -> Iterator[_Result]:
+    """Each field as Word shows it, as it ends: a field nested in another one comes first."""
+    open_fields: list[_Result] = []
+    for node in _shown(root):
+        if node.tag == WORD + "instrText":
+            if open_fields and not open_fields[-1].separated:
+                open_fields[-1].code.append(node.text or "")
+        elif node.tag == WORD + "fldChar":
+            kind = node.get(WORD + "fldCharType")
+            if kind == "begin":
+                open_fields.append(_Result(node, [], []))
+            elif kind == "separate" and open_fields:
+                open_fields[-1].separated = True
+            elif kind == "end" and open_fields:
+                yield open_fields.pop()
+        else:
+            shows = _shows(node)
+            for field in open_fields:
+                if field.separated and node.tag in _TEXT_TAGS:
+                    field.text.append(node.text or "")
+                field.shows = field.shows or (shows and field.separated)
+
+
+def _paragraph_of(node: ET.Element, parents: dict[ET.Element, ET.Element]) -> ET.Element | None:
+    paragraph = parents.get(node)
+    while paragraph is not None and paragraph.tag != WORD + "p":
+        paragraph = parents.get(paragraph)
+    return paragraph
 
 
 def empty_sequences(root: ET.Element) -> list[ET.Element]:
@@ -1313,29 +1348,30 @@ def empty_sequences(root: ET.Element) -> list[ET.Element]:
     """
     parents = {child: parent for parent in root.iter() for child in parent}
     found: list[ET.Element] = []
-    open_fields: list[_Result] = []
-    for node in _shown(root):
-        if node.tag == WORD + "instrText":
-            if open_fields and not open_fields[-1].separated:
-                open_fields[-1].code.append(node.text or "")
-        elif node.tag == WORD + "fldChar":
-            kind = node.get(WORD + "fldCharType")
-            if kind == "begin":
-                open_fields.append(_Result(node, []))
-            elif kind == "separate" and open_fields:
-                open_fields[-1].separated = True
-            elif kind == "end" and open_fields:
-                field = open_fields.pop()
-                code = "".join(field.code)
-                if _SEQUENCE.match(code) and not re.search(r"\\h\b", code) and not field.shows:
-                    paragraph = parents.get(field.begin)
-                    while paragraph is not None and paragraph.tag != WORD + "p":
-                        paragraph = parents.get(paragraph)
-                    if paragraph is not None:
-                        found.append(paragraph)
-        elif _shows(node):
-            for field in open_fields:
-                field.shows = field.shows or field.separated
+    for field in _fields(root):
+        code = "".join(field.code)
+        if _SEQUENCE.match(code) and not re.search(r"\\h\b", code) and not field.shows:
+            paragraph = _paragraph_of(field.begin, parents)
+            if paragraph is not None:
+                found.append(paragraph)
+    return found
+
+
+def zero_paragraph_references(root: ET.Element) -> list[ET.Element]:
+    r"""The paragraph of each cross-reference to a paragraph's number, a REF field with the \n,
+    \r or \w switch, whose cached result is 0, in document order.
+
+    Word gives 0 as the number of a paragraph that has none, as when the heading that a
+    cross-reference refers to has lost its number.
+    """
+    parents = {child: parent for parent in root.iter() for child in parent}
+    found: list[ET.Element] = []
+    for field in _fields(root):
+        # Word can put a left-to-right mark, which shows nothing, before the number.
+        if _PARAGRAPH_NUMBER.match("".join(field.code)) and _plain("".join(field.text)) == "0":
+            paragraph = _paragraph_of(field.begin, parents)
+            if paragraph is not None:
+                found.append(paragraph)
     return found
 
 
@@ -1414,8 +1450,8 @@ _SHOWN_TEXT = {
 def _plain(text: str) -> str:
     """*text* with each run of spaces, tabs and no-break spaces one space, no-break hyphens
     plain, and no format characters, such as the left-to-right marks that Word puts in
-    caption numbers, which show nothing, as captions and their table-of-figures entries are
-    compared."""
+    caption numbers, which show nothing, as captions, their table-of-figures entries, and the
+    numbers that cross-references show are compared."""
     text = text.replace(NO_BREAK_HYPHEN, "-")
     return " ".join(
         "".join(
