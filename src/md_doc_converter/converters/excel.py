@@ -104,6 +104,9 @@ def _formatted(value: Decimal, number_format: str) -> str:
         if match["percent"]:
             return format(value * 100, f"{',' if match['group'] else ''}.{decimals}f") + "%"
         if match[0].endswith("E+00"):
+            # Decimal writes zero with the exponent that it keeps, as 0.00E+2 for 0.
+            if not value:
+                return format(0, f".{decimals}f") + "E+00"
             mantissa, power = format(value, f".{decimals}E").split("E")
             return f"{mantissa}E{int(power):+03d}"
         return format(value, f"{',' if match['group'] else ''}.{decimals}f")

@@ -388,6 +388,7 @@ def test_cells_are_written_as_excel_shows_them(tmp_path: Path) -> None:
         (1234567.891, "#,##0.00", "1,234,567.89"),
         (1234567, "[Red]#,##0", "1,234,567"),
         (31415.9, "0.00E+00", "3.14E+04"),
+        (0, "0.00E+00", "0.00E+00"),
         (datetime.datetime(2026, 11, 10), "m/d/yyyy", "2026-11-10"),
         (datetime.datetime(2026, 11, 10, 9, 30), "m/d/yyyy h:mm", "2026-11-10 09:30"),
     ]
