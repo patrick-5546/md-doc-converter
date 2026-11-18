@@ -24,6 +24,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 from openpyxl.chart import BarChart, Reference
 from openpyxl.styles import Font
+from openpyxl.worksheet._reader import WorkSheetParser
 
 from md_doc_converter.__main__ import main
 from md_doc_converter.converters import csv as csv_to_md
@@ -476,6 +477,72 @@ def test_only_the_cells_that_a_worksheet_stores_are_read(
         .endswith("| Signal | Width |\n| --- | --- |\n| ready | 1 |\n")
     )
     assert shown.call_count < 10
+
+
+# Read in one piece, and in pieces of a few cells each, which no empty cell may span.
+@pytest.mark.parametrize(
+    "piece", [pytest.param(excel_to_csv._PIECE, id="whole"), pytest.param(50, id="pieces")]
+)
+def test_the_empty_cells_of_formatted_rows_are_not_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, piece: int
+) -> None:
+    monkeypatch.setattr(excel_to_csv, "_PIECE", piece)
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "Rows"
+    sheet.append(["Signal", "Width"])
+    sheet.append(["ready", 1])
+    # Formatting whole rows makes Excel store each of their cells, empty as they are.
+    for row in (1, 2):
+        for column in range(3, 3_000):
+            sheet.cell(row, column).font = Font(bold=True)
+    source = tmp_path / "rows.xlsx"
+    workbook.save(source)
+    workbook.close()
+
+    with mock.patch.object(
+        WorkSheetParser, "parse_cell", autospec=True, side_effect=WorkSheetParser.parse_cell
+    ) as parse_cell:
+        assert main(["excel-to-md", str(source)]) == 0
+
+    assert (
+        (tmp_path / "Rows.md")
+        .read_text(encoding="utf-8")
+        .endswith("| Signal | Width |\n| --- | --- |\n| ready | 1 |\n")
+    )
+    assert parse_cell.call_count == 4
+
+
+# A cell without a reference, with a space or a line break after its name.
+@pytest.mark.parametrize(
+    "start", [pytest.param(b"<c ", id="space"), pytest.param(b"<c\n", id="line-break")]
+)
+def test_a_cell_without_its_reference_keeps_its_column(tmp_path: Path, start: bytes) -> None:
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "Gaps"
+    source = tmp_path / "gaps.xlsx"
+    workbook.save(source)
+    workbook.close()
+    # A cell without a reference takes the column after the cell before it, so 'b' is in
+    # column C, after the empty B1.
+    with zipfile.ZipFile(source) as archive:
+        parts = {name: archive.read(name) for name in archive.namelist()}
+    parts["xl/worksheets/sheet1.xml"] = (
+        b'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        b'<sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>a</t></is></c><c r="B1" s="0"/>'
+        + start
+        + b't="inlineStr"><is><t>b</t></is></c></row></sheetData></worksheet>'
+    )
+    with zipfile.ZipFile(source, "w") as archive:
+        for name, data in parts.items():
+            archive.writestr(name, data)
+
+    assert main(["excel-to-csv", str(source)]) == 0
+
+    assert (tmp_path / "Gaps.csv").read_bytes() == b"a,,b\r\n"
 
 
 def test_openpyxl_does_not_warn_of_what_it_would_leave_out_of_a_saved_workbook(

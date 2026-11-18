@@ -2,23 +2,26 @@
 docs/excel-and-csv.md describes.
 
 openpyxl reads the workbook read-only with data_only=True, so a formula's cell holds the value
-that Excel saved with it, and only the cells that the workbook stores are read. Each cell is
-written as Excel shows it, in a column wide enough for it; the worksheet's cells become the rows
-that csv.writer writes, so that excel-to-md's page is the one that csv-to-md writes from
-excel-to-csv's file; markdown/tables.py writes it.
+that Excel saved with it, and only the cells that the workbook stores are read, less those that
+hold nothing. Each cell is written as Excel shows it, in a column wide enough for it; the
+worksheet's cells become the rows that csv.writer writes, so that excel-to-md's page is the one
+that csv-to-md writes from excel-to-csv's file; markdown/tables.py writes it.
 """
 
 import argparse
 import csv
 import datetime
+import io
 import ntpath
 import re
+import shutil
 import sys
 import warnings
 import zipfile
+import zlib
 from decimal import ROUND_HALF_UP, Decimal, localcontext
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import IO, TYPE_CHECKING
 
 from md_doc_converter.converters.packages import is_compound_file, too_large
 from md_doc_converter.markdown.tables import table_page
@@ -39,6 +42,14 @@ _UNSAFE = re.compile(r'[<>:"/\\|?*#\x00-\x1f\x7f-\x9f]')
 # openpyxl warns, as it reads a worksheet, that it would leave out an extension that it cannot
 # write, such as Excel's data validation lists, were the workbook saved; conversion only reads it.
 _UNSAVED_EXTENSION = r".* extension is not supported and will be removed"
+# A worksheet cell that holds nothing: its reference first, then attributes such as its style,
+# and no value or formula, as Excel writes each of the 16,384 cells of a formatted row.
+_EMPTY_CELL = re.compile(rb'<c r="[A-Z]{1,3}[0-9]{1,7}"(?:\s+[a-z]+="[^"<>]*")*\s*/>')
+# A worksheet cell that does not give its reference first, such as <c> or <c s="1" r="B2">.
+_UNREFERENCED_CELL = re.compile(rb'<c(?![\w:.-])(?! r=")')
+_WORKSHEET_PART = re.compile(r"xl/worksheets/[^/]+\.xml")
+# The size of the pieces that a worksheet is read in to drop its empty cells.
+_PIECE = 1 << 20
 
 
 def _general(value: Decimal) -> str:
@@ -132,6 +143,60 @@ def _cells(sheet: ReadOnlyWorksheet) -> list[list[str]]:
     ]
 
 
+def _pieces(stream: IO[bytes]) -> list[bytes]:
+    """The bytes of *stream* in pieces of about _PIECE bytes, each but the last ending with ">",
+    so that each piece can be searched alone, in memory in proportion to it: an empty cell holds
+    no ">" before its end, and the reference that follows a cell's name holds none either.
+    """
+    pieces: list[bytes] = []
+    rest = b""
+    while block := stream.read(_PIECE):
+        block = rest + block
+        end = block.rfind(b">") + 1
+        if end:
+            pieces.append(block[:end])
+        rest = block[end:]
+    if rest:
+        pieces.append(rest)
+    return pieces
+
+
+def _without_empty_cells(path: Path) -> Path | io.BytesIO:
+    """*path*, or a copy of its workbook without the worksheet cells that hold nothing, which
+    openpyxl takes microseconds each to read: formatting whole rows makes Excel store every one
+    of their 16,384 cells.
+
+    A cell without a reference takes the column after the cell before it, so a worksheet keeps
+    its cells unless each one gives its reference first. A file that openpyxl refuses by name, or
+    cannot read as a workbook, is left for openpyxl to report.
+    """
+    from openpyxl.reader.excel import SUPPORTED_FORMATS
+
+    if path.suffix.casefold() not in SUPPORTED_FORMATS:
+        return path
+    copy = io.BytesIO()
+    dropped = 0
+    try:
+        with zipfile.ZipFile(path) as source, zipfile.ZipFile(copy, "w") as target:
+            for info in source.infolist():
+                with source.open(info) as stream, target.open(info.filename, "w") as part:
+                    if not _WORKSHEET_PART.fullmatch(info.filename):
+                        shutil.copyfileobj(stream, part)
+                        continue
+                    pieces = _pieces(stream)
+                    if not any(_UNREFERENCED_CELL.search(piece) for piece in pieces):
+                        for index, piece in enumerate(pieces):
+                            pieces[index], count = _EMPTY_CELL.subn(b"", piece)
+                            dropped += count
+                    part.writelines(pieces)
+    except zipfile.BadZipFile, zlib.error, EOFError, NotImplementedError:
+        return path
+    if not dropped:
+        return path
+    copy.seek(0)
+    return copy
+
+
 def worksheets(excel_path: str) -> list[tuple[str, list[list[str]]]]:
     """The name and cells of each worksheet of *excel_path*, refusing a workbook that
     conversion cannot read."""
@@ -157,7 +222,9 @@ def worksheets(excel_path: str) -> list[tuple[str, list[list[str]]]]:
     try:
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", _UNSAVED_EXTENSION, UserWarning)
-            workbook = openpyxl.load_workbook(path, read_only=True, data_only=True)
+            workbook = openpyxl.load_workbook(
+                _without_empty_cells(path), read_only=True, data_only=True
+            )
             try:
                 return [(sheet.title, _cells(sheet)) for sheet in workbook.worksheets]
             finally:
