@@ -21,7 +21,7 @@ import zipfile
 import zlib
 from decimal import ROUND_HALF_UP, Decimal, localcontext
 from pathlib import Path
-from typing import IO, TYPE_CHECKING
+from typing import IO, TYPE_CHECKING, NamedTuple
 
 from md_doc_converter.converters.packages import is_compound_file, too_large
 from md_doc_converter.markdown.tables import table_page
@@ -50,6 +50,18 @@ _UNREFERENCED_CELL = re.compile(rb'<c(?![\w:.-])(?! r=")')
 _WORKSHEET_PART = re.compile(r"xl/worksheets/[^/]+\.xml")
 # The size of the pieces that a worksheet is read in to drop its empty cells.
 _PIECE = 1 << 20
+# The line that follows a worksheet's when Excel hides it; only the VBA editor shows a very
+# hidden one again.
+_HIDDEN = {"hidden": "Hidden in Excel", "veryHidden": "Very hidden in Excel"}
+
+
+class Worksheet(NamedTuple):
+    """A worksheet's name, the text of its cells row by row, and its state in Excel: visible,
+    hidden, or veryHidden."""
+
+    title: str
+    rows: list[list[str]]
+    state: str
 
 
 def _general(value: Decimal) -> str:
@@ -197,9 +209,9 @@ def _without_empty_cells(path: Path) -> Path | io.BytesIO:
     return copy
 
 
-def worksheets(excel_path: str) -> list[tuple[str, list[list[str]]]]:
-    """The name and cells of each worksheet of *excel_path*, refusing a workbook that
-    conversion cannot read."""
+def worksheets(excel_path: str) -> list[Worksheet]:
+    """Each worksheet of *excel_path*, hidden or not, refusing a workbook that conversion
+    cannot read."""
     import openpyxl
     from openpyxl.utils.exceptions import InvalidFileException
 
@@ -226,7 +238,10 @@ def worksheets(excel_path: str) -> list[tuple[str, list[list[str]]]]:
                 _without_empty_cells(path), read_only=True, data_only=True
             )
             try:
-                return [(sheet.title, _cells(sheet)) for sheet in workbook.worksheets]
+                return [
+                    Worksheet(sheet.title, _cells(sheet), sheet.sheet_state)
+                    for sheet in workbook.worksheets
+                ]
             finally:
                 workbook.close()
     # openpyxl rejects other file types by name, and a damaged file as a zip archive, which it
@@ -258,7 +273,7 @@ def _file_name(title: str, used: set[str]) -> str:
 def excel_to_csv(excel_path: str, output_dir: str | None = None) -> None:
     out = Path(output_dir) if output_dir else Path(excel_path).parent
     used: set[str] = set()
-    for title, rows in worksheets(excel_path):
+    for title, rows, state in worksheets(excel_path):
         if not rows:
             print(f"Skipped (empty): {title}")
             continue
@@ -267,13 +282,15 @@ def excel_to_csv(excel_path: str, output_dir: str | None = None) -> None:
         with csv_path.open("w", newline="", encoding="utf-8") as stream:
             csv.writer(stream).writerows(rows)
         print(f"Written: {csv_path}")
+        if state in _HIDDEN:
+            print(f"{_HIDDEN[state]}: {title}")
 
 
 def excel_to_md(excel_path: str, output_dir: str | None = None, dry_run: bool = False) -> None:
     workbook = Path(excel_path)
     out = Path(output_dir) if output_dir else workbook.parent
     used: set[str] = set()
-    for title, rows in worksheets(excel_path):
+    for title, rows, state in worksheets(excel_path):
         if not rows:
             print(f"Skipped (empty): {title}")
             continue
@@ -286,10 +303,12 @@ def excel_to_md(excel_path: str, output_dir: str | None = None, dry_run: bool = 
         md_path = out / f"{_file_name(title, used)}.md"
         if dry_run:
             print(f"Would write: {md_path}")
-            continue
-        out.mkdir(parents=True, exist_ok=True)
-        md_path.write_text(page, encoding="utf-8", newline="\n")
-        print(f"Written: {md_path}")
+        else:
+            out.mkdir(parents=True, exist_ok=True)
+            md_path.write_text(page, encoding="utf-8", newline="\n")
+            print(f"Written: {md_path}")
+        if state in _HIDDEN:
+            print(f"{_HIDDEN[state]}: {title}")
 
 
 def _parser(command: str, description: str) -> argparse.ArgumentParser:

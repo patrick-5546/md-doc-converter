@@ -545,6 +545,43 @@ def test_a_cell_without_its_reference_keeps_its_column(tmp_path: Path, start: by
     assert (tmp_path / "Gaps.csv").read_bytes() == b"a,,b\r\n"
 
 
+@pytest.mark.parametrize(
+    ("options", "listed"),
+    [
+        pytest.param(["excel-to-md"], "Written: {}.md", id="excel-to-md"),
+        pytest.param(["excel-to-md", "--dry-run"], "Would write: {}.md", id="dry-run"),
+        pytest.param(["excel-to-csv"], "Written: {}.csv", id="excel-to-csv"),
+    ],
+)
+def test_worksheets_that_excel_hides_are_converted_and_named(
+    options: list[str], listed: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    workbook = openpyxl.Workbook()
+    shown = workbook.active
+    assert shown is not None
+    shown.title = "Coverage"
+    shown.append(["Item"])
+    backup = workbook.create_sheet("Backup")
+    backup.append(["Item"])
+    backup.sheet_state = "hidden"
+    old = workbook.create_sheet("Old")
+    old.append(["Item"])
+    old.sheet_state = "veryHidden"
+    source = tmp_path / "plan.xlsx"
+    workbook.save(source)
+    workbook.close()
+
+    assert main([*options, str(source)]) == 0
+
+    # A consumer can list a workbook's pages from the lines that name them, which stay as they
+    # were.
+    assert capsys.readouterr().out == (
+        f"{listed.format(tmp_path / 'Coverage')}\n"
+        f"{listed.format(tmp_path / 'Backup')}\nHidden in Excel: Backup\n"
+        f"{listed.format(tmp_path / 'Old')}\nVery hidden in Excel: Old\n"
+    )
+
+
 def test_openpyxl_does_not_warn_of_what_it_would_leave_out_of_a_saved_workbook(
     tmp_path: Path,
 ) -> None:

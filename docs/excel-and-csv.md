@@ -28,6 +28,9 @@ are skipped.
 - Formulas are written as the values Excel saved with them. A workbook saved by
   a program that does not calculate formulas, such as a script, has none, and
   those cells come out empty.
+- A worksheet that Excel hides is converted too, and a
+  `Hidden in Excel: <sheet name>` line follows the line that names its file, or
+  `Very hidden in Excel:` for one that only the VBA editor can show again.
 
 A workbook that is encrypted, in the Excel 97-2003 format (`.xls`), or whose
 contents expand to more than 1,024 MiB is refused.
