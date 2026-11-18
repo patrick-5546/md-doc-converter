@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -18,12 +19,21 @@ from tests.support.docx import (
 )
 
 COMMAND = [sys.executable, "-m", "md_doc_converter", "docx-to-md"]
+# A time in the report: milliseconds under a second, else seconds to a tenth.
+TIME = r"\d+ ms|\d+\.\d s"
 
 
 def docx_to_md(*arguments: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
     """Run `md-doc-converter docx-to-md` with the arguments, from *cwd*."""
     return subprocess.run(
         [*COMMAND, *arguments], cwd=cwd, check=False, capture_output=True, text=True
+    )
+
+
+def untimed(report: str) -> str:
+    """*report* without its time lines, whose times vary from run to run."""
+    return "".join(
+        line for line in report.splitlines(keepends=True) if not line.startswith("docx-to-md: time")
     )
 
 
@@ -92,6 +102,24 @@ def test_cli_converts_and_summarizes_what_was_not_applied(tmp_path: Path) -> Non
     assert "docx-to-md: transforms\n" in verbose.stderr
     assert "  links: not applied (1)" in verbose.stderr
     assert "  checks: passed" in verbose.stderr
-    assert verbose.stderr.endswith("  1  link to a missing Word bookmark; kept as plain text\n")
+    assert untimed(verbose.stderr).endswith(
+        "  1  link to a missing Word bookmark; kept as plain text\n"
+    )
     quiet = docx_to_md("in.docx", "--replace-generated", "--quiet", cwd=tmp_path)
     assert (quiet.returncode, quiet.stdout, quiet.stderr) == (0, "", "")
+
+
+def test_with_verbose_the_report_ends_with_the_time_of_each_phase_and_program(
+    tmp_path: Path,
+) -> None:
+    write_docx(tmp_path / "in.docx", [paragraph("Text")])
+    result = docx_to_md("in.docx", "--verbose", cwd=tmp_path)
+    assert result.returncode == 0, result.stderr
+    *_report, phases, programs = result.stderr.splitlines()
+    assert re.fullmatch(
+        rf"docx-to-md: time: (?:{TIME}): reading the Word document (?:{TIME}), "
+        rf".+, writing the files (?:{TIME})",
+        phases,
+    ), phases
+    # A program is named alike on every system: pandoc, not pandoc.exe.
+    assert re.fullmatch(rf"docx-to-md: time in programs: pandoc (?:{TIME}) in \d+ runs", programs)

@@ -18,6 +18,7 @@ from md_doc_converter.converters.docx import package as _package
 from md_doc_converter.converters.docx import prepare as _prepare
 from md_doc_converter.converters.docx import publication as _publication
 from md_doc_converter.converters.docx import tables as _tables
+from md_doc_converter.converters.docx import timings as _timings
 from md_doc_converter.converters.docx import transforms as _transforms
 from md_doc_converter.converters.docx import tree as _tree
 from md_doc_converter.converters.docx import validation as _validation
@@ -33,6 +34,13 @@ from md_doc_converter.converters.docx.models import (
 _NEEDS_PANDOC = "Word conversion needs Pandoc, which is not installed; run md-doc-converter setup"
 
 
+def _phase(report: TransformReport, name: str, status: str = "") -> None:
+    """Start the conversion's phase *name*, which the next one ends; *status*, or *name*, is
+    the status line on a terminal."""
+    report.console.status(status or name)
+    report.timings.phase(name)
+
+
 def _tree_markdown(
     paths: ConversionPaths,
     work: Path,
@@ -43,7 +51,6 @@ def _tree_markdown(
     math: _tree.MathSyntax,
 ) -> tuple[str, DocumentNavigation, dict[str, int]]:
     """The Markdown of the prepared document as Pandoc reads it, with each transform applied."""
-    report.console.status("reading the Word document")
     prepared = _prepare.prepare_document(package, paths, work, report)
     tree = _tree.read_docx(prepared.path, work / "pandoc-media", pandoc)
     blocks, api = _tree.items(tree["blocks"]), tree["pandoc-api-version"]
@@ -60,14 +67,16 @@ def _tree_markdown(
     _transforms.short_rules(blocks)
     _transforms.merge_code(blocks)
     images = _transforms.ImageCounts()
-    report.console.status(
-        f"converting {plural(stager.drawings, 'drawing')}" if stager.drawings else "placing images"
+    _phase(
+        report,
+        "placing images",
+        f"converting {plural(stager.drawings, 'drawing')}" if stager.drawings else "",
     )
     with _diagnostics.transform(report, "images"):
         images = _transforms.publish_images(
             blocks, prepared, stager, paths, package.media_folder, report
         )
-    report.console.status("converting the document")
+    _phase(report, "converting the document")
     _transforms.tidy_links(blocks)
     navigation = DocumentNavigation()
     with _diagnostics.transform(report, "bookmarks"):
@@ -84,11 +93,11 @@ def _tree_markdown(
     _transforms.verify_emphasis(blocks, pandoc, api)
     notes = _transforms.extract_notes(blocks, report)
     tables = _tables.TableCounts()
-    report.console.status("converting tables")
+    _phase(report, "converting tables")
     with _diagnostics.transform(report, "tables"):
         tables = _tables.render_tables([blocks, *notes.contents], pandoc, api, math, report)
     _transforms.define_notes(blocks, notes, pandoc, api, math)
-    report.console.status("writing Markdown")
+    _phase(report, "writing Markdown")
     markdown = _tree.write(tree, pandoc, _tree.gfm_writer(math), "Writing Markdown")
     markdown = tables.restore(notes.references(markdown))
     stats = {
@@ -113,6 +122,7 @@ def _convert_in_work(
     changes: list[HeadingChange] = []
     stager: _media.ImageStager | None = None
     try:
+        _phase(report, "reading the Word document")
         package = _package.read_package(paths)
         pandoc = executables.which("pandoc")
         if pandoc is None:
@@ -135,7 +145,7 @@ def _convert_in_work(
         else:
             report.not_requested("duplicate-headings", "--qualify-duplicate-headings")
         markdown = _normalization.normalize_final_newline(markdown)
-        report.console.status("checking links")
+        _phase(report, "checking links")
         with _diagnostics.transform(report, "links"):
             markdown = _navigation.resolve_links(
                 markdown,
@@ -148,7 +158,7 @@ def _convert_in_work(
         with _diagnostics.transform(report, "cleanup"):
             markdown, removed = _normalization.drop_unneeded_escapes(markdown, pandoc)
             report.applied("cleanup", "unneeded escape(s) removed", removed)
-        report.console.status("checking the Markdown")
+        _phase(report, "checking the Markdown")
         with _diagnostics.transform(report, "checks"):
             issues = _validation.validate_outputs(
                 markdown,
@@ -170,7 +180,7 @@ def _convert_in_work(
         staged_markdown = work / "final.md"
         staged_markdown.write_text(markdown, encoding="utf-8", newline="\n")
         if not dry_run:
-            report.console.status("writing the files")
+            _phase(report, "writing the files")
             _publication.publish_outputs(staged_markdown, stager.root, paths)
         return stats
     except ConversionError:
@@ -214,41 +224,45 @@ def convert_docx(
     report: TransformReport | None = None,
     math: _tree.MathSyntax = "github",
 ) -> dict[str, int]:
-    """Convert *input_path*; *report* records which layers were applied and why others were not."""
+    """Convert *input_path*; *report* records which layers were applied and why others were not,
+    and how long the conversion took."""
     report = TransformReport() if report is None else report
-    paths = _publication.validate_paths(
-        input_path,
-        output_path,
-        replace_generated=replace_generated,
-        keep_intermediates=keep_intermediates,
-    )
-    if paths.intermediates is not None:
-        paths.intermediates.mkdir(mode=0o700, parents=True, exist_ok=True)
-        return _convert_in_work(
-            paths,
-            paths.intermediates,
-            qualify_duplicates=qualify_duplicate_headings,
-            dry_run=dry_run,
-            report=report,
-            math=math,
+    with _timings.timing(report.timings):
+        paths = _publication.validate_paths(
+            input_path,
+            output_path,
+            replace_generated=replace_generated,
+            keep_intermediates=keep_intermediates,
         )
-    with tempfile.TemporaryDirectory(prefix="docx-to-md-", dir=_scratch_parent(paths)) as temporary:
-        work = Path(temporary)
-        if any(
-            _publication.overlaps(work, destination)
-            for destination in (
-                paths.source,
-                paths.source_entry,
-                paths.output,
-                paths.images,
+        if paths.intermediates is not None:
+            paths.intermediates.mkdir(mode=0o700, parents=True, exist_ok=True)
+            return _convert_in_work(
+                paths,
+                paths.intermediates,
+                qualify_duplicates=qualify_duplicate_headings,
+                dry_run=dry_run,
+                report=report,
+                math=math,
             )
-        ):
-            raise ConversionError("Private scratch overlaps a protected conversion path")
-        return _convert_in_work(
-            paths,
-            work,
-            qualify_duplicates=qualify_duplicate_headings,
-            dry_run=dry_run,
-            report=report,
-            math=math,
-        )
+        with tempfile.TemporaryDirectory(
+            prefix="docx-to-md-", dir=_scratch_parent(paths)
+        ) as temporary:
+            work = Path(temporary)
+            if any(
+                _publication.overlaps(work, destination)
+                for destination in (
+                    paths.source,
+                    paths.source_entry,
+                    paths.output,
+                    paths.images,
+                )
+            ):
+                raise ConversionError("Private scratch overlaps a protected conversion path")
+            return _convert_in_work(
+                paths,
+                work,
+                qualify_duplicates=qualify_duplicate_headings,
+                dry_run=dry_run,
+                report=report,
+                math=math,
+            )

@@ -67,6 +67,7 @@ from tests.support.docx import (
     word_style,
     write_docx,
 )
+from tests.support.fake_tools import write_executable
 
 COMMAND = [sys.executable, "-m", "md_doc_converter", "docx-to-md"]
 # Word document relationships: (identifier, type, target, target mode).
@@ -3114,6 +3115,29 @@ def test_libreoffice_converts_the_drawings_of_the_body_while_pandoc_reads_it(
     assert calls == [[".emf"]]
     assert "](.images/Synthetic%20Guide/shown.svg)" in result
     assert dict(report.records["image-conversion"].applied) == {"EMF to SVG": 1}
+
+
+def test_the_programs_that_convert_drawings_in_the_background_count_toward_its_time(
+    convert: Converter, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # On Windows, synthetic-tool.exe, which the time in programs names alike.
+    (tmp_path / "bin").mkdir()
+    tool = write_executable(tmp_path / "bin", "synthetic-tool", f"#!{sys.executable}\n")
+
+    def convert_vectors(
+        drawings: dict[str, tuple[bytes, str]], _work: Path
+    ) -> dict[str, _media.VectorResult]:
+        _reference.run_command([str(tool)], "Synthetic tool", quiet=True)
+        return {name: (SVG, []) for name in drawings}
+
+    monkeypatch.setattr(_media, "_convert_vectors", convert_vectors)
+    _result, report, _warnings = convert.reported(
+        [image("shown")],
+        relations=(("shown", "image", "media/shown.emf", "Internal"),),
+        media={"shown.emf": synthetic_emf()},
+    )
+    assert report.timings.background is not None
+    assert report.timings.runs["synthetic-tool"] == 1
 
 
 def test_a_failed_conversion_waits_for_libreoffice_before_removing_its_work(

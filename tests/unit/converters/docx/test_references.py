@@ -18,6 +18,7 @@ from md_doc_converter.console import Console, activated
 from md_doc_converter.converters.docx import models as _models
 from md_doc_converter.converters.docx import reference as _reference
 from md_doc_converter.converters.docx import tables as _tables
+from md_doc_converter.converters.docx import timings as _timings
 from md_doc_converter.converters.docx import validation as _validation
 from md_doc_converter.pandoc import JSONValue
 
@@ -118,13 +119,18 @@ def test_run_command_failures_name_the_step_and_the_reason(script: str, reason: 
         _reference.run_command([sys.executable, "-c", script], "Probe", quiet=True)
 
 
-def test_run_command_names_a_missing_tool(tmp_path: Path) -> None:
+def test_run_command_names_a_missing_tool_and_does_not_count_it_as_a_run(tmp_path: Path) -> None:
     missing = tmp_path / "missing-tool"
-    with pytest.raises(
-        _models.ConversionError,
-        match=f"^Probe requires unavailable command {re.escape(repr(str(missing)))}$",
+    timings = _timings.Timings()
+    with (
+        _timings.timing(timings),
+        pytest.raises(
+            _models.ConversionError,
+            match=f"^Probe requires unavailable command {re.escape(repr(str(missing)))}$",
+        ),
     ):
         _reference.run_command([str(missing)], "Probe")
+    assert timings.runs == {}
 
 
 # Raw HTML that a Word document's Markdown keeps, with every kind of markup the parser meets.

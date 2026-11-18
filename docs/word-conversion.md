@@ -239,6 +239,14 @@ such as `fields` or `tables`: `applied`, `partial`, `not applied`, `not needed`
 or `not requested`. An element that a transform cannot handle stays as Pandoc
 reads it.
 
+With `--verbose`, the report ends with two lines of the time that the
+conversion took. `docx-to-md: time:` gives it in all, then in each phase in
+turn, and the time that converting the drawings of the document's body took in
+the background, which starts as the document is read; placing images includes
+waiting for it. `docx-to-md: time in programs:` gives the time in each program
+that the conversion ran, such as Pandoc or LibreOffice, the longest first, with
+how many times it ran.
+
 `docx-to-md` exits with status 0 when it converts the document; 1 when it
 refuses the document, Pandoc cannot read it, a path is invalid, an earlier
 output needs `--replace-generated`, or the output cannot be written; and 2 when

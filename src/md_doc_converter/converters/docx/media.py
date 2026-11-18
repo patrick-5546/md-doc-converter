@@ -9,13 +9,16 @@ import re
 import unicodedata
 import urllib.parse
 from collections import Counter, defaultdict
+from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor, wait
+from contextvars import copy_context
 from pathlib import Path, PurePosixPath
 from xml.etree import ElementTree as ET
 
 from md_doc_converter import executables
 from md_doc_converter.converters.docx import ooxml as _ooxml
 from md_doc_converter.converters.docx import reference as _reference
+from md_doc_converter.converters.docx import timings as _timings
 from md_doc_converter.converters.docx.diagnostics import TransformReport
 from md_doc_converter.converters.docx.models import (
     ConversionError,
@@ -912,6 +915,20 @@ def _convert_vectors(drawings: dict[str, tuple[bytes, str]], work: Path) -> dict
     return results
 
 
+def _background_conversion(
+    drawings: dict[str, tuple[bytes, str]], work: Path
+) -> Callable[[], dict[str, VectorResult]]:
+    """A call that converts *drawings* on another thread, in a copy of this context, so that
+    its time is the running conversion's."""
+    context = copy_context()
+
+    def convert() -> dict[str, VectorResult]:
+        with _timings.converting_in_background():
+            return _convert_vectors(drawings, work)
+
+    return lambda: context.run(convert)
+
+
 def media_name(part: str, folder: str) -> PurePosixPath:
     """The name an image part is published under: relative to the media *folder* if in it."""
     name = PurePosixPath(part)
@@ -965,7 +982,7 @@ class ImageStager:
             self._runs += 1
             executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="libreoffice")
             self._background = executor.submit(
-                _convert_vectors, background, self._cache / f"run-{self._runs}"
+                _background_conversion(background, self._cache / f"run-{self._runs}")
             )
             executor.shutdown(wait=False)
 

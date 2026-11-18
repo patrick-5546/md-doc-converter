@@ -16,6 +16,7 @@ from typing import Literal
 
 from md_doc_converter.console import Console, active
 from md_doc_converter.converters.docx.models import ConversionError, PackageError
+from md_doc_converter.converters.docx.timings import Timings
 
 TRANSFORMS = (
     "fields",
@@ -104,6 +105,7 @@ class TransformReport:
     # The warnings of each kind, and the part of the summary that each kind belongs to.
     kinds: Counter[str] = field(default_factory=Counter[str])
     sections: dict[str, Section] = field(default_factory=dict[str, Section])
+    timings: Timings = field(default_factory=Timings)
 
     def warn(self, message: str, *, kind: str = "", section: Section = "word") -> None:
         """Report *message*; the summary counts it under *kind*, in its *section*."""

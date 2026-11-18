@@ -103,6 +103,8 @@ def main(argv: list[str] | None = None) -> int:
         console.block(report.summary())
     console.block(report.issues())
     console.finish(counted=True)
+    for line in report.timings.lines():
+        console.detail(line)
     output = _publication.requested_output(args.input, args.output)
     counts = (
         plural(stats["tables"], "table"),

@@ -16,6 +16,7 @@ from xml.etree import ElementTree as ET
 
 from md_doc_converter import executables
 from md_doc_converter.console import active
+from md_doc_converter.converters.docx import timings as _timings
 from md_doc_converter.converters.docx.models import ConversionError
 from md_doc_converter.markdown.syntax import VOID_TAGS
 from md_doc_converter.pandoc import (
@@ -150,16 +151,19 @@ def run_command(
     """Run *command* and return its standard output.
 
     Its standard error explains a failure; after success, unless *quiet*, each message in it
-    is a warning on the running command's console, which clears the status line first.
+    is a warning on the running command's console, which clears the status line first. The run
+    counts toward the running conversion's time in its program.
     """
     try:
-        result = subprocess.run(
-            [executables.resolve(command[0]), *command[1:]],
-            input=input_text,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
+        program = executables.resolve(command[0])
+        with _timings.running(command[0]):
+            result = subprocess.run(
+                [program, *command[1:]],
+                input=input_text,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
     except FileNotFoundError as error:
         raise ConversionError(
             f"{description} requires unavailable command {command[0]!r}"
