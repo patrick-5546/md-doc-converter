@@ -9,7 +9,7 @@
     "@mermaid-js/mermaid-cli": "^12.2.0",
     "github-markdown-css": "^5.9.0",
     "katex": "^0.19.1",
-    "puppeteer": "^25.16.0"
+    "puppeteer": "^25.17.0"
   },
   "overrides": {
     "katex": "$katex"
