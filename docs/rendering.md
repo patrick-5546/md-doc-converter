@@ -242,7 +242,7 @@ The shared styles provide:
 - headings kept on the page of the text they introduce;
 - headings printed whole on the page that they start, and with the spaces where
   they wrap, so that PDF bookmarks show them as written;
-- text and monospace font stacks of fonts that Linux and Windows have;
+- text and monospace font stacks of fonts that Linux, macOS and Windows have;
 - image, table, code-block, and page-width overflow protection;
 - Mermaid diagram scaling;
 - reusable compact and fixed-width table classes.

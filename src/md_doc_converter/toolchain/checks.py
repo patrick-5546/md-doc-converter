@@ -26,30 +26,47 @@ from md_doc_converter.toolchain.environment import (
 
 PANDOC_FIX = "Run `md-doc-converter setup`, or `setup --no-render` for conversion only"
 NODE_REQUIRED = ".".join(str(part) for part in NODE_MINIMUM[:2])
+_PLATFORM_NAMES = [system.name for system in PLATFORMS.values()]
 # The platforms that setup supports, for messages: "setup requires ...".
-SUPPORTED_PLATFORMS = " or ".join(system.name for system in PLATFORMS.values())
-# How to install the other prerequisites: on Windows with winget, elsewhere as distributions do.
+SUPPORTED_PLATFORMS = ", ".join(_PLATFORM_NAMES[:-1]) + " or " + _PLATFORM_NAMES[-1]
+# How to install the other prerequisites: on Windows with winget, on macOS with Homebrew, and
+# elsewhere as distributions do.
 WINDOWS = sys.platform == "win32"
-NODE_FIX = (
-    f"Install Node.js {NODE_REQUIRED} or newer with npm: `winget install OpenJS.NodeJS.LTS`, "
-    "or from https://nodejs.org/"
-    if WINDOWS
-    else f"Install Node.js {NODE_REQUIRED} or newer with npm, from your distribution, nvm or "
-    "https://nodejs.org/"
+MACOS = sys.platform == "darwin"
+
+
+def _fix(*, windows: str, macos: str, linux: str) -> str:
+    """The fix for this system, from those for each system."""
+    return windows if WINDOWS else macos if MACOS else linux
+
+
+NODE_FIX = _fix(
+    windows=f"Install Node.js {NODE_REQUIRED} or newer with npm: "
+    "`winget install OpenJS.NodeJS.LTS`, or from https://nodejs.org/",
+    macos=f"Install Node.js {NODE_REQUIRED} or newer with npm: `brew install node`, or from "
+    "https://nodejs.org/",
+    linux=f"Install Node.js {NODE_REQUIRED} or newer with npm, from your distribution, nvm or "
+    "https://nodejs.org/",
 )
-GIT_FIX = "Install Git: `winget install Git.Git`" if WINDOWS else "Install Git"
-LIBREOFFICE_FIX = (
-    "Install LibreOffice: `winget install TheDocumentFoundation.LibreOffice`"
-    if WINDOWS
-    else "Install LibreOffice"
+GIT_FIX = _fix(
+    windows="Install Git: `winget install Git.Git`",
+    macos="Install Git: `xcode-select --install`",
+    linux="Install Git",
 )
-POPPLER_FIX = (
-    "Install Poppler: `winget install oschwartz10612.Poppler`"
-    if WINDOWS
-    else "Install Poppler (`poppler-utils` in most distributions)"
+LIBREOFFICE_FIX = _fix(
+    windows="Install LibreOffice: `winget install TheDocumentFoundation.LibreOffice`",
+    macos="Install LibreOffice: `brew install --cask libreoffice`",
+    linux="Install LibreOffice",
+)
+POPPLER_FIX = _fix(
+    windows="Install Poppler: `winget install oschwartz10612.Poppler`",
+    macos="Install Poppler: `brew install poppler`",
+    linux="Install Poppler (`poppler-utils` in most distributions)",
 )
 # Office documents, and drawings and images made with Office or draw.io, use Calibri, which only
-# Windows has. On Linux, fontconfig puts Carlito, which has Calibri's metrics, in its place.
+# Windows has. On Linux, fontconfig puts Carlito, which has Calibri's metrics, in its place. On
+# macOS, which has no fontconfig, LibreOffice brings its own Carlito, and the browser draws
+# Calibri in another font unless Calibri is installed.
 LINUX = sys.platform.startswith("linux")
 CARLITO_FIX = "Install Carlito (`fonts-crosextra-carlito` in Debian and Ubuntu)"
 FONTCONFIG_FIX = "Install fontconfig"

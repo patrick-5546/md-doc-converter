@@ -29,8 +29,9 @@ OPTION = re.compile(r"(?<![\w-])(--?[a-z][a-z0-9-]*)")
 COMMAND_LINE = re.compile(r"md-doc-converter ([^\s`]+)([^`\n#]*)")
 # development.md shows the tools of development, such as make and pytest, with their options.
 CONTRIBUTORS = "docs/development.md"
-# The options of other programs that the user docs show: uv's, to install through a mirror.
-OTHER_OPTIONS = {"--default-index"}
+# The options of other programs that the user docs show: uv's, to install through a mirror, and
+# Homebrew's, to install LibreOffice.
+OTHER_OPTIONS = {"--default-index", "--cask"}
 
 
 def user_docs() -> dict[str, str]:

@@ -185,6 +185,16 @@ def test_a_system_folder_is_protected_as_image_folder(
         _publication.validate_paths(source, tmp_path / "system.md", replace_generated=True)
 
 
+if sys.platform == "darwin":
+    # macOS's /etc, /tmp and /var lead to /private, where a destination's resolved parent is.
+
+    def test_where_a_macos_system_folder_leads_is_protected(source: Path) -> None:
+        with pytest.raises(
+            _models.ConversionError, match="protected filesystem, home, or repository root"
+        ):
+            _publication.validate_paths(source, None, keep_intermediates=Path("/var/tmp"))
+
+
 def test_repository_nested_inside_generated_directory_is_protected(
     source: Path, tmp_path: Path
 ) -> None:
