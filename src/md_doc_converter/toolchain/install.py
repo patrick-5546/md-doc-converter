@@ -30,6 +30,7 @@ from md_doc_converter.toolchain.checks import (
 from md_doc_converter.toolchain.environment import (
     BROWSER,
     LINUX,
+    MACOS,
     MANIFEST_DIR,
     MANIFESTS,
     PANDOC_VERSION,
@@ -72,6 +73,11 @@ PANDOC_ARCHIVES: dict[Platform, Archive] = {
         f"pandoc-{PANDOC_VERSION}-linux-amd64.tar.gz",
         "d0c90410e90204c9ca83b8539fac5c7aed01fd537207e4585849f8abc5df20b8",
         f"pandoc-{PANDOC_VERSION}/bin/pandoc",
+    ),
+    MACOS: _pandoc(
+        f"pandoc-{PANDOC_VERSION}-arm64-macOS.zip",
+        "c2146cf33a583f3ac93eccddf1bb662371d5cfcce1aad1c87ad860cca1435d46",
+        f"pandoc-{PANDOC_VERSION}-arm64/bin/pandoc",
     ),
     WINDOWS: _pandoc(
         f"pandoc-{PANDOC_VERSION}-windows-x86_64.zip",

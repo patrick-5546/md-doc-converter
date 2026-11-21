@@ -23,7 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-26.04, windows-2025]
+        os: [ubuntu-26.04, macos-26, windows-2025]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
@@ -35,6 +35,12 @@ jobs:
       - name: Install make
         if: runner.os == 'Windows'
         run: choco install --yes --no-progress make
+      - name: Install GNU make
+        # macOS's own make is GNU make 3.81. Homebrew's is gmake, and make in its gnubin folder.
+        if: runner.os == 'macOS'
+        run: |
+          brew install make
+          echo "$(brew --prefix make)/libexec/gnubin" >> "$GITHUB_PATH"
       - name: Cache Pandoc
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -109,6 +115,33 @@ jobs:
         # Runs setup first, which installs whatever the cache did not restore.
         run: make test-render
 
+  render-macos:
+    name: Rendering tests (macOS)
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Homebrew's GNU make is make in its gnubin folder, and its LibreOffice puts soffice on PATH.
+      - name: Install make, LibreOffice and Poppler
+        run: |
+          brew install make poppler
+          brew install --cask libreoffice
+          echo "$(brew --prefix make)/libexec/gnubin" >> "$GITHUB_PATH"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - name: Cache the toolchain
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .toolchain
+          key: toolchain-${{ runner.os }}-${{ hashFiles('src/md_doc_converter/toolchain/package.json', 'src/md_doc_converter/toolchain/package-lock.json', 'src/md_doc_converter/toolchain/environment.py', 'src/md_doc_converter/toolchain/install.py') }}
+      - name: Rendering tests
+        # Runs setup first, which installs whatever the cache did not restore.
+        run: make test-render
+
   render-windows:
     name: Rendering tests (Windows)
     runs-on: windows-2025
@@ -139,7 +172,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-26.04, windows-2025]
+        os: [ubuntu-26.04, macos-26, windows-2025]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     defaults:

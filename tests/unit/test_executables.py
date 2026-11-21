@@ -90,14 +90,21 @@ def test_libreoffice_is_found_on_path(tmp_path: Path, monkeypatch: pytest.Monkey
     assert executables.libreoffice() == str(office)
 
 
-def test_libreoffice_is_found_where_its_windows_installer_puts_it(
+def test_libreoffice_is_found_where_its_installer_puts_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    office = tmp_path / "LibreOffice" / "program" / "soffice.com"
-    office.parent.mkdir(parents=True)
-    office.write_text("", encoding="utf-8")
+    # On Windows, in Program Files; on macOS, LibreOffice.app in either Applications folder.
+    windows = tmp_path / "LibreOffice" / "program" / "soffice.com"
+    macos = tmp_path / "LibreOffice.app" / "Contents" / "MacOS" / "soffice"
+    for office in (windows, macos):
+        office.parent.mkdir(parents=True)
+        office.write_text("", encoding="utf-8")
+        office.chmod(0o755)
     monkeypatch.setenv("PATH", str(tmp_path / "bin"))
     for variable in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"):
         monkeypatch.setenv(variable, str(tmp_path))
-    # Elsewhere, LibreOffice's command is on PATH.
-    assert executables.libreoffice() == (str(office) if WINDOWS else None)
+    applications = (str(tmp_path / "missing"), str(tmp_path))
+    monkeypatch.setattr(executables, "_MACOS_APPLICATIONS", applications)
+    # On Linux, LibreOffice's command is on PATH.
+    expected = {"win32": windows, "darwin": macos}.get(sys.platform)
+    assert executables.libreoffice() == (None if expected is None else str(expected))

@@ -9,7 +9,7 @@ Overrides for the pandoc rendering pipeline:
   output)
 - Styling for the optional page header and footer text, whose content is
   generated for each render
-- Font stacks of fonts that Linux and Windows have, replacing
+- Font stacks of fonts that Linux, macOS and Windows have, replacing
   browser-specific fonts from github-markdown-css
 - Overflow protection for tables, images, and code blocks
 - Mermaid diagram scaling: inline SVG diagrams are scaled down
@@ -73,7 +73,8 @@ Overrides for the pandoc rendering pipeline:
 }
 
 /* Page-margin boxes inherit the root font, outside .markdown-body. Linux fonts come first, then
-   Windows's. mermaid-config.json gives Mermaid diagrams' labels the same fonts. */
+   Windows's; macOS has Arial and Menlo. mermaid-config.json gives Mermaid diagrams' labels the
+   same fonts. */
 html,
 .markdown-body {
   font-family: "Noto Sans", "Liberation Sans", "DejaVu Sans", "Segoe UI", Arial, sans-serif;
@@ -84,7 +85,7 @@ html,
 .markdown-body tt,
 .markdown-body kbd,
 .markdown-body samp {
-  font-family: "Liberation Mono", "DejaVu Sans Mono", Consolas, monospace;
+  font-family: "Liberation Mono", "DejaVu Sans Mono", Consolas, Menlo, monospace;
 }
 
 /* --- Overflow protection --- */

@@ -16,6 +16,8 @@ from pathlib import Path
 
 # The extensions of the programs that Windows runs when PATHEXT does not list them.
 _DEFAULT_PATHEXT = ".COM;.EXE;.BAT;.CMD"
+# The folders that macOS keeps applications in, such as LibreOffice.app.
+_MACOS_APPLICATIONS = ("/Applications", "~/Applications")
 
 
 def which(name: str, path: str | None = None) -> str | None:
@@ -77,7 +79,7 @@ def runnable(path: Path) -> bool:
 
 
 def libreoffice() -> str | None:
-    """LibreOffice's command, on PATH or where LibreOffice's Windows installer puts it."""
+    """LibreOffice's command, on PATH or where LibreOffice is installed on macOS and Windows."""
     found = [which("libreoffice"), which("soffice")]
     if sys.platform == "win32":
         for variable in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"):
@@ -85,4 +87,8 @@ def libreoffice() -> str | None:
             # soffice.com, unlike soffice.exe, waits for the conversion and shows its output.
             command = Path(base, "LibreOffice", "program", "soffice.com")
             found.append(str(command) if base and command.is_file() else None)
+    elif sys.platform == "darwin":
+        for folder in _MACOS_APPLICATIONS:
+            app = Path(folder).expanduser() / "LibreOffice.app"
+            found.append(which(str(app / "Contents" / "MacOS" / "soffice")))
     return next((command for command in found if command is not None), None)
