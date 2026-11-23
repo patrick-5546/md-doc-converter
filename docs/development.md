@@ -96,7 +96,7 @@ tell how each part works.
 
 ## Environment
 
-Development needs Linux x86_64 or Windows x86_64,
+Development needs Linux x86_64, macOS arm64 or Windows x86_64,
 [uv](https://docs.astral.sh/uv/), GNU make 4 or newer and Git, plus Node.js
 22.13 or newer for the render suite, and LibreOffice 7.4 or newer and Poppler
 for its EMF tests. uv installs Python (version from `.python-version`) and the
@@ -117,6 +117,11 @@ make test-render  # render suite; installs the toolchain first
 so every checker is a locked development dependency. Their settings are in
 `pyproject.toml`; `.editorconfig` gives editors the indentation and line
 endings.
+
+On macOS, the tasks stop at once under its own make, GNU make 3.81, which is
+too old. Install a newer one with `brew install make`, which names it `gmake`;
+to run it as `make`, put `$(brew --prefix make)/libexec/gnubin` first on
+`PATH`.
 
 On Windows, install make with `winget install ezwinports.make`. There make runs
 each task's commands with cmd.exe, whichever shell starts it, so the tasks run
@@ -163,7 +168,7 @@ with pytest-xdist; `uv run pytest -k NAME` runs matching tests on their own.
 `tests/support/suites.py`. Tests use `.toolchain/` unless `MD_DOC_CONVERTER_HOME`
 is set, with its `bin/` first on `PATH`, as the command does. A run stops before
 collecting when the selected suites miss a prerequisite, and a skipped test
-fails, so a missing tool never quietly reduces coverage. Where Linux and Windows
+fails, so a missing tool never quietly reduces coverage. Where the systems
 differ, a test expects what each does; a test of what only one has, such as
 Linux's `/dev/shm`, is defined there alone. pytest runs in strict mode, and a
 warning fails the test that raises it.
@@ -245,19 +250,22 @@ newer push to a pull request cancels its run in progress. Actions are pinned by
 commit SHA, checkouts keep no credentials, and each job has a time limit. The
 jobs:
 
-- `lint-and-core`: on Linux and Windows, lint, then the core suite, with the
-  pinned Pandoc cached, and on Windows make from Chocolatey;
+- `lint-and-core`: on Linux, macOS and Windows, lint, then the core suite, with
+  the pinned Pandoc cached, GNU make from Homebrew on macOS and make from
+  Chocolatey on Windows;
 - `render`: installs Node.js, LibreOffice and Poppler, runs `setup` (cached)
   and the render suite;
+- `render-macos`: the same on macOS, with GNU make, LibreOffice and Poppler from
+  Homebrew;
 - `render-windows`: the same on Windows, with make, LibreOffice and Poppler from
   Chocolatey;
-- `package`: on Linux and Windows, builds the wheel and sdist, checks the
+- `package`: on Linux, macOS and Windows, builds the wheel and sdist, checks the
   wheel's contents, installs it with `uv tool install` and runs the installed
   command.
 
-The lint and test jobs run the same make tasks on both systems, in each runner's
-default shell: bash on Linux and PowerShell on Windows. The `package` job runs
-its checks with bash on both.
+The lint and test jobs run the same make tasks on every system, in each runner's
+default shell: bash on Linux and macOS, and PowerShell on Windows. The `package`
+job runs its checks with bash on all of them.
 
 ## Building
 

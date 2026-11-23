@@ -51,9 +51,12 @@ class Platform:
 
 
 LINUX = Platform("Linux x86_64", windows=False, browser_platform="linux", browser_folder="linux64")
+MACOS = Platform(
+    "macOS arm64", windows=False, browser_platform="mac_arm", browser_folder="mac-arm64"
+)
 WINDOWS = Platform("Windows x86_64", windows=True, browser_platform="win64", browser_folder="win64")
 # The supported platforms, by sys.platform and machine.
-PLATFORMS = {("linux", "x86_64"): LINUX, ("win32", "x86_64"): WINDOWS}
+PLATFORMS = {("linux", "x86_64"): LINUX, ("darwin", "arm64"): MACOS, ("win32", "x86_64"): WINDOWS}
 
 
 def current_platform(system: str = sys.platform, machine: str | None = None) -> Platform | None:
@@ -69,6 +72,8 @@ def host_platform() -> Platform:
     Every command finds its toolchain with this, and on Windows, platform.machine() makes a
     WMI query that takes a noticeable part of a command's start.
     """
+    if sys.platform == "darwin":
+        return MACOS
     return WINDOWS if sys.platform == "win32" else LINUX
 
 

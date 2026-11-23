@@ -14,18 +14,20 @@ and PDF.
 
 ## Requirements
 
-- Linux x86_64 or Windows x86_64.
+- Linux x86_64, macOS arm64 (Apple silicon) or Windows x86_64.
 - Python 3.15. uv installs it if needed; on a host that cannot reach GitHub,
   where uv downloads Python from, install Python 3.15 another way.
 - [Node.js](https://nodejs.org/) 22.13 or newer, with npm, for rendering.
-- Optional: LibreOffice 7.4 or newer (`libreoffice` or `soffice`, or on Windows
-  where its installer puts it) and Poppler (`pdftocairo`, `pdfinfo` and
-  `pdftotext`) to convert EMF and WMF drawings in Word documents to SVG, and Git
-  to skip Git-ignored files when converting or rendering a folder.
+- Optional: LibreOffice 7.4 or newer (`libreoffice` or `soffice`, or where its
+  installer puts it on macOS and Windows) and Poppler (`pdftocairo`, `pdfinfo`
+  and `pdftotext`) to convert EMF and WMF drawings in Word documents to SVG, and
+  Git to skip Git-ignored files when converting or rendering a folder.
 - Optional, on Linux: the Carlito font (`fonts-crosextra-carlito` in Debian and
   Ubuntu), which has Calibri's metrics. Without Calibri or Carlito, text in
   Calibri, which Office documents and drawings use, is drawn in another font,
-  which may not fit where Calibri did.
+  which may not fit where Calibri did. On macOS, LibreOffice has its own
+  Carlito, but rendering draws text in Calibri in another font unless Calibri is
+  installed.
 
 `md-doc-converter setup` installs the rest, including Pandoc for Word
 conversion and rendering; see [Toolchain](#toolchain). Excel and CSV conversion
@@ -45,7 +47,16 @@ On a network that allows only a package mirror, see
 
 Install Node.js for rendering, and optionally LibreOffice and Poppler, from your
 distribution's packages; [nvm](https://github.com/nvm-sh/nvm) also installs
-Node.js without root. On Windows, install them with winget:
+Node.js without root. On macOS, install them with
+[Homebrew](https://brew.sh/):
+
+```sh
+brew install node
+brew install --cask libreoffice   # optional
+brew install poppler              # optional
+```
+
+On Windows, install them with winget:
 
 ```powershell
 winget install OpenJS.NodeJS.LTS
@@ -153,8 +164,8 @@ the command, run `uv tool uninstall md-doc-converter`.
 
 npm uses your npm configuration, including proxies and registry mirrors; see
 [Package mirrors](#package-mirrors). On a host that cannot reach GitHub,
-download the archive for your platform, `pandoc-3.12.1-linux-amd64.tar.gz` or
-`pandoc-3.12.1-windows-x86_64.zip`, from the
+download the archive for your platform, `pandoc-3.12.1-linux-amd64.tar.gz`,
+`pandoc-3.12.1-arm64-macOS.zip` or `pandoc-3.12.1-windows-x86_64.zip`, from the
 [Pandoc 3.12.1 release](https://github.com/jgm/pandoc/releases/tag/3.12.1)
 another way into a folder and pass that folder to `setup`, which still verifies
 the archive's checksum:

@@ -23,6 +23,7 @@ from md_doc_converter.resources import asset_path
 from md_doc_converter.toolchain import checks, install
 from md_doc_converter.toolchain.environment import (
     LINUX,
+    MACOS,
     MANIFEST_DIR,
     MANIFESTS,
     PANDOC_VERSION,
@@ -138,6 +139,7 @@ def release(tmp_path: Path, fake_tools: FakeTools, downloads: Path) -> Release:
         pytest.param(LINUX, {"XDG_DATA_HOME": "relative"}, LINUX_HOME, id="xdg-relative"),
         pytest.param(LINUX, {"LOCALAPPDATA": str(ROOT / "data")}, LINUX_HOME, id="local-app-data"),
         pytest.param(LINUX, {}, LINUX_HOME, id="default"),
+        pytest.param(MACOS, {}, LINUX_HOME, id="macos-default"),
         pytest.param(
             WINDOWS, {"MD_DOC_CONVERTER_HOME": "r"}, Path.cwd() / "r", id="windows-relative"
         ),
@@ -167,13 +169,14 @@ def test_default_home(system: Platform, environment: dict[str, str], expected: P
     ("system", "machine", "expected"),
     [
         pytest.param("linux", "x86_64", LINUX, id="linux"),
+        pytest.param("darwin", "arm64", MACOS, id="macos"),
         pytest.param("win32", "AMD64", WINDOWS, id="windows"),
         pytest.param("linux", "aarch64", None, id="linux-arm"),
+        pytest.param("darwin", "x86_64", None, id="macos-intel"),
         pytest.param("win32", "ARM64", None, id="windows-arm"),
-        pytest.param("darwin", "arm64", None, id="macos"),
     ],
 )
-def test_setup_supports_linux_and_windows_on_x86_64(
+def test_setup_supports_linux_and_windows_on_x86_64_and_macos_on_arm64(
     system: str, machine: str, expected: Platform | None
 ) -> None:
     assert current_platform(system, machine) is expected
@@ -200,7 +203,9 @@ def test_doctor_names_the_platform_or_those_that_setup_supports(
     monkeypatch.setattr(checks, "current_platform", unsupported)
     check = checks.check_platform()
     assert check.status == "warn"
-    assert check.detail.endswith("not supported; setup requires Linux x86_64 or Windows x86_64")
+    assert check.detail.endswith(
+        "not supported; setup requires Linux x86_64, macOS arm64 or Windows x86_64"
+    )
 
 
 @pytest.mark.parametrize("system", SYSTEMS)
@@ -306,12 +311,16 @@ def test_doctor_lists_a_fix_for_each_missing_part(capsys: pytest.CaptureFixture[
 
 
 def test_fixes_install_with_the_package_manager_of_the_system() -> None:
-    fixes = (checks.NODE_FIX, checks.GIT_FIX, checks.LIBREOFFICE_FIX, checks.POPPLER_FIX)
-    # Windows has winget; elsewhere, each distribution has its own package manager.
-    if os.name == "nt":
-        assert all("`winget install " in fix for fix in fixes)
+    fixes = (checks.NODE_FIX, checks.LIBREOFFICE_FIX, checks.POPPLER_FIX)
+    # Windows has winget, and macOS Homebrew, with Git from Apple's command line tools; on Linux,
+    # each distribution has its own package manager.
+    if sys.platform == "win32":
+        assert all("`winget install " in fix for fix in (*fixes, checks.GIT_FIX))
+    elif sys.platform == "darwin":
+        assert all("`brew install " in fix for fix in fixes)
+        assert "`xcode-select --install`" in checks.GIT_FIX
     else:
-        assert not any("winget" in fix for fix in fixes)
+        assert not any("winget" in fix or "brew" in fix for fix in (*fixes, checks.GIT_FIX))
 
 
 def test_poppler_needs_each_command_that_emf_conversion_runs(fakes: FakeTools) -> None:
@@ -577,6 +586,7 @@ def test_each_platform_has_a_pinned_pandoc_release_archive() -> None:
         assert archive.executable == system.executable("pandoc")
         assert re.fullmatch(r"[0-9a-f]{64}", archive.sha256)
     assert install.PANDOC_ARCHIVES[LINUX].file.endswith(".tar.gz")
+    assert install.PANDOC_ARCHIVES[MACOS].file.endswith(".zip")
     assert install.PANDOC_ARCHIVES[WINDOWS].file.endswith(".zip")
 
 
@@ -656,7 +666,9 @@ def test_download_failure_suggests_a_downloads_folder(
     ("supported", "message"),
     [
         pytest.param(
-            False, "setup requires Linux x86_64 or Windows x86_64", id="unsupported-platform"
+            False,
+            "setup requires Linux x86_64, macOS arm64 or Windows x86_64",
+            id="unsupported-platform",
         ),
         pytest.param(True, "--no-render", id="old-node"),
     ],

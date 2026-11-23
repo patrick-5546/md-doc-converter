@@ -38,6 +38,18 @@ _SYSTEM_FOLDERS = (
     "/var",
     "/var/tmp",
 )
+# On macOS, its own, and where /etc, /tmp and /var lead, as destinations' parents are resolved.
+_MACOS_SYSTEM_FOLDERS = (
+    "/Applications",
+    "/Library",
+    "/System",
+    "/Users",
+    "/Volumes",
+    "/private/etc",
+    "/private/tmp",
+    "/private/var",
+    "/private/var/tmp",
+)
 # On Windows, the environment variables that name them.
 _WINDOWS_SYSTEM_FOLDERS = (
     "SystemRoot",
@@ -77,7 +89,8 @@ def _system_folders() -> set[Path]:
     if sys.platform == "win32":
         variables = (os.environ.get(name, "") for name in _WINDOWS_SYSTEM_FOLDERS)
         return {Path(folder).resolve() for folder in variables if folder}
-    return {Path(name) for name in _SYSTEM_FOLDERS}
+    macos = _MACOS_SYSTEM_FOLDERS if sys.platform == "darwin" else ()
+    return {Path(name) for name in (*_SYSTEM_FOLDERS, *macos)}
 
 
 def _protected(path: Path, related: tuple[Path, ...]) -> bool:
