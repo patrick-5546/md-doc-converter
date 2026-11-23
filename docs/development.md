@@ -118,9 +118,10 @@ so every checker is a locked development dependency. Their settings are in
 `pyproject.toml`; `.editorconfig` gives editors the indentation and line
 endings.
 
-On macOS, whose own make is GNU make 3.81, install a newer one with
-`brew install make`, which names it `gmake`; to run it as `make`, put
-`$(brew --prefix make)/libexec/gnubin` first on `PATH`.
+On macOS, the tasks stop at once under its own make, GNU make 3.81, which is
+too old. Install a newer one with `brew install make`, which names it `gmake`;
+to run it as `make`, put `$(brew --prefix make)/libexec/gnubin` first on
+`PATH`.
 
 On Windows, install make with `winget install ezwinports.make`. There make runs
 each task's commands with cmd.exe, whichever shell starts it, so the tasks run

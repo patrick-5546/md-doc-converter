@@ -1,6 +1,13 @@
 # Development tasks for md-doc-converter; `make help` lists them.
 # Each task runs through uv, which first creates or updates .venv from uv.lock.
 
+# The tasks need GNU make 4 or newer: the shell settings below use its .SHELLFLAGS and MAKE_HOST.
+# An older one, such as macOS's own 3.81, would run them without failing on an error inside a
+# pipeline.
+ifneq ($(filter 0 1 2 3,$(firstword $(subst ., ,$(MAKE_VERSION)))),)
+$(error The tasks need GNU make 4 or newer, not $(MAKE_VERSION); see docs/development.md)
+endif
+
 # Recipes run with bash, which fails a recipe on its first failing command, including inside a
 # pipeline. GNU make built for Windows, unlike MSYS2's or Cygwin's, would run them with whichever
 # sh.exe is on PATH, or else cmd.exe, so there they always run with cmd.exe: each recipe line is
