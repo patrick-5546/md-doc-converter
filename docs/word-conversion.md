@@ -280,6 +280,7 @@ cross-references, and tables of contents or of figures:
    with Ctrl+A (Cmd+A on a Mac), then press F9, or Fn+F9 where F9 is a media
    key. For each table of contents or of figures, choose **Update entire
    table**.
+
 2. That updates the fields of the body, not those in headers, footers, notes,
    or text boxes. To update them all, or where the keys do nothing, run this
    macro from Normal.dotm, the template that Word keeps your macros in: a
